@@ -261,7 +261,11 @@ async function freshServicesOnResume() {
 async function structure(locale) {
   const navigation = page.locator(".pro-shell > .side-nav").getByRole("navigation");
   assert.equal(await navigation.count(), 1, "必须使用真实 SideNav 导航");
-  assert.equal(await navigation.getByRole("button").count(), 6, "六个页面入口");
+  assert.equal(await navigation.getByRole("button").count(), 7, "七个页面入口");
+  const navLabels = await navigation.getByRole("button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label")));
+  assert.deepEqual(navLabels, locale === "zh"
+    ? ["概览", "节点", "代理链", "配置", "流量", "日志", "设置"]
+    : ["Overview", "Nodes", "Proxy Chains", "Profiles", "Traffic", "Logs", "Settings"], "侧栏入口顺序应为 概览/节点/代理链/配置/流量/日志/设置");
   assert.equal(await navigation.locator('[aria-current="page"]').count(), 1);
   assert.equal(await navigation.locator('[aria-current="page"]').getAttribute("aria-label"), locale === "zh" ? "概览" : "Overview");
   assert.equal(await page.locator('.pro-shell > aside[aria-hidden="true"], .pro-shell > .topnav-wrap').count(), 0, "禁止空白占位侧栏和专业模式 TopNav");
@@ -523,7 +527,7 @@ try {
   assert.equal(await sideButtons.nth(1).locator('svg path').getAttribute('fill'), 'currentColor', '选中图标切为实心');
   assert.equal(await sideButtons.nth(0).locator('svg path').getAttribute('fill'), 'none', '未选中图标回到线框');
   assert.notEqual(await sideButtons.nth(0).locator('svg path').getAttribute('d'), selectedIcon, '图标形态切换而非只换色');
-  for (let index = 2; index < 6; index++) {
+  for (let index = 2; index < 7; index++) {
     await sideButtons.nth(index).click();
     assert.equal(await sideButtons.nth(index).locator('svg path').getAttribute('fill'), 'currentColor');
     assert.equal(await sideButtons.nth(index - 1).locator('svg path').getAttribute('fill'), 'none');
