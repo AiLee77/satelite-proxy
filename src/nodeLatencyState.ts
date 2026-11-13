@@ -29,6 +29,13 @@ export function isRealLatencyMethod(method?: string | null): boolean {
   return method === "clash_api" || !!method?.endsWith("_http");
 }
 
+/** 判定为“已测过且本次测速超时”的节点：latency_at 非空保证确实测过，
+ *  只严格匹配 timeout 分类，其他失败类型（连接失败/TLS/配置错误）不误判。 */
+export function isTimedOutNode(node: LatencyFields): boolean {
+  if (node.latency_at == null) return false;
+  return latencyState(node).kind === "timeout";
+}
+
 /** 与 store 的 reachability_only 判定一致，精确匹配旧版可达性提示。
  * `unsupported:` 是本次节点参数探测的有效结果，必须正常接受。 */
 function isReachabilityOnly(update: LatencyFields): boolean {

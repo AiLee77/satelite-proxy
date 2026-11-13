@@ -42,7 +42,7 @@ import { copyNodeShareText } from "../nodeShare";
 import { clipboardNodePayload } from "../nodeClipboard";
 import { shouldDeleteSelectedNodes } from "../nodeShortcuts";
 import { createLatencyResultBuffer } from "../latencyStream";
-import { applyLatencyResult, applyNodeLatencyChange } from "../nodeLatencyState";
+import { applyLatencyResult, applyNodeLatencyChange, isTimedOutNode } from "../nodeLatencyState";
 import { NodeLatencyDisplay } from "../components/NodeLatencyDisplay";
 import type { AutoSelectMode, ProxyNode, SortMode, ViewMode } from "../types";
 
@@ -650,7 +650,17 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [customRuntime, shareNode, editNode, detailNode, error, contextMenu, selectAllMatching]);
 
-  async function deleteSelected(ids: string[]) {
+  // One-click cleanup: ids whose latest latency run timed out. The strong
+  // predicate (latency_at + timeout classification) keeps every other
+  // failure kind (TLS / config / connection) and untested nodes safe. Based
+  // on `nodes` (the full search-filtered list), not the favorites view, so
+  // the button acts on all timed-out nodes in the current listing.
+  const timedOutIds = useMemo(
+    () => nodes.filter((n) => !customRuntime && isTimedOutNode(n)).map((n) => n.id),
+    [nodes, customRuntime],
+  );
+
+  async function deleteSelected(ids: string[], confirmText?: string) {
     if (customRuntime || batchBusy || deletePendingRef.current || ids.length === 0) return;
     // Guard before opening the native confirmation, not just during IPC.
     deletePendingRef.current = true;
@@ -658,7 +668,7 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
       const confirmed = await confirmAction(
         ids.length === 1
           ? t("nodes.deleteConfirm", { name: nodes.find((node) => node.id === ids[0])?.name ?? ids[0] })
-          : t("nodes.deleteSelectedConfirm", { n: ids.length }),
+          : confirmText ?? t("nodes.deleteSelectedConfirm", { n: ids.length }),
       );
       if (!confirmed) return;
       setBatchBusy(true);
@@ -695,6 +705,15 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   });
+
+  /** One-click delete of all timed-out nodes reuses the guarded batch path. */
+  async function deleteTimedOutNodes() {
+    if (timedOutIds.length === 0 || testing || batchBusy || loading) return;
+    await deleteSelected(
+      timedOutIds,
+      t("nodes.deleteTimeoutConfirm", { n: timedOutIds.length }),
+    );
+  }
 
   async function copyShareLink(node: ProxyNode) {
     try {
@@ -1155,6 +1174,20 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
               title={t("nodes.pingTestHint")}
             >
               {testing && testKind === "ping" ? t("nodes.pinging") : t("nodes.pingTest")}
+            </GlassButton>
+          )}
+          {/* One-click cleanup for the last latency run: only appears once at
+              least one node has a recorded timeout result. Disabled while a
+              test is streaming so the target set stays stable; hidden in
+              read-only custom mode. */}
+          {!customRuntime && timedOutIds.length > 0 && (
+            <GlassButton
+              variant="danger"
+              disabled={testing || batchBusy || loading}
+              onClick={() => void deleteTimedOutNodes()}
+              title={t("nodes.deleteTimeoutHint")}
+            >
+              {t("nodes.deleteTimeout", { n: timedOutIds.length })}
             </GlassButton>
           )}
           <div className="nodes-view-segs">

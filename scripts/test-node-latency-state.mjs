@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   latencyState, isRealLatencyMethod, mergeNodeLatency,
-  applyLatencyResult, applyNodeLatencyChange,
+  applyLatencyResult, applyNodeLatencyChange, isTimedOutNode,
 } from "../src/nodeLatencyState.ts";
 import { applyCustomLatency } from "../src/customNodes.ts";
 import { createLatencyResultBuffer } from "../src/latencyStream.ts";
@@ -59,6 +59,24 @@ test("成功、未测和旧后端无错误兼容，失败不会统一误报超�
   for (const ms of [-1, NaN, Infinity]) {
     assert.deepEqual(latencyState({ latency_ms: ms, latency_at: 1 }), { kind: "failed" });
   }
+});
+
+test("一键删除只选已测超时节点；未测、其他错误及成功节点不选", () => {
+  assert.equal(isTimedOutNode({ latency_at: 20, latency_method: "xray_http", latency_ms: null, latency_error: "timeout: 实际超时" }), true);
+  assert.equal(isTimedOutNode({ latency_at: 0, latency_method: "tcp", latency_ms: null, latency_error: "timeout" }), true);
+  // latency_at 为空说明从未测过，即使老后端给了错误也不能删。
+  assert.equal(isTimedOutNode({ latency_method: "xray_http", latency_ms: null, latency_error: "timeout: 未记录时间戳" }), false);
+  assert.equal(isTimedOutNode({}), false);
+  for (const kind of ["unsupported", "config", "tls", "connection", "http", "core", "missing_core"]) {
+    assert.equal(isTimedOutNode({ latency_at: 20, latency_method: "singbox_http", latency_ms: null, latency_error: `${kind}: 后端安全详情` }), false);
+  }
+  assert.equal(isTimedOutNode({ latency_at: 20, latency_method: "singbox_http", latency_ms: 123 }), false);
+
+  // 从真实合并路径产生的节点判定同样成立（applyLatencyResult 保证时间戳入库）。
+  const timedOutNode = applyLatencyResult({}, result("mihomo_http", null, "timeout: 握手超时"));
+  assert.equal(isTimedOutNode(timedOutNode), true);
+  const revivedNode = mergeNodeLatency(timedOutNode, { latency_ms: 88, latency_at: 30, latency_method: "mihomo_http" });
+  assert.equal(isTimedOutNode(revivedNode), false);
 });
 
 test("TCP 成功/失败均不能覆盖所有 *_http 和 clash_api 的成功/失败", () => {
