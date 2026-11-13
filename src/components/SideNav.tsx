@@ -1,8 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/messages";
 import type { NavKey } from "../types";
+import { useRuntimeSource } from "../hooks/useRuntimeSource";
 import { UiModeMenu } from "../ui/UiModeMenu";
 import { ThemeSwitch } from "./ThemeSwitch";
 import "./SideNav.css";
@@ -11,6 +12,7 @@ const COMPACT_QUERY = "(max-width: 1100px)";
 const ITEMS: { key: NavKey; labelKey: MessageKey; path: string; activePath: string }[] = [
   { key: "dashboard", labelKey: "dashboard.title", path: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", activePath: "M3 3h8v8H3z M14 3h7v7h-7z M3 14h7v7H3z M14 13h7v8h-7z" },
   { key: "nodes", labelKey: "nodes.title", path: "M8 5h8 M6 8v8 M18 8v8 M8 19h8 M3 3h5v5H3z M16 3h5v5h-5z M3 16h5v5H3z M16 16h5v5h-5z", activePath: "M2 2h7v7H2z M15 2h7v7h-7z M2 15h7v7H2z M15 15h7v7h-7z M9 4h6v2H9z M4 9h2v6H4z M18 9h2v6h-2z M9 18h6v2H9z" },
+  { key: "chains", labelKey: "chains.title", path: "M9 17H7A5 5 0 0 1 7 7h2 M15 7h2a5 5 0 1 1 0 10h-2 M8 12h8", activePath: "M2.5 12a6 6 0 1 0 12 0a6 6 0 1 0-12 0z M9.5 12a6 6 0 1 0 12 0a6 6 0 1 0-12 0z M5.9 12a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0-5.2 0z M12.9 12a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0-5.2 0z" },
   { key: "config", labelKey: "config.title", path: "M3 6h7l2 2h9v12H3z M3 6V4h7l2 2h7v2", activePath: "M3 3h7l3 3h8v2H3z M2 9h20l-2 12H4z" },
   { key: "traffic", labelKey: "traffic.title", path: "M3 20h18 M6 16v-5 M12 16V4 M18 16V8", activePath: "M4 10h4v7H4z M10 3h4v14h-4z M16 7h4v10h-4z M3 19h18v2H3z" },
   { key: "logs", labelKey: "logs.title", path: "M5 3h14v18H5z M8 7h8 M8 12h8 M8 17h5", activePath: "M4 2h12l4 4v16H4z M8 7v2h8V7z M8 12v2h8v-2z M8 17v2h5v-2z" },
@@ -26,6 +28,12 @@ export function SideNav({ active, onChange }: Props) {
   const { t } = useI18n();
   const navId = useId();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia(COMPACT_QUERY).matches);
+  // custom（自配 sing-box）运行来源下代理链不可达，隐藏入口与旧设置页拦截行为一致。
+  const customRuntime = useRuntimeSource().startsWith("singbox:");
+  const items = useMemo(
+    () => (customRuntime ? ITEMS.filter((item) => item.key !== "chains") : ITEMS),
+    [customRuntime],
+  );
   const itemRefs = useRef<Partial<Record<NavKey, HTMLButtonElement>>>({});
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
@@ -92,18 +100,18 @@ export function SideNav({ active, onChange }: Props) {
   }, []);
 
   function onNavKeyDown(event: KeyboardEvent<HTMLElement>) {
-    const index = ITEMS.findIndex(item => itemRefs.current[item.key] === event.target);
+    const index = items.findIndex(item => itemRefs.current[item.key] === event.target);
     if (index < 0) return;
     let next: number;
     switch (event.key) {
-      case "ArrowDown": next = (index + 1) % ITEMS.length; break;
-      case "ArrowUp": next = (index + ITEMS.length - 1) % ITEMS.length; break;
+      case "ArrowDown": next = (index + 1) % items.length; break;
+      case "ArrowUp": next = (index + items.length - 1) % items.length; break;
       case "Home": next = 0; break;
-      case "End": next = ITEMS.length - 1; break;
+      case "End": next = items.length - 1; break;
       default: return;
     }
     event.preventDefault();
-    itemRefs.current[ITEMS[next].key]?.focus();
+    itemRefs.current[items[next].key]?.focus();
   }
 
   return (
@@ -130,7 +138,7 @@ export function SideNav({ active, onChange }: Props) {
       </div>
       <nav ref={navRef} id={navId} className="side-nav-items" aria-label={t("uiMenu.proMode")} onKeyDown={onNavKeyDown}>
         <span ref={indicatorRef} className="side-nav-indicator" aria-hidden="true" />
-        {ITEMS.map(item => (
+        {items.map(item => (
           <button
             key={item.key}
             ref={element => { itemRefs.current[item.key] = element ?? undefined; }}

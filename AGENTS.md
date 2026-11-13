@@ -310,7 +310,7 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
 - **三内核**：`settings.core_type`（`singbox` 默认 | `xray` | `mihomo`）决定配置生成器与二进制；三套生成器共享 domain 模型、互不依赖（v2rayN 同款模式）。Xray 模式下切节点/切规则 = 重写配置重启进程、连接三页面无数据（前端显示占位提示）；mihomo 模式因 Clash API 兼容而**全功能**（热切节点、连接监控、delay 测速、智能切换均与 sing-box 同款）。
 - **前端不直连 Clash API**。`src/` 里零 fetch/WebSocket，全部经 Rust command 中转；实时数据靠 `useVisibleInterval` 轮询 invoke + 5 个 Tauri 事件。
 - **单窗口应用**。专业/简洁模式复用同一窗口，尺寸切换（960×720 ↔ 420×720）见 `src/ui/windowLayout.ts` 与 `src-tauri/src/window_ctrl.rs`；两模式均可自由放大（2026-09：pro 下限=设计尺寸 960×720、simple 下限 320×480，均无上限），放大后经 `useViewportScale` CSS zoom 等比放大 UI（简洁模式钉 420 居中，`data-ui-scaled` 任一维超设计即置位），窗口尺寸按模式持久化（localStorage + Rust 侧 `data/window_size_<mode>`，最大化状态不持久化；窗口出生即目标尺寸，见 §9.6）。
-- **无路由**。导航是 `App.tsx` 里 `useState<NavKey>` + `TopNav`；次级页面 `React.lazy`（WebView 低内存重建）。
+- **无路由**。导航是 `App.tsx` 里 `useState<NavKey>` + `SideNav`；次级页面 `React.lazy`（WebView 低内存重建）。
 - **关窗进托盘**：`CloseRequested` 被拦截（`lib.rs:322-347`），可销毁 WebView 省内存但保活 Rust/tray/内核；`exit_allowed` 标志控制真正退出。
 
 ## 5. 后端模块详解（src-tauri/src/）
@@ -428,7 +428,7 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
 
 - `main.tsx` → `App.tsx`：`ThemeProvider > LocaleProvider > UiModeProvider > ImportIntentProvider > AppShell`。
 - `AppShell` 按 `mode` 选 `SimpleShell` / `ProShell`；监听 `config-apply-status` 事件驱动全局 busy 与错误 banner。
-- `ProShell`：`useState<NavKey>`（dashboard|config|nodes|traffic|logs|settings）+ `TopNav`；页面 `React.lazy` + `key={nav}` 强制重挂载触发进场动画。
+- `ProShell`：`useState<NavKey>`（dashboard|config|chains|nodes|traffic|logs|settings）+ `SideNav`；页面 `React.lazy` + `key={nav}` 强制重挂载触发进场动画。chains（代理链）为独立页面，custom（自配 sing-box）运行来源下侧栏隐藏该入口并自动回落 dashboard（`useRuntimeSource` 共享检测）；Cmd/Ctrl+数字快捷键按侧栏顺序 1..6（dashboard/nodes/chains/config/traffic/logs）。
 - `UiModeContext.tsx`（`src/ui/`）— localStorage `satelite.uiMode` 先行渲染防闪烁；切模式先调 `set_ui_mode_pref` 让 Rust 调窗口尺寸再换 shell。`UiModeMenu.tsx` — 工具栏 "⋯" 菜单（模式切换/切换内核 sing-box|Xray|mihomo/重启内核/复制代理环境变量）。
 
 ### 6.2 桥接层 ★
@@ -438,7 +438,7 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
   - `updateSettings` 是 **60ms 批量合并写入器**；
   - `peekSettings/peekProxyStatus + keepSettings/keepProxy` 模块级快照，供页面重挂载时种子状态防闪默认值；
   - 生命周期类调用（start/stop/restart/capture/outbound）包 `trackCoreBusy()` 驱动导航栏 spinner。
-- Tauri 事件消费：`config-apply-status`（App.tsx）、`core-status-changed`（App.tsx → `refreshProxyStatus()`；watchdog 发出的生命周期边沿推送，Dashboard/SimpleConnect/TopNav 经 `api.ts::onProxySnapshot` 订阅快照即时重绘）、`deep-link-urls`（ImportIntentContext）、`core-download-progress`（SettingsPage）、`remote-rule-set-status` 与 `rule-set-apply-status`（RulesPage）。
+- Tauri 事件消费：`config-apply-status`（App.tsx）、`core-status-changed`（App.tsx → `refreshProxyStatus()`；watchdog 发出的生命周期边沿推送，Dashboard/SimpleConnect/SideNav→useRuntimeSource 经 `api.ts::onProxySnapshot` 订阅快照即时重绘）、`deep-link-urls`（ImportIntentContext）、`core-download-progress`（SettingsPage）、`remote-rule-set-status` 与 `rule-set-apply-status`（RulesPage）。
 - `types.ts` — 与 Rust `domain/*` 对应的手写类型（注意 `ProxyStatus`、`AppSettings`、`ManualNodeDraft` 46 字段等需两边同步）。
 
 ### 6.3 页面（pages/）
@@ -457,9 +457,9 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
 | `RulesPage` (2145) | ★ 最大页面：规则集侧栏+编辑器、本地/远程集、策略/DNS 策略、route.final、拖拽排序、远程规则项浏览；geodata 内核（Xray/mihomo）下内置 3 条显示为 geodata 卡（来源/文件按内核区分，更新走 `refresh_geodata(kind)`），自建 .srs 置灰 |
 | `DnsPage` (329) / `HostsPage` (463) | DNS/Hosts 管理，通常内嵌于 Settings |
 | `LogsPage` (~380) | 四 tab：应用日志（1.2s 增量，级别过滤+搜索）/ sing-box / Xray / mihomo 内核日志（tab 带运行绿灯，原始 stdout，1.2s 轮询 `get_core_log_tail(kind)`；多核下主核/副进程各写各的 `logs/<prefix>-<hour>.log`，按 kind 读取，见 `Runtime::core_log_tail_for`）；头部 自动滚动/刷新/清空 与级别过滤、搜索框对所有 tab 统一（清空=app 清库 / kernel 截断当前小时文件 `clear_core_log`） |
-| `SettingsPage` (1456) | 8 tab：app/ports/rules/chain/multiCore/dns/hosts/core；内嵌 Rules/Chain/多核模式/Dns/Hosts 页；三内核行（各自版本/下载/更新，进度事件按 kind 分流）、多核模式 tab（启停开关 + 协议→内核 table，§9.20；按协议支持面各选 Xray/mihomo——如 hy2 两者皆可，masque 仅 mihomo 且「auto」显示「未启用」而非「跟随主内核」，因 sing-box 无原生出路）、更新检查、诊断、托盘图标选择、赞助二维码（`DecryptReveal`） |
+| `SettingsPage` (1456) | 7 tab：app/ports/rules/multiCore/dns/hosts/core；内嵌 Rules/多核模式/Dns/Hosts 页（代理链已迁至侧栏独立页面）；三内核行（各自版本/下载/更新，进度事件按 kind 分流）、多核模式 tab（启停开关 + 协议→内核 table，§9.20；按协议支持面各选 Xray/mihomo——如 hy2 两者皆可，masque 仅 mihomo 且「auto」显示「未启用」而非「跟随主内核」，因 sing-box 无原生出路）、更新检查、诊断、托盘图标选择、赞助二维码（`DecryptReveal`） |
 | `RulesPage` (2145) | ★ 最大页面：规则集侧栏+编辑器、本地/远程集、策略/DNS 策略、route.final、拖拽排序、远程规则项浏览；geodata 内核（Xray/mihomo）下内置 3 条显示为 geodata 卡（来源/文件按内核区分，更新走 `refresh_geodata(kind)`），自建 .srs 置灰；策略可指向 chain（`chain_id`） |
-| `ChainPage` (~1700) | 高密度管理列表，内嵌于 Settings：节点池=单容器紧凑行（名称+关键字+模式pill+计数+引用，行尾 `RowMenu` ⋮ 菜单，复用 rule-menu 范式），链卡=头行徽标（跳数/规则引用/⋮）+ 地铁线 stepper；链路编辑器为 xyflow（`@xyflow/react`）画布：侧栏候选拖入/点击追加（WKWebView 无 HTML5 DnD，用指针事件自实现）、`hopsFromGraph` 单线路径校验（连线时 `isValidConnection` 即时拦截分支/环/自环）、图序号徽标 + 实时有效性状态行、整理布局按钮；fitView 仅在打开已有链路且节点完成测量后执行一次（`useNodesInitialized`），否则画布会因未测量节点算出坏视口而看似空白、或投放后视口跳走 |
+| `ChainPage` (~1700) | 侧栏独立页面（NavKey chains，custom 来源下入口隐藏）；高密度管理列表：节点池=单容器紧凑行（名称+关键字+模式pill+计数+引用，行尾 `RowMenu` ⋮ 菜单，复用 rule-menu 范式），链卡=头行徽标（跳数/规则引用/⋮）+ 地铁线 stepper；链路编辑器为 xyflow（`@xyflow/react`）画布：侧栏候选拖入/点击追加（WKWebView 无 HTML5 DnD，用指针事件自实现）、`hopsFromGraph` 单线路径校验（连线时 `isValidConnection` 即时拦截分支/环/自环）、图序号徽标 + 实时有效性状态行、整理布局按钮；fitView 仅在打开已有链路且节点完成测量后执行一次（`useNodesInitialized`），否则画布会因未测量节点算出坏视口而看似空白、或投放后视口跳走 |
 | `DnsPage` (~640) / `HostsPage` (463) | DNS/Hosts 管理，通常内嵌于 Settings；通用卡（劫持/兜底/缓存/FakeIP/远程加密 DNS——FakeIP 仅启用开关+⋯ 弹窗编辑池/IPv6/bypass，远程加密 DNS ⋯ 弹窗按行编辑 DoH 池，空=内置 1.1.1.1/8.8.8.8，见 §18①）；诊断 = 规则列表风格表格（域名|策略|匹配|DNS 服务器|内核解析，一行一域名，`diagnoseDns` 支持全部诊断与行内单个诊断，自定义域名 localStorage 持久化 `satelite.dnsDiagDomains`，本地/国内路径标红 ⚠ 泄露风险，见 `services/dns_diag.rs`） |
 
 ### 6.4 简洁模式（ui/simple/）
@@ -504,7 +504,7 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
 | 改代理链 | `domain/chain.rs` + `storage/store.rs` + `config/builder.rs` + `commands/chain.rs` + `services/chain_diag.rs` + `src/pages/ChainPage.tsx`；Xray/mihomo 必须保持安全降级 |
 | 改内核启动参数/生命周期 | `core/manager.rs` + `core/kind.rs`（kind 相关差异集中在 kind.rs） |
 | 加文案 | `src/i18n/messages.ts` 的 `en` 和 `zh` **都要加** |
-| 加页面 | `src/pages/` + `App.tsx` lazy 导入 + `NavKey`（types.ts）+ `TopNav` + i18n `nav.*` |
+| 加页面 | `src/pages/` + `App.tsx` lazy 导入 + `NavKey`（types.ts）+ `SideNav` ITEMS + i18n 对应 `*.title` |
 | 改样式 | `src/App.css` 对应段落；新主题色变体在 `theme/accents.ts` |
 | 加托盘功能 | `src-tauri/src/tray.rs` |
 | 改测速 | `services/latency.rs` + `src/api.ts`：节点页「测真实延迟」= `test_nodes_latency`（内核运行时走 Clash delay API 经真实代理链路，unified delay 双探测取第二次）；「Ping 测试」= `ping_nodes_latency`（纯 TCP 直连、并发 30、内核运行时也不经内核；QUIC-only 协议报 unsupported）；智能选路的排序预筛 = `probe_nodes_ranked`（TCP ping + QUIC-only 内核兜底，见 §5.1）。TCP 直连只反映可达性，会漏报 REALITY/Vision 这类「TCP 活但代理死」的节点——故智能切换的出口巡检与候选验证一律用内核 URL 探测。**三个批量测速 command 均带必填 `on_result: Channel<LatencyResult>`**（api.ts 用 `@tauri-apps/api/core` 的 `Channel` 封装，调用方没有回调也给静默 channel）：后端每个探测完成即推送，前端（NodesPage/SimpleServersPage）按 rAF 合帧逐节点就地刷新；前端 ids 经 `list_node_ids(query, sort_mode)` 按当前显示排序下发，后端 `load_nodes_in_display_order` 保持该顺序起测；手动测速一律不读缓存（`use_cache=false`，结果仍写回），共享探测缓存 TTL 成功 30s / 失败 15s（2026-08） |

@@ -1563,7 +1563,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
       {!embedded && (
         <header className="page-header">
           <div>
-            <h1>{t("chain.title")}</h1>
+            <h1>{t("chains.title")}</h1>
             <p className="page-desc">{t("chain.desc")}</p>
           </div>
         </header>

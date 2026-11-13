@@ -1,6 +1,7 @@
 export type NavKey =
   | "dashboard"
   | "config"
+  | "chains"
   | "nodes"
   | "traffic"
   | "logs"

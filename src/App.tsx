@@ -15,18 +15,20 @@ import { UiModeProvider, useUiMode } from "./ui/UiModeContext";
 import { SimpleShell } from "./ui/simple";
 import { useViewportScale } from "./hooks/useViewportScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useRuntimeSource } from "./hooks/useRuntimeSource";
 import "./App.css";
 import "./ProAppearance.css";
 import "./ProMotion.css";
 import "./uiMotion";
 
-// Cmd/Ctrl+数字切换到与顶部导航一致的页面。
+// Cmd/Ctrl+数字切换到与侧边栏顺序一致的页面。
 const PRO_SHORTCUT_MAP: Partial<Record<string, NavKey>> = {
   "1": "dashboard",
   "2": "nodes",
-  "3": "config",
-  "4": "traffic",
-  "5": "logs",
+  "3": "chains",
+  "4": "config",
+  "5": "traffic",
+  "6": "logs",
 };
 
 // Secondary pages: code-split so low-memory WebView recreate only parses home first.
@@ -35,6 +37,9 @@ const ConfigPage = lazy(() =>
 );
 const NodesPage = lazy(() =>
   import("./pages/NodesPage").then((m) => ({ default: m.NodesPage })),
+);
+const ChainPage = lazy(() =>
+  import("./pages/ChainPage").then((m) => ({ default: m.ChainPage })),
 );
 const TrafficPage = lazy(() =>
   import("./pages/TrafficPage").then((m) => ({ default: m.TrafficPage })),
@@ -60,6 +65,13 @@ function PageFallback() {
 function ProShell() {
   const [nav, setNav] = useState<NavKey>("dashboard");
   const { token, prefill } = useImportIntent();
+  const runtimeSource = useRuntimeSource();
+
+  // custom（自配 sing-box）运行来源下代理链入口被侧栏隐藏；
+  // 用户已停留在链页时回落仪表盘，与设置页旧入口的拦截行为一致。
+  useEffect(() => {
+    if (runtimeSource.startsWith("singbox:") && nav === "chains") setNav("dashboard");
+  }, [runtimeSource, nav]);
 
   // One-click subscribe → jump to profiles so ConfigPage can open the add form.
   useEffect(() => {
@@ -87,6 +99,7 @@ function ProShell() {
             <Suspense fallback={<PageFallback />}>
               {nav === "config" && <ConfigPage />}
               {nav === "nodes" && <NodesPage />}
+              {nav === "chains" && <ChainPage />}
               {nav === "traffic" && <TrafficPage />}
               {nav === "logs" && <LogsPage />}
               {nav === "settings" && <SettingsPage />}

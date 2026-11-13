@@ -55,13 +55,11 @@ import type {
 import { RulesPage } from "./RulesPage";
 import { DnsPage } from "./DnsPage";
 import { HostsPage } from "./HostsPage";
-import { ChainPage } from "./ChainPage";
 
 type SettingsTab =
   | "app"
   | "ports"
   | "rules"
-  | "chain"
   | "multiCore"
   | "dns"
   | "hosts"
@@ -69,7 +67,6 @@ type SettingsTab =
 
 const CUSTOM_BLOCKED_TABS = new Set([
   "rules",
-  "chain",
   "multiCore",
   "dns",
   "hosts",
@@ -221,11 +218,6 @@ export function SettingsPage() {
           id: "rules" as const,
           label: t("settings.tabRules"),
           hint: t("settings.hintRules"),
-        },
-        {
-          id: "chain" as const,
-          label: t("settings.tabChain"),
-          hint: t("settings.hintChain"),
         },
         {
           id: "multiCore" as const,
@@ -1081,7 +1073,6 @@ export function SettingsPage() {
           customRuntime
             ? {
                 rules: t("config.customDisabled"),
-                chain: t("config.customDisabled"),
                 multiCore: t("config.customDisabled"),
                 dns: t("config.customDisabled"),
                 hosts: t("config.customDisabled"),
@@ -1093,7 +1084,6 @@ export function SettingsPage() {
 
       {error &&
         visibleTab !== "rules" &&
-        visibleTab !== "chain" &&
         visibleTab !== "dns" &&
         visibleTab !== "hosts" && (
         <ErrorModal message={error} onClose={() => setError(null)} />
@@ -1109,7 +1099,6 @@ export function SettingsPage() {
               : ""
         }${
           visibleTab === "rules" ||
-          visibleTab === "chain" ||
           visibleTab === "multiCore" ||
           visibleTab === "dns"
             ? " settings-scroll-embed"
@@ -1118,8 +1107,6 @@ export function SettingsPage() {
         key={visibleTab}
       >
         {!customRuntime && visibleTab === "rules" && <RulesPage embedded />}
-
-        {!customRuntime && visibleTab === "chain" && <ChainPage embedded />}
 
         {visibleTab === "multiCore" && settings && (
           <section className="settings-panel" aria-label="Core options">
