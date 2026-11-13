@@ -650,11 +650,11 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [customRuntime, shareNode, editNode, detailNode, error, contextMenu, selectAllMatching]);
 
-  // One-click cleanup: ids whose latest latency run timed out. The strong
-  // predicate (latency_at + timeout classification) keeps every other
-  // failure kind (TLS / config / connection) and untested nodes safe. Based
-  // on `nodes` (the full search-filtered list), not the favorites view, so
-  // the button acts on all timed-out nodes in the current listing.
+  // One-click cleanup: ids whose latest latency run failed. The predicate
+  // (latency_at + node-attributed failure kinds) keeps untested nodes and
+  // local core errors (core / missing_core / unsupported) out of the target
+  // set. Based on `nodes` (the full search-filtered list), not the favorites
+  // view, so the button acts on all failed nodes in the current listing.
   const timedOutIds = useMemo(
     () => nodes.filter((n) => !customRuntime && isTimedOutNode(n)).map((n) => n.id),
     [nodes, customRuntime],
@@ -706,7 +706,7 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  /** One-click delete of all timed-out nodes reuses the guarded batch path. */
+  /** One-click delete of all latency-failed nodes reuses the guarded batch path. */
   async function deleteTimedOutNodes() {
     if (timedOutIds.length === 0 || testing || batchBusy || loading) return;
     await deleteSelected(
@@ -1177,7 +1177,7 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
             </GlassButton>
           )}
           {/* One-click cleanup for the last latency run: only appears once at
-              least one node has a recorded timeout result. Disabled while a
+              least one node has a recorded failure result. Disabled while a
               test is streaming so the target set stays stable; hidden in
               read-only custom mode. */}
           {!customRuntime && timedOutIds.length > 0 && (
