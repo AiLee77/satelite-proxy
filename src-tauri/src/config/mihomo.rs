@@ -2670,10 +2670,15 @@ Dh8aZf9uMe34poL6mGQxVWTsiVWSiQbcgOzxHI8Bu6Vebx4=
             Some("MATCH,chain-exit: 示例链")
         );
 
-        // Duplicate display names must still produce unique mihomo names.
+        // Duplicate display names must still produce unique mihomo names —
+        // but uniqueness is keyed on the FULL tag (1-based hop prefix), not
+        // the bare node name. Two hops with the same display name resolve to
+        // `1/<name>` / `2/<name>`, which are already unique, so no `-N`
+        // suffix is added; the suffix exists only as a guard for future
+        // same-hop fan-out (pools are refused today).
         let chain2 = crate::domain::ProxyChain::new("重名", vec![hop(&a.id), hop(&c.id)]);
         let built2 = build_mihomo_chain_export(&[a, c], &chain2).unwrap();
-        assert_eq!(built2.outbound_tags, vec!["1/日本 前置", "2/日本 前置-2"]);
+        assert_eq!(built2.outbound_tags, vec!["1/日本 前置", "2/日本 前置"]);
 
         // Pool hops are selector groups — a dialer-proxy rung would pin
         // whatever the group currently selects, so the export refuses.
