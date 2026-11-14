@@ -372,6 +372,11 @@ export interface ProxyNode {
   subscription_name?: string;
   /** Present from list_all_nodes — true if the node id is in favorite_nodes. */
   favorite?: boolean;
+  /** Present ONLY on virtual chain entries (v2rayN-style "chain as exit"):
+   *  the chain's hop count. The entry id is `chain:<chain_id>` and its name
+   *  is the chain name; placeholder protocol/server fields carry no meaning.
+   *  Branch on this marker, never on the placeholder fields. */
+  chain_hops?: number | null;
   /** Node listing only (`list_chain_nodes`): false when the owning
    *  subscription is currently disabled. Keyword pools stay enabled-only by
    *  mirroring this flag; absent = legacy listing without the information

@@ -15,6 +15,10 @@
  * Anything unmatched lands in the "other" group.
  */
 
+// Explicit .ts extension: node --test loads this module raw (type-stripped)
+// for scripts/test-chain-nodes.mjs — extensionless relative imports resolve
+// only under Vite, not under Node's ESM loader.
+import { isChainEntry } from "./chainVirtualNode.ts";
 import type { ProxyNode } from "./types";
 
 export type GroupBy = "default" | "sub" | "proto" | "country";
@@ -184,6 +188,9 @@ function detectRegion(name: string): Region | null {
 export interface GroupLabels {
   other: string;
   noSub: string;
+  /** Virtual chain entries get their own leading group in every grouped
+   *  view — they are exits, not nodes of any subscription/protocol/region. */
+  chains: string;
 }
 
 /** Group nodes by the chosen dimension; within-group order is preserved. */
@@ -196,6 +203,13 @@ export function groupNodes(
   if (by === "default") {
     return [{ key: "__all", label: "", nodes }];
   }
+  const chains = nodes.filter(isChainEntry);
+  if (chains.length > 0) {
+    nodes = nodes.filter((n) => !isChainEntry(n));
+  }
+  const chainGroup: NodeGroup[] = chains.length
+    ? [{ key: "__chains", label: labels.chains, nodes: chains }]
+    : [];
   if (by === "sub") {
     const map = new Map<string, NodeGroup>();
     for (const n of nodes) {
@@ -207,7 +221,7 @@ export function groupNodes(
       }
       g.nodes.push(n);
     }
-    return sortGroups([...map.values()], labels);
+    return [...chainGroup, ...sortGroups([...map.values()], labels)];
   }
 
   if (by === "proto") {
@@ -220,7 +234,7 @@ export function groupNodes(
       }
       g.nodes.push(n);
     }
-    return sortGroups([...map.values()], labels);
+    return [...chainGroup, ...sortGroups([...map.values()], labels)];
   }
 
   // country
@@ -243,7 +257,7 @@ export function groupNodes(
     }
     g.nodes.push(n);
   }
-  return sortGroups([...map.values()], labels);
+  return [...chainGroup, ...sortGroups([...map.values()], labels)];
 }
 
 function sortGroups(groups: NodeGroup[], labels: GroupLabels): NodeGroup[] {

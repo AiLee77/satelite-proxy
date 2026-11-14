@@ -30,6 +30,7 @@ import { ErrorModal } from "../components/ErrorModal";
 import { NodeDetailModal } from "../components/NodeDetailModal";
 import { useI18n } from "../i18n";
 import { nodeTip } from "../nodeTooltip";
+import { isChainEntry, isChainVirtualId } from "../chainVirtualNode";
 import { groupNodes, type GroupBy } from "../nodeGroups";
 import { GlassSeg } from "../components/GlassSeg";
 import { waitForCoreRestart } from "../coreBusy";
@@ -304,6 +305,7 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
       groupNodes(displayed, groupBy, locale, {
         other: t("nodes.groupOther"),
         noSub: t("nodes.groupNoSub"),
+        chains: t("nodes.groupChains"),
       }),
     [displayed, groupBy, locale, t],
   );
@@ -510,9 +512,16 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
       // selecting an Xray-incompatible node rebuilds/restarts the core; the
       // latter is automatically handed to bundled sing-box by the backend.
       // Stopped: write the config for the selected (possibly new) core.
+      // Chain exits always restart — chain outbounds exist only after a
+      // config rebuild (no hot-swap in v1).
       if (!status.running) {
         await generateSingboxConfig();
-      } else if (leavingKernel || coreSwitched || before.core_type === "xray") {
+      } else if (
+        leavingKernel ||
+        coreSwitched ||
+        before.core_type === "xray" ||
+        isChainVirtualId(id)
+      ) {
         // Main group rebuilds urltest → selector: hold the busy feedback
         // or wait for the automatic Xray → sing-box handoff to finish.
         setSwitching(true);
@@ -610,17 +619,23 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
 
   async function onTestLatency(kind: "real" | "ping" = "real") {
     if (showFavoritesOnly) {
-      await onTestNodes(displayed.map((node) => node.id), kind);
+      await onTestNodes(
+        displayed.filter((n) => !isChainEntry(n)).map((node) => node.id),
+        kind,
+      );
       return;
     }
+    // Chain entries are exits, not nodes — never probe them.
     const ids = customRuntime
-      ? nodes.map((n) => n.id)
-      : await listNodeIds(query, sortMode);
+      ? nodes.filter((n) => !isChainEntry(n)).map((n) => n.id)
+      : (await listNodeIds(query, sortMode)).filter(
+          (id) => !isChainVirtualId(id),
+        );
     await onTestNodes(ids, kind);
   }
 
   function toggleSelected(id: string) {
-    if (customRuntime || batchBusy) return;
+    if (customRuntime || batchBusy || isChainVirtualId(id)) return;
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -632,7 +647,13 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
   const selectAllMatching = useCallback(async () => {
     if (customRuntime || batchBusy) return;
     try {
-      setSelectedIds(new Set(showFavoritesOnly ? displayed.map((node) => node.id) : await listNodeIds(query)));
+      setSelectedIds(
+        new Set(
+          showFavoritesOnly
+            ? displayed.filter((n) => !isChainEntry(n)).map((node) => node.id)
+            : (await listNodeIds(query)).filter((id) => !isChainVirtualId(id)),
+        ),
+      );
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     }
@@ -831,7 +852,8 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
 
 
   function renderGroupActions(item: GroupHeaderItem) {
-    if (customRuntime || item.nodes.length === 0) return null;
+    // Chain entries form a display-only group — probing them is meaningless.
+    if (customRuntime || item.key === "__chains" || item.nodes.length === 0) return null;
     const groupTesting = testing && testingGroupKey === item.key;
     return (
       <span className="node-group-actions">
@@ -911,7 +933,9 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
         setShareNotice(t("nodes.dragSameGroup"));
         return;
       }
-      const next = [...sourceGroup.nodes];
+      // Chain entries never participate in manual ordering — dropping onto
+      // a chain row is a no-op (the backend re-appends chains at the end).
+      const next = [...sourceGroup.nodes].filter((n) => !isChainEntry(n));
       const index = next.findIndex(n => n.id === id);
       const targetIndex = next.findIndex(n => n.id === target);
       if (index < 0 || targetIndex < 0) return;
@@ -937,25 +961,26 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     const active = policyManaged ? selectedBy.length > 0 : n.id === currentId;
     const isTesting = testingIds.has(n.id);
     const selected = selectedIds.has(n.id);
+    const isChain = isChainEntry(n);
     return (
       <div
         key={n.id}
         data-node-id={n.id}
-        onPointerDown={event => nodeDrag.onPointerDown(event, n.id, !customRuntime && !batchBusy && !testing && !loading)}
+        onPointerDown={event => nodeDrag.onPointerDown(event, n.id, !customRuntime && !isChain && !batchBusy && !testing && !loading)}
         className={`node-list-row node-virtual-row ${active ? "row-active" : ""} ${selected ? "row-selected" : ""}`}
         style={{
           gridTemplateColumns: NODE_LIST_COLS,
           height: LIST_ROW_HEIGHT,
-          cursor: customRuntime ? "default" : "pointer",
+          cursor: customRuntime || isChain ? "default" : "pointer",
         }}
         onClick={(event) => {
-          if (customRuntime || nodeDrag.suppressClick.current) return;
+          if (customRuntime || isChain || nodeDrag.suppressClick.current) return;
           if (event.ctrlKey || event.metaKey) {
             toggleSelected(n.id);
           } else setSelectedIds(new Set([n.id]));
         }}
         onContextMenu={(event) => {
-          if (customRuntime) return;
+          if (customRuntime || isChain) return;
           event.preventDefault();
           setContextMenu({ node: n, x: event.clientX, y: event.clientY });
         }}
@@ -981,35 +1006,56 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
           {policyManaged && selectedBy.length > 0 && <span className="node-policy-selection" title={selectedBy.join("、")}>{t("mihomoGroups.selectedBy", { groups: selectedBy.join("、") })}</span>}
         </span>
         <span className="node-list-sub">
-          <span className="node-sub-label" title={n.subscription_name}>
-            {n.subscription_name || "—"}
-          </span>
+          {isChain ? (
+            <span className="sidecar-tag chain" title={t("nodes.chainEntryHint")}>
+              {t("nodes.chainBadge")}
+            </span>
+          ) : (
+            <span className="node-sub-label" title={n.subscription_name}>
+              {n.subscription_name || "—"}
+            </span>
+          )}
         </span>
-        <span className="node-proto-tags" title={n.protocol}>
-          <code>{n.protocol}</code>
-          {delegatedCores.has(n.protocol) ? (
-            <span className="sidecar-tag">{delegatedCores.get(n.protocol) === "xray" ? "Xray" : "mihomo"}</span>
-          ) : null}
+        <span className="node-proto-tags" title={isChain ? t("nodes.chainEntryHint") : n.protocol}>
+          {isChain ? (
+            <>
+              <code>{t("nodes.chainBadge")}</code>
+              <span className="sidecar-tag chain">
+                {t("nodes.chainHops", { n: n.chain_hops ?? 0 })}
+              </span>
+            </>
+          ) : (
+            <>
+              <code>{n.protocol}</code>
+              {delegatedCores.has(n.protocol) ? (
+                <span className="sidecar-tag">{delegatedCores.get(n.protocol) === "xray" ? "Xray" : "mihomo"}</span>
+              ) : null}
+            </>
+          )}
         </span>
-        <span title={n.server}>{n.server}</span>
-        <span title={String(n.port)}>{n.port}</span>
+        <span title={isChain ? undefined : n.server}>{isChain ? "—" : n.server}</span>
+        <span title={isChain ? undefined : String(n.port)}>{isChain ? "—" : n.port}</span>
         <span className="node-list-latency">
-          <button
-            type="button"
-            className="node-latency-action"
-            aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
-            disabled={testing || customRuntime || batchBusy}
-            title={xrayCore ? t("nodes.realLatencyXrayHint") : t("nodes.testOneLatency")}
-            onClick={(event) => {
-              event.stopPropagation();
-              void onTestNodes([n.id], "real");
-            }}
-          >
-            <NodeLatencyDisplay
-              node={n}
-              testing={isTesting}
-            />
-          </button>
+          {isChain ? (
+            <span className="node-sub-label">—</span>
+          ) : (
+            <button
+              type="button"
+              className="node-latency-action"
+              aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
+              disabled={testing || customRuntime || batchBusy}
+              title={xrayCore ? t("nodes.realLatencyXrayHint") : t("nodes.testOneLatency")}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onTestNodes([n.id], "real");
+              }}
+            >
+              <NodeLatencyDisplay
+                node={n}
+                testing={isTesting}
+              />
+            </button>
+          )}
         </span>
       </div>
     );
@@ -1020,21 +1066,22 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     const active = policyManaged ? selectedBy.length > 0 : n.id === currentId;
     const isTesting = testingIds.has(n.id);
     const selected = selectedIds.has(n.id);
+    const isChain = isChainEntry(n);
     return (
       <div
         key={n.id}
         data-node-id={n.id}
-        onPointerDown={event => nodeDrag.onPointerDown(event, n.id, !customRuntime && !batchBusy && !testing && !loading)}
+        onPointerDown={event => nodeDrag.onPointerDown(event, n.id, !customRuntime && !isChain && !batchBusy && !testing && !loading)}
         className={`node-card ${active ? "active" : ""} ${selected ? "selected" : ""}`}
         onClick={(event) => {
-          if (customRuntime || nodeDrag.suppressClick.current) return;
+          if (customRuntime || isChain || nodeDrag.suppressClick.current) return;
           if (event.ctrlKey || event.metaKey) {
             toggleSelected(n.id);
           } else setSelectedIds(new Set([n.id]));
         }}
-        style={{ cursor: customRuntime ? "default" : undefined }}
+        style={{ cursor: customRuntime || isChain ? "default" : undefined }}
         onContextMenu={(event) => {
-          if (customRuntime) return;
+          if (customRuntime || isChain) return;
           event.preventDefault();
           setContextMenu({ node: n, x: event.clientX, y: event.clientY });
         }}
@@ -1054,13 +1101,24 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
           >
             {active ? "●" : "○"}
           </button>
-          <div className="node-card-meta node-proto-tags">
-            <code>{n.protocol}</code>
-            {delegatedCores.has(n.protocol) ? (
-              <span className="sidecar-tag">{delegatedCores.get(n.protocol) === "xray" ? "Xray" : "mihomo"}</span>
-            ) : null}
+          <div className="node-card-meta node-proto-tags" title={isChain ? t("nodes.chainEntryHint") : undefined}>
+            {isChain ? (
+              <>
+                <code>{t("nodes.chainBadge")}</code>
+                <span className="sidecar-tag chain">
+                  {t("nodes.chainHops", { n: n.chain_hops ?? 0 })}
+                </span>
+              </>
+            ) : (
+              <>
+                <code>{n.protocol}</code>
+                {delegatedCores.has(n.protocol) ? (
+                  <span className="sidecar-tag">{delegatedCores.get(n.protocol) === "xray" ? "Xray" : "mihomo"}</span>
+                ) : null}
+              </>
+            )}
           </div>
-          {!customRuntime && (
+          {!customRuntime && !isChain && (
             <button
               type="button"
               className="icon-btn node-card-menu"
@@ -1084,25 +1142,33 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
         <div className="node-card-name" {...nodeTip(n, t)}>{n.favorite ? "♥ " : ""}{n.name}</div>
         {policyManaged && selectedBy.length > 0 && <span className="node-policy-selection" title={selectedBy.join("、")}>{t("mihomoGroups.selectedBy", { groups: selectedBy.join("、") })}</span>}
         <div className="node-card-footer">
-          <span className="node-sub-label" title={n.subscription_name ?? ""}>
-            {n.subscription_name}
-          </span>
-          <button
-            type="button"
-            className="node-latency-action node-card-latency"
-            title={t("nodes.testOneLatency")}
-            aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
-            disabled={testing || customRuntime || batchBusy}
-            onClick={(event) => {
-              event.stopPropagation();
-              void onTestNodes([n.id], "real");
-            }}
-          >
-            <NodeLatencyDisplay
-              node={n}
-              testing={isTesting}
-            />
-          </button>
+          {isChain ? (
+            <span className="sidecar-tag chain" title={t("nodes.chainEntryHint")}>
+              {t("nodes.chainBadge")}
+            </span>
+          ) : (
+            <span className="node-sub-label" title={n.subscription_name ?? ""}>
+              {n.subscription_name}
+            </span>
+          )}
+          {!isChain && (
+            <button
+              type="button"
+              className="node-latency-action node-card-latency"
+              title={t("nodes.testOneLatency")}
+              aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
+              disabled={testing || customRuntime || batchBusy}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onTestNodes([n.id], "real");
+              }}
+            >
+              <NodeLatencyDisplay
+                node={n}
+                testing={isTesting}
+              />
+            </button>
+          )}
         </div>
       </div>
     );

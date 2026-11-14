@@ -7,6 +7,12 @@ import {
   parseKeywords,
   poolKeywordMatch,
 } from "../src/chainNodeUniverse.ts";
+import {
+  CHAIN_NODE_ID_PREFIX,
+  isChainEntry,
+  isChainVirtualId,
+} from "../src/chainVirtualNode.ts";
+import { groupNodes } from "../src/nodeGroups.ts";
 
 const node = (id, name, extra = {}) => ({
   id, name, protocol: "vmess", server: "s", port: 1, subscription_id: "sub-a", ...extra,
@@ -190,4 +196,116 @@ test("链导出双入口已全链路接线：mihomo YAML 与链文本（D 回归
     "utf8",
   );
   assert.match(wf, /live_exported_chain_config_validates -- --ignored/);
+});
+
+// —— E3：虚拟链条目（v2rayN 式“链作为出口”） ——
+
+const chainEntry = (id, name, hops = 2) => ({
+  id: `chain:${id}`,
+  name,
+  protocol: "unknown",
+  server: "",
+  port: 0,
+  chain_hops: hops,
+});
+
+test("chainVirtualNode：id 前缀与显式 wire 标志是唯一判定口径", () => {
+  assert.equal(CHAIN_NODE_ID_PREFIX, "chain:");
+  assert.equal(isChainVirtualId("chain:chain-ab12"), true);
+  assert.equal(isChainVirtualId("aabbccddeeff0011"), false);
+  assert.equal(isChainEntry(chainEntry("c1", "美转港")), true);
+  assert.equal(isChainEntry(node("a", "东京 01")), false);
+  assert.equal(isChainEntry({ chain_hops: null }), false);
+});
+
+test("groupNodes：分组视图下链条目收入首个“代理链”组，不落入协议/订阅/国家组", () => {
+  const labels = { other: "其他", noSub: "未分组", chains: "代理链" };
+  const a = node("a", "🇯🇵 东京 01", { subscription_name: "机场A" });
+  const b = node("b", "香港 02", { subscription_name: "机场A" });
+  const c = chainEntry("chain-1", "美转港", 3);
+  const nodes = [a, b, c];
+  for (const by of ["sub", "proto", "country"]) {
+    const groups = groupNodes(nodes, by, "zh", labels);
+    assert.equal(groups[0].key, "__chains", `${by}: 链组必须在最前`);
+    assert.equal(groups[0].label, "代理链");
+    assert.deepEqual(groups[0].nodes.map((n) => n.id), [c.id]);
+    // 链条目不得再出现在任何常规分组（尤其 proto 的 unknown 组）。
+    for (const g of groups.slice(1)) {
+      assert.ok(
+        g.nodes.every((n) => n.id !== c.id),
+        `${by}: 链条目混入组 ${g.key}`,
+      );
+    }
+    // 常规节点仍正常分组。
+    assert.ok(groups.slice(1).some((g) => g.nodes.some((n) => n.id === "a")));
+  }
+  // 默认（平铺）视图不分组：链条目保持在列表原位。
+  const flat = groupNodes(nodes, "default", "zh", labels);
+  assert.equal(flat.length, 1);
+  assert.deepEqual(flat[0].nodes.map((n) => n.id), ["a", "b", c.id]);
+  // 没有链条目时不产生空链组。
+  const noChains = groupNodes([a, b], "sub", "zh", labels);
+  assert.ok(noChains.every((g) => g.key !== "__chains"));
+});
+
+test("E3 后端：虚拟条目合入三个列表命令并带显式 wire 标志", () => {
+  const config = readFileSync(
+    new URL("../src-tauri/src/commands/config.rs", import.meta.url),
+    "utf8",
+  );
+  // 显式标志字段（skip when None）。
+  assert.match(config, /pub chain_hops: Option<u8>/);
+  // 合成 helper + 门槛：仅 sing-box 主核且 generated 运行来源。
+  assert.match(config, /fn chain_virtual_listed_nodes\(/);
+  assert.match(config, /!= crate::core::CoreKind::SingBox/);
+  assert.match(config, /runtime_source\(\)\.is_custom\(\)/);
+  assert.match(config, /crate::domain::chain_virtual_node_id\(&chain\.id\)/);
+  // 三个列表命令全部合入。
+  assert.equal(
+    (config.match(/nodes\.extend\(chain_virtual_listed_nodes\(/g) || []).length,
+    3,
+    "list_all_nodes / list_nodes_page / list_node_ids 必须全部合入虚拟条目",
+  );
+  // 占位协议/服务字段绝不作为判定依据（helper 注释红线）。
+  assert.match(config, /never be displayed/);
+});
+
+test("E3 前端接线：类型、页面守卫与双语文案", () => {
+  const types = readFileSync(new URL("../src/types.ts", import.meta.url), "utf8");
+  assert.match(types, /chain_hops\?: number \| null;/);
+  const nodesPage = readFileSync(
+    new URL("../src/pages/NodesPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(nodesPage, /from "\.\.\/chainVirtualNode"/);
+  // 选中链条目必须等待重启生效。
+  assert.match(nodesPage, /isChainVirtualId\(id\)[\s\S]{0,400}?setSwitching\(true\)/);
+  // 批量测速/全选/拖拽均排除链条目。
+  assert.match(nodesPage, /filter\(\(id\) => !isChainVirtualId\(id\)\)/);
+  assert.match(nodesPage, /!isChainEntry\(n\)/);
+  assert.match(nodesPage, /chains: t\("nodes\.groupChains"\)/);
+  const simple = readFileSync(
+    new URL("../src/ui/simple/SimpleServersPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(simple, /from "\.\.\/\.\.\/chainVirtualNode"/);
+  assert.match(simple, /isChainVirtualId\(id\)/);
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("nodes.groupChains", "Proxy chains");
+  has("nodes.chainBadge", "Chain");
+  has("nodes.chainHops", "{n} hops");
+  has("nodes.groupChains", "代理链");
+  has("nodes.chainBadge", "链");
+  has("nodes.chainHops", "{n} 跳");
+  assert.match(messages, /"nodes\.chainEntryHint": "Chain exit/);
+  assert.match(messages, /"nodes\.chainEntryHint": "代理链出口/);
 });

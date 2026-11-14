@@ -1839,6 +1839,14 @@ button {
   white-space: nowrap;
 }
 
+/* Virtual chain entry marker (nodes list/grid + simple mode): same
+   outlined-box family, tinted with the primary accent so a chain stands
+   out from delegation badges. */
+.sidecar-tag.chain {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
 /* —— Version tab: app bar (full width under the kernel cards) ——
    Two compact lines: identity + versions + actions, then a quiet meta strip
    (last check · platform · stack · exe path) and the link row. */

@@ -1,5 +1,7 @@
 # AGENTS.md — Satelite Proxy 项目地图
 
+2026-11-14 链虚拟节点（v2rayN 式“链作为出口”，E1–E3，同在 feature-chain-pool-fixes）：节点列表在 sing-box 主核+generated 来源下自动出现以链名命名的虚拟条目，选中即把该链出口作为主出口（E1 生成层合入 + E2 选中通道与存储守卫 + E3 列表呈现）。id 为 `chain:<链id>`（真实节点 id 为 32 位 hex，命名空间零碰撞），wire 标志 `ListedNode.chain_hops` 是唯一判定口径，占位 protocol/server 永不展示也不作分支依据。commands/config.rs::chain_virtual_listed_nodes 合成条目并合入 list_all_nodes/list_nodes_page/list_node_ids（Xray/mihomo 主核与 custom 来源一律不返回，query 只匹配链名）。builder 主 selector 合入存活链出口 tag，`chain:` default 映射末跳，kernel(urltest) 不掺链。选中走 state::select_chain_exit：ensure_chain_selectable 镜像构建期存活语义（失效跳/空池/缺池带跳位与名称报错），custom 拒、非 sing-box 拒，保存后重启生效（v1 无热切，同 Xray 无 live API 形态）；ensure_current_node_valid 对 `chain:` 只校验链仍存在（刷新冲不掉），remember_current_node 不写订阅槽位，删除正被选中的链拒绝。前端 src/chainVirtualNode.ts 判定、groupNodes 独立「代理链」首组，NodesPage/SimpleServers 行/卡片渲染链徽标+跳数并禁测速/收藏/编辑/分享/拖拽/批量选择，Dashboard/SimpleConnect 跳过探测改显链徽标；test-chain-nodes.mjs 覆盖分组/接线/双语。
+
 2026-11-13 链导出（D，随A/B/C 同在 feature-chain-pool-fixes）：链卡 ⋮ 菜单新增「复制链文本」与「导出 mihomo YAML」（均写剪贴板，成功反馈为 transient notice）。后端 build_mihomo_chain_export 以 hop[i≥1].`dialer-proxy`=hop[i-1] 复现应用侧 detour 接线，入口跳剥离原文 dialer-proxy 防链外泄漏；导出 tag 用「i/节点名」（重名 -N 去重），尾部 `chain-exit: <链名>` select 组 + MATCH 全收。节点宇宙用 enabled_nodes_with_chain_refs（禁用订阅的前置跳也可导）；池跳、失效引用、单跳、mihomo 不支持协议一律硬报错不静默降级。live_exported_chain_config_validates 在 build-windows.yml 用真 mihomo -t 校验导出 YAML；本机无 cargo，仅 Node/tsc，Rust 以 CI 为准。
 
 2026-11-13 节点网格与SOCKS导入：更多按钮必须使用icon-btn并参与卡片头部布局，不能被全局主按钮规则染色或绝对定位盖协议。网格列数按实际容器宽度计算并同步虚拟行，不再仅按window断点猜测。SOCKS的URI先分离userinfo再解析地址，兼容含/的标准Base64；有显式冒号按组件解码一次，无冒号仅对有效UTF-8且含冒号的Base64凭据对解码，内部凭据不再percent decode；普通用户名及空认证保留。SS2022本轮已取消，不夹带修改。新增合成导入/导出回归与真实节点网格浏览器检查，Rust/浏览器/打包仅Actions，版本1.0.46。
@@ -260,6 +262,7 @@ satelite-proxy/
 │   ├── components/          # 玻璃设计系统 + 3D 首页 + 弹窗表单
 │   ├── hooks/               # useVirtualRange / useVisibleInterval / 拖拽排序 / 嵌套滚动隔离等
 │   ├── qrImport.ts          # 扫码内容分类、快捷键边界，只预填既有导入表单
+│   ├── chainVirtualNode.ts  # 链虚拟条目判定（chain: id 前缀 + chain_hops wire 标志，唯一口径）
 │   ├── qrDecode.ts          # jsQR 图像金字塔/分块识别，由 qrDecode.worker.ts 隔离执行
 │   ├── nodeUuid.ts          # Web Crypto UUID v4，供现有节点表单显式生成
 │   ├── i18n/                # zh/en 扁平文案表（TS 强制双语言键一致）

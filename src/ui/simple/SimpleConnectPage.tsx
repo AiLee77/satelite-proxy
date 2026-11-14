@@ -16,6 +16,7 @@ import { GlassSeg } from "../../components/GlassSeg";
 import { ErrorModal } from "../../components/ErrorModal";
 import { HeroVisual } from "../../components/HeroVisual";
 import { SystemProxyRestartNotice } from "../../components/SystemProxyRestartNotice";
+import { isChainEntry, isChainVirtualId } from "../../chainVirtualNode";
 import { useCaptureModeSwitch } from "../../hooks/useCaptureModeSwitch";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { useI18n } from "../../i18n";
@@ -101,6 +102,8 @@ export function SimpleConnectPage({ onGoServers, onGoTraffic }: Props) {
   }, [reloadStatus, reloadNode]);
 
   const probeCurrent = useCallback(async (nodeId: string) => {
+    // Chain entries are exits, not nodes — there is nothing to probe.
+    if (isChainVirtualId(nodeId)) return;
     setTesting(true);
     try {
       const batch = await testNodesLatency([nodeId], 3000);
@@ -242,9 +245,11 @@ export function SimpleConnectPage({ onGoServers, onGoTraffic }: Props) {
     : customRuntime
       ? t("config.customReadonly")
       : running
-        ? [node?.protocol?.toUpperCase(), testing ? "…" : fmtLatency(node?.latency_ms)]
-            .filter(Boolean)
-            .join(" · ")
+        ? node && isChainEntry(node)
+          ? `${t("nodes.chainBadge")} · ${t("nodes.chainHops", { n: node.chain_hops ?? 0 })}`
+          : [node?.protocol?.toUpperCase(), testing ? "…" : fmtLatency(node?.latency_ms)]
+              .filter(Boolean)
+              .join(" · ")
         : t("dashboard.desc");
 
   return (

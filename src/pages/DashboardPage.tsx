@@ -28,6 +28,7 @@ import {
   useCaptureModeSwitch,
   type CaptureMode,
 } from "../hooks/useCaptureModeSwitch";
+import { isChainEntry } from "../chainVirtualNode";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useDashboardMenuPosition } from "../hooks/useDashboardMenuPosition";
 import { useI18n } from "../i18n";
@@ -696,7 +697,8 @@ function coreDisplayName(kind: string | null | undefined): string {
   }
 
   const onProbeLatency = useCallback(async () => {
-    if (!currentNode || latencyProbing || proxy?.core_type === "xray") return;
+    // Chain entries are exits, not nodes — there is nothing to probe.
+    if (!currentNode || latencyProbing || proxy?.core_type === "xray" || isChainEntry(currentNode)) return;
     setLatencyProbing(true);
     setError(null);
     try {
@@ -829,9 +831,13 @@ function coreDisplayName(kind: string | null | undefined): string {
     : customRuntime
       ? t("config.customReadonly")
       : running
-        ? proxy?.core_type === "mihomo" ? t("mihomoGroups.dashboardNotice") : [currentNode?.protocol?.toUpperCase(), fmtLatency(currentNode?.latency_ms)]
-            .filter(Boolean)
-            .join(" · ")
+        ? proxy?.core_type === "mihomo"
+          ? t("mihomoGroups.dashboardNotice")
+          : currentNode && isChainEntry(currentNode)
+            ? `${t("nodes.chainBadge")} · ${t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 })}`
+            : [currentNode?.protocol?.toUpperCase(), fmtLatency(currentNode?.latency_ms)]
+                .filter(Boolean)
+                .join(" · ")
         : t("dashboard.desc");
 
   async function onCopyEnv() {
