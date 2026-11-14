@@ -4654,7 +4654,7 @@ mod tests {
         //    the pool matching the enabled node does NOT admit the collected
         //    node even though both share the keyword universe data.
         assert!(
-            !tags.contains(&crate::domain::pool_outbound_tag_for_id(&keyword_pool_jp.id)),
+            !tags.contains(&crate::domain::pool_outbound_tag_for_id(&keyword_pool_jp.id).as_str()),
             "keyword pool matching only disabled nodes must not emit a selector"
         );
         let exit_keyword_tag = crate::domain::pool_outbound_tag_for_id(&keyword_pool_exit.id);
