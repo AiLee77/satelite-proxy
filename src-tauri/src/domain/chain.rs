@@ -68,6 +68,25 @@ pub fn pool_outbound_tag_for_id(id: &str) -> String {
     format!("pool-{}", &id[id.len().saturating_sub(20)..])
 }
 
+/// Virtual node id prefix for chain entries in the node list — a chain can
+/// be picked as the current exit exactly like a node (v2rayN-style), with
+/// `settings.current_node_id` holding `"chain:<chain_id>"`. Real node ids
+/// are bare sha256 hex (`ProxyNode::compute_id`) and chain ids already use
+/// a `chain-` prefix, so `chain:` collides with neither namespace.
+pub const CHAIN_NODE_ID_PREFIX: &str = "chain:";
+
+/// Virtual node id for a chain, as shown by node listings and persisted in
+/// `settings.current_node_id` when the chain is the selected exit.
+pub fn chain_virtual_node_id(chain_id: &str) -> String {
+    format!("{CHAIN_NODE_ID_PREFIX}{chain_id}")
+}
+
+/// Inverse of [`chain_virtual_node_id`] — `Some(chain_id)` for virtual chain
+/// entries, `None` for ordinary node ids.
+pub fn chain_id_from_virtual_node_id(id: &str) -> Option<&str> {
+    id.strip_prefix(CHAIN_NODE_ID_PREFIX)
+}
+
 /// One hop in a [`ProxyChain`] — either a single pinned node or a pool
 /// (resolved to that pool's selector/urltest outbound at build time).
 #[derive(Debug, Clone, Serialize, Deserialize)]

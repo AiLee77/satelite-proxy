@@ -443,7 +443,25 @@ pub fn build_singbox_config_with_chain_context(
         crate::app_log::warn("singbox_config", format!("filtered node: {reason}"));
     }
 
-    let selected_tag = resolve_selected_tag(nodes, &proxy_member_tags, opts.current_node_id.as_deref());
+    // Chains build before the main selector: a live chain's exit tag joins
+    // the manual-selection group as a v2rayN-style virtual entry (selected
+    // via `current_node_id = "chain:<id>"`). Emission order is unchanged —
+    // `chain_outbounds` is still appended after the pool selectors below.
+    let (chain_outbounds, chain_entry_tags) = build_chain_outbounds(chains, pools, &scope, &tags);
+    let selected_tag = match opts
+        .current_node_id
+        .as_deref()
+        .and_then(crate::domain::chain_id_from_virtual_node_id)
+    {
+        // A chain whose hops went stale never reaches `chain_entry_tags`,
+        // so an unresolvable virtual selection falls back to the first node
+        // instead of pointing the group at a nonexistent outbound.
+        Some(chain_id) => chain_entry_tags
+            .get(chain_id)
+            .cloned()
+            .unwrap_or_else(|| resolve_selected_tag(nodes, &proxy_member_tags, None)),
+        None => resolve_selected_tag(nodes, &proxy_member_tags, opts.current_node_id.as_deref()),
+    };
     let effective_rules = effective_route_rules(&opts.rule_sets, &opts.rules);
     // Build this before outbounds: direct's modern domain resolver shares the
     // same safe resolver choice. Under TUN that is dns-cn, not the local
@@ -471,6 +489,14 @@ pub fn build_singbox_config_with_chain_context(
         }));
     } else {
         let mut selector_outbounds = proxy_member_tags.clone();
+        // Virtual chain entries sit after real nodes and before direct —
+        // only chains that resolved (broken chains never reach
+        // `chain_entry_tags`), in the user's chain order.
+        for chain in chains {
+            if let Some(tag) = chain_entry_tags.get(&chain.id) {
+                selector_outbounds.push(tag.clone());
+            }
+        }
         selector_outbounds.push("direct".into());
         outbounds.push(json!({
             "type": "selector",
@@ -495,7 +521,6 @@ pub fn build_singbox_config_with_chain_context(
         interrupt_exist_connections,
     ));
     outbounds.extend(build_pool_selectors(pools, &scope, &tags));
-    let (chain_outbounds, chain_entry_tags) = build_chain_outbounds(chains, pools, &scope, &tags);
     outbounds.extend(chain_outbounds);
     let diag_members: Vec<String> = chains
         .iter()
@@ -4667,6 +4692,144 @@ mod tests {
             json!([format!("node-{}", enabled_exit.id)]),
             "keyword pool must contain enabled nodes only"
         );
+    }
+
+    // ---- Virtual chain entries (chain:<id> selection) ---------------------
+
+    #[test]
+    fn chain_exit_joins_manual_selector_and_chain_selection_resolves() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.name = "SS-US".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+        let chain = ProxyChain::new(
+            "HK → US",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain.clone()],
+            usize::MAX,
+        )
+        .expect("chain config");
+        let exit_tag = chain_hop_outbound_tag(&chain, 1);
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy selector");
+        assert_eq!(proxy["type"], json!("selector"));
+        assert_eq!(proxy["default"], json!(exit_tag));
+        // Real nodes first, then virtual chain exits in chain order, direct
+        // last — mirrors the node listing the user picks from.
+        assert_eq!(
+            proxy["outbounds"],
+            json!([
+                outbound_tag(&entry),
+                outbound_tag(&exit),
+                exit_tag,
+                "direct"
+            ])
+        );
+    }
+
+    #[test]
+    fn chain_exit_stays_out_of_kernel_urltest() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+        let chain = ProxyChain::new(
+            "HK → US",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.auto_select = crate::domain::AutoSelectMode::Kernel;
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain.clone()],
+            usize::MAX,
+        )
+        .expect("chain config");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy group");
+        // Kernel auto-select owns the exit — virtual chain entries never join
+        // the urltest group (a chain must only be picked explicitly).
+        assert_eq!(proxy["type"], json!("urltest"));
+        assert_eq!(
+            proxy["outbounds"],
+            json!([outbound_tag(&entry), outbound_tag(&exit)])
+        );
+    }
+
+    #[test]
+    fn broken_chain_is_not_selectable_and_falls_back_to_first_node() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let nodes = vec![entry.clone()];
+        let chain = ProxyChain::new(
+            "stale chain",
+            vec![
+                ChainHop::Node {
+                    node_id: "missing-a".into(),
+                },
+                ChainHop::Node {
+                    node_id: "missing-b".into(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain],
+            usize::MAX,
+        )
+        .expect("config with stale chain");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy selector");
+        assert_eq!(proxy["outbounds"], json!([outbound_tag(&entry), "direct"]));
+        assert_eq!(proxy["default"], json!(outbound_tag(&entry)));
     }
 
     // ---- Xray sidecar delegation -----------------------------------------
