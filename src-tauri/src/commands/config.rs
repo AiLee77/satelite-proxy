@@ -62,7 +62,7 @@ pub(crate) fn wire_node(mut node: ProxyNode) -> ProxyNode {
 /// semantics under Xray/mihomo or custom configs. `query` (lowercased)
 /// matches the chain name only.
 fn chain_virtual_listed_nodes(
-    store: &crate::storage::store::AppStore,
+    store: &crate::storage::AppStore,
     query: &str,
 ) -> Vec<ListedNode> {
     if crate::core::CoreKind::parse(store.settings.core_type.as_str())
@@ -1666,7 +1666,7 @@ mod tests {
     #[test]
     fn chain_virtual_entries_follow_core_and_runtime_gates() {
         use crate::domain::{ChainHop, ProxyChain};
-        use crate::storage::store::AppStore;
+        use crate::storage::AppStore;
         let mut store = AppStore::default();
         store.chains.push(ProxyChain {
             id: "chain-ab12".to_string(),
