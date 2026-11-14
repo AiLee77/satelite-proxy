@@ -1401,8 +1401,11 @@ impl AppStore {
         if refs.is_empty() {
             return out;
         }
-        let present: std::collections::HashSet<&str> =
-            out.iter().map(|n| n.id.as_str()).collect();
+        // Owned set: `&str` borrows of `out` would collide with the
+        // `out.push` below (E0502 on CI run #6 — rustc held the immutable
+        // borrows alive across the push).
+        let present: std::collections::HashSet<String> =
+            out.iter().map(|n| n.id.clone()).collect();
         for stored in &self.nodes {
             let id = stored.node.id.as_str();
             if !present.contains(id) && refs.contains(id) {

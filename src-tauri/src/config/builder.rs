@@ -321,9 +321,9 @@ pub fn build_singbox_config_with_connection_policy(
     nodes: &[ProxyNode],
     opts: &BuildOptions,
     interrupt_exist_connections: bool,
-    /// How many leading entries of `nodes` are keyword-match-eligible —
-    /// see `PoolScope`. Pass `usize::MAX` for the historic whole-list
-    /// keyword behavior.
+    // How many leading entries of `nodes` are keyword-match-eligible —
+    // see `PoolScope`. Pass `usize::MAX` for the historic whole-list
+    // keyword behavior. (Doc comments are not allowed on fn params.)
     keyword_eligible_count: usize,
 ) -> AppResult<BuiltConfig> {
     build_singbox_config_with_chain_context(
@@ -345,8 +345,8 @@ pub fn build_singbox_config_with_chain_context(
     interrupt_exist_connections: bool,
     pools: &[crate::domain::NodePool],
     chains: &[crate::domain::ProxyChain],
-    /// How many leading entries of `nodes` are keyword-match-eligible (the
-    /// enabled-subscription universe — see `PoolScope`).
+    // How many leading entries of `nodes` are keyword-match-eligible (the
+    // enabled-subscription universe — see `PoolScope`).
     keyword_eligible_count: usize,
 ) -> AppResult<BuiltConfig> {
     if nodes.is_empty() {
@@ -1649,7 +1649,8 @@ fn build_chain_outbounds_for(
             // `build_pool_selectors` and is dialed by the client directly.
             ChainHop::Pool { .. } => {}
             ChainHop::Node { node_id } => {
-                let node = nodes
+                let node = scope
+                    .all
                     .iter()
                     .find(|n| &n.id == node_id)
                     .expect("presence checked above");

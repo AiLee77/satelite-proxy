@@ -17,10 +17,9 @@ use crate::config::builder::{
 };
 use crate::config::punycode::to_ascii_domain;
 use crate::core::kind::CoreKind;
-use crate::domain::chain::ChainHop;
 use crate::domain::{
-    DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyChain, ProxyNode,
-    RuleSet, RuleSetDnsStrategy, RuleSetStrategy, Transport, DOMESTIC_DNS_POOL,
+    ChainHop, DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyChain,
+    ProxyNode, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, Transport, DOMESTIC_DNS_POOL,
 };
 use crate::error::{AppError, AppResult};
 use serde::Deserialize as _;
