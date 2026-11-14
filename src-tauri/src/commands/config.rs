@@ -1073,6 +1073,7 @@ pub async fn generate_singbox_config(
 
     let (
         mut nodes,
+        keyword_eligible_count,
         settings,
         rules,
         remote_rule_sets,
@@ -1082,8 +1083,26 @@ pub async fn generate_singbox_config(
         auto_candidates,
     ) = state
         .with_store(|store| {
+            // sing-box builds keep chain/explicit-pool referenced nodes from
+            // disabled subscriptions alive; the mihomo/Xray branches below
+            // share this tuple but have no chain-pool emission, so they keep
+            // the plain enabled list and never see disabled nodes.
+            let (nodes, keyword_count) =
+                if crate::core::CoreKind::parse(&store.settings.core_type)
+                    == crate::core::CoreKind::SingBox
+                {
+                    (
+                        store.enabled_nodes_with_chain_refs(),
+                        store.enabled_nodes().len(),
+                    )
+                } else {
+                    let n = store.enabled_nodes();
+                    let count = n.len();
+                    (n, count)
+                };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1163,6 +1182,7 @@ pub async fn generate_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1227,10 +1247,36 @@ pub fn get_active_config_path(state: State<'_, AppState>) -> Result<Option<Strin
 pub async fn preview_singbox_config(
     state: State<'_, AppState>,
 ) -> Result<GenerateConfigResult, String> {
-    let (mut nodes, settings, rules, remote_rule_sets, mihomo_configs, dns, chains) = state
+    let (
+        mut nodes,
+        keyword_eligible_count,
+        settings,
+        rules,
+        remote_rule_sets,
+        mihomo_configs,
+        dns,
+        chains,
+    ) = state
         .with_store(|store| {
+            // Same node-source split as `generate_singbox_config`: sing-box
+            // carries chain-referenced nodes from disabled subscriptions,
+            // mihomo/Xray keep the plain enabled list.
+            let (nodes, keyword_count) =
+                if crate::core::CoreKind::parse(&store.settings.core_type)
+                    == crate::core::CoreKind::SingBox
+                {
+                    (
+                        store.enabled_nodes_with_chain_refs(),
+                        store.enabled_nodes().len(),
+                    )
+                } else {
+                    let n = store.enabled_nodes();
+                    let count = n.len();
+                    (n, count)
+                };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1304,6 +1350,7 @@ pub async fn preview_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
                     )
                 }
                 .map_err(|e| e.to_string())?;

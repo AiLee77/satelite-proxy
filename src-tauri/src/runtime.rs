@@ -1105,12 +1105,18 @@ impl Runtime {
         self.custom_has_clash_api = false;
         self.custom_has_tun = false;
 
-        let mut nodes = store.enabled_nodes();
+        let mut nodes = store.enabled_nodes_with_chain_refs();
         if nodes.is_empty() {
             return Err(AppError::Core(
                 "no nodes; import a subscription first".into(),
             ));
         }
+        // Keyword pools / Filter & smart sets only match the enabled
+        // subscription universe (`PoolScope::keyword`). The union's tail
+        // entries — chain hops / explicit pool members held alive across
+        // disabled subscriptions — are explicit-ID references only and
+        // must NOT silently widen keyword semantics.
+        let keyword_eligible_count = store.enabled_nodes().len();
 
         // Sidecar delegation (sing-box main mode only; Xray and/or mihomo
         // per `protocol_cores` pins). Resolved before any build work: the
@@ -1192,6 +1198,7 @@ impl Runtime {
             store.settings.close_connections_on_switch,
             &store.pools,
             &store.chains,
+            keyword_eligible_count,
         )?;
         if crate::core_selection::needs_kernel_restriction(&store.settings) {
             crate::core_selection::restrict_kernel_candidates(

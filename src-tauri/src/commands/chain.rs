@@ -194,7 +194,12 @@ pub async fn diagnose_chain(
             Ok((
                 store.chains.iter().find(|c| c.id == chain_id).cloned(),
                 store.pools.clone(),
-                store.enabled_nodes(),
+                // Chain hops routinely reference nodes from disabled
+                // subscriptions (MIX off) — the diagnosis must resolve them
+                // the same way the config build does, or every hop of such a
+                // chain would read as missing even while the running config
+                // actually carries it.
+                store.enabled_nodes_with_chain_refs(),
                 crate::core::CoreKind::parse(&store.settings.core_type),
                 store.settings.probe_url.clone(),
                 store.settings.locale.clone(),

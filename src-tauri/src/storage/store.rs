@@ -1361,6 +1361,57 @@ impl AppStore {
             .collect()
     }
 
+    /// Node ids actually referenced by proxy chains (node hops) and explicit
+    /// node pools (fixed members). Keyword pools are deliberately excluded:
+    /// their membership is re-evaluated at build time against the
+    /// enabled-subscription universe only, and pulling disabled
+    /// subscriptions in by name would silently change what a keyword pool
+    /// matches. Dangling ids (node deleted / never existed) are simply not
+    /// in the set — callers only use this to widen the generated node set.
+    pub fn chain_referenced_node_ids(&self) -> std::collections::BTreeSet<String> {
+        let mut ids = std::collections::BTreeSet::new();
+        for pool in &self.pools {
+            if let crate::domain::PoolMode::Explicit { node_ids } = &pool.mode {
+                ids.extend(node_ids.iter().cloned());
+            }
+        }
+        for chain in &self.chains {
+            for hop in &chain.hops {
+                if let crate::domain::ChainHop::Node { node_id } = hop {
+                    ids.insert(node_id.clone());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Node source for sing-box config generation: every enabled
+    /// subscription node plus the closure of nodes that chains/explicit
+    /// pools reference across subscriptions — even when the owning
+    /// subscription is currently disabled. Pools and chains hold stable
+    /// node-ID references; switching the active subscription (MIX off)
+    /// must not silently drop hops from the generated config (they would
+    /// fail `build_chain_outbounds` and the chain's rules fall back with a
+    /// warning while the chain editor still promises a working chain).
+    /// Keyword pools are NOT widened here: they keep re-matching the
+    /// enabled universe at build time, by design.
+    pub fn enabled_nodes_with_chain_refs(&self) -> Vec<ProxyNode> {
+        let refs = self.chain_referenced_node_ids();
+        let mut out = self.enabled_nodes();
+        if refs.is_empty() {
+            return out;
+        }
+        let present: std::collections::HashSet<&str> =
+            out.iter().map(|n| n.id.as_str()).collect();
+        for stored in &self.nodes {
+            let id = stored.node.id.as_str();
+            if !present.contains(id) && refs.contains(id) {
+                out.push(stored.node.clone());
+            }
+        }
+        out
+    }
+
     /// Cached Clash YAML from enabled node-producing subscriptions. Mihomo
     /// can preserve a source's real policy groups/rules when exactly one such
     /// config is active; URI/base64/sing-box profiles simply return no entry.
@@ -5213,6 +5264,117 @@ mod tests {
         );
         assert!(store.favorite_nodes.contains(&manual_id));
         assert_eq!(store.settings.node_core_overrides[&manual_id], "singbox");
+    }
+
+    #[test]
+    fn enabled_nodes_with_chain_refs_collects_only_referenced_when_mix_off() {
+        use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+
+        // MIX off scenario: only airport-b is enabled. Airport-a is disabled
+        // but its nodes are held by stable node IDs from a chain hop (hop_a)
+        // and an explicit pool member (pool_a). idle_a is unreferenced in
+        // the disabled subscription and must NOT enter the build node list.
+        let mut store = AppStore::default();
+        let mut sub_a = sample_url_sub("airport-a");
+        sub_a.id = "sub-airport-a".into();
+        sub_a.enabled = false;
+        let mut sub_b = sample_url_sub("airport-b");
+        sub_b.id = "sub-airport-b".into();
+        let mut hop_a = sample_hy2("hop-a", "日本 前置");
+        hop_a.server = "hop-a.example.test".into();
+        let mut pool_a = sample_hy2("pool-a", "香港 池成员");
+        pool_a.server = "pool-a.example.test".into();
+        let mut idle_a = sample_hy2("idle-a", "香港 未引用");
+        idle_a.server = "idle-a.example.test".into();
+        let mut exit_b = sample_hy2("exit-b", "出口 B");
+        exit_b.server = "exit-b.example.test".into();
+        store
+            .upsert_subscription(sub_a, vec![hop_a.clone(), pool_a.clone(), idle_a])
+            .unwrap();
+        store
+            .upsert_subscription(sub_b, vec![exit_b.clone()])
+            .unwrap();
+
+        // Historic enabled-only source stays exactly as before.
+        assert_eq!(
+            store
+                .enabled_nodes()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b"]
+        );
+
+        store.pools.push(NodePool::new(
+            "Explicit Pool",
+            PoolMode::Explicit {
+                node_ids: vec![pool_a.id.clone()],
+            },
+        ));
+        // A keyword pool matching idle_a's name must NOT collect it.
+        store.pools.push(NodePool::new(
+            "Keyword Pool",
+            PoolMode::Keyword {
+                include: vec!["香港".into()],
+                exclude: vec![],
+            },
+        ));
+        store
+            .chains
+            .push(ProxyChain::new(
+                "Chain",
+                vec![
+                    ChainHop::Node {
+                        node_id: hop_a.id.clone(),
+                    },
+                    ChainHop::Node {
+                        node_id: exit_b.id.clone(),
+                    },
+                ],
+            ));
+
+        // Referenced-collection: chain node hops + explicit pool members,
+        // nothing else (keyword pools and unreferenced nodes excluded).
+        assert_eq!(
+            store.chain_referenced_node_ids(),
+            [hop_a.id.clone(), pool_a.id.clone(), exit_b.id.clone()]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+
+        // Union source: enabled prefix first (keyword-match universe), then
+        // the chain-referenced disabled nodes in stored order. Keyword pools
+        // re-match only the enabled prefix at build time, so idle_a stays out
+        // even though its name matches the Keyword Pool above.
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b", "hop-a", "pool-a"]
+        );
+
+        // Removing the references (chain hop re-pinned to an enabled node)
+        // drops the collected nodes again — union stays reactive.
+        store.chains.clear();
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b", "pool-a"]
+        );
+        store.pools.retain(|p| p.name != "Explicit Pool");
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b"]
+        );
     }
 
     #[test]
