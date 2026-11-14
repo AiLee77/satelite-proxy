@@ -61,6 +61,13 @@ jobs:
         shell: bash
         run: bash scripts/ci-fetch-with-retry.sh scripts/fetch-bundled-core-windows-amd64.ps1
 
+      # tauri-build（cargo 任何编译，含 cargo test）校验 bundle.resources 里的
+      # “resources/rule-sets” 目录存在；旧顺序靠 NSIS 构建步内部物化，测试前置后
+      # 必须先备好。复用幂等 bash 版预取（SRS 魔数校验），不缓存滚动集。
+      - name: 预取内置规则集资源
+        shell: bash
+        run: bash scripts/ci-fetch-with-retry.sh scripts/fetch-bundled-rule-sets.sh
+
       - name: 预取并校验 NSIS 打包工具
         shell: bash
         env:
