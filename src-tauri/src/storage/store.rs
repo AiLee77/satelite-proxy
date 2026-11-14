@@ -1596,6 +1596,11 @@ impl AppStore {
         let Some(id) = self.settings.current_node_id.as_ref() else {
             return;
         };
+        // Virtual chain entries have no per-subscription memory slot — the
+        // selection lives in `current_node_id` alone.
+        if crate::domain::chain_id_from_virtual_node_id(id).is_some() {
+            return;
+        }
         if let Some(entry) = self.nodes.iter().find(|entry| {
             &entry.node.id == id
                 && self.subscriptions.iter().any(|sub| {
@@ -1626,7 +1631,14 @@ impl AppStore {
             .settings
             .current_node_id
             .as_ref()
-            .is_some_and(|id| enabled.iter().any(|node| &node.id == id));
+            .is_some_and(|id| {
+                match crate::domain::chain_id_from_virtual_node_id(id) {
+                    // A virtual chain entry stays valid while the chain
+                    // exists — subscription refreshes can never wash it away.
+                    Some(chain_id) => self.chains.iter().any(|chain| chain.id == chain_id),
+                    None => enabled.iter().any(|node| &node.id == id),
+                }
+            });
         if !valid {
             self.settings.current_node_id = self
                 .subscriptions
@@ -2493,6 +2505,15 @@ impl AppStore {
     }
 
     pub fn delete_chain(&mut self, id: &str) -> AppResult<()> {
+        // A chain serving as the selected exit can't be deleted — switch to
+        // another node first (same refusal shape as rule-set references).
+        if self.settings.current_node_id.as_deref()
+            == Some(crate::domain::chain_virtual_node_id(id).as_str())
+        {
+            return Err(AppError::Config(
+                "该链路正被选为当前出口，请先切换到其他节点再删除".into(),
+            ));
+        }
         let referencing_rules: Vec<String> = self
             .rule_sets
             .iter()
@@ -5377,6 +5398,85 @@ mod tests {
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["exit-b"]
+        );
+    }
+
+    #[test]
+    fn chain_virtual_selection_survives_refresh_and_delete_guard_works() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("airport");
+        let entry = sample_hy2("entry-1", "入口");
+        let exit = sample_hy2("exit-1", "出口");
+        store
+            .upsert_subscription(sub.clone(), vec![entry.clone(), exit.clone()])
+            .unwrap();
+        let chain = ProxyChain::new(
+            "日美",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        store.chains.push(chain.clone());
+        let virtual_id = chain_virtual_node_id(&chain.id);
+
+        // Chain selection survives ensure_current_node_valid…
+        store.settings.current_node_id = Some(virtual_id.clone());
+        store.ensure_current_node_valid();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(virtual_id.as_str())
+        );
+
+        // …and is never written into per-subscription memory (the first
+        // upsert already remembered a real node — a virtual remember must
+        // leave that map byte-identical).
+        let memory_before = store.selected_nodes_by_subscription.clone();
+        store.remember_current_node();
+        assert_eq!(store.selected_nodes_by_subscription, memory_before);
+        assert!(!memory_before.values().any(|id| id == &virtual_id));
+
+        // A subscription refresh (rebuilds nodes, re-runs ensure) cannot
+        // wash the chain selection away.
+        store
+            .upsert_subscription(sub, vec![entry.clone(), exit.clone()])
+            .unwrap();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(virtual_id.as_str())
+        );
+
+        // Delete guard: the selected exit refuses deletion…
+        let err = store
+            .delete_chain(&chain.id)
+            .expect_err("selected chain must refuse deletion");
+        assert!(err.to_string().contains("当前出口"), "{err}");
+        // …but after switching away to a real node it deletes cleanly.
+        store.settings.current_node_id = Some(exit.id.clone());
+        store.delete_chain(&chain.id).expect("unselected chain deletes");
+        assert!(store.chains.is_empty());
+    }
+
+    #[test]
+    fn ensure_current_node_valid_falls_back_when_selected_chain_vanishes() {
+        // A stale chain:<id> selection (hand-edited store.json, or a chain
+        // removed by another version) falls back to the remembered / first
+        // enabled node instead of pointing at nothing.
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("airport");
+        let node = sample_hy2("node-1", "节点");
+        store.upsert_subscription(sub, vec![node.clone()]).unwrap();
+        store.settings.current_node_id = Some("chain:chain-deadbeef".into());
+        store.ensure_current_node_valid();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(node.id.as_str())
         );
     }
 

@@ -2312,6 +2312,11 @@ impl AppState {
         // running core reliably schedules the restart it needs.
         let core_running = self.is_core_running();
         let _operation = self.begin_core_transition()?;
+        // Virtual chain entries (v2rayN-style "chain as exit") take their own
+        // path: no node lookup, no core-compat handoff, no live selector PUT.
+        if let Some(chain_id) = crate::domain::chain_id_from_virtual_node_id(node_id) {
+            return self.select_chain_exit(chain_id, manual, core_running);
+        }
         let core_kind = {
             let kind = crate::core::CoreKind::parse(
                 self.with_store(|store| Ok(store.settings.core_type.clone()))?
@@ -2477,6 +2482,69 @@ impl AppState {
         let restart_needed =
             was_kernel || fallback_core.is_some() || (!selected_live && core_running);
         Ok((settings, restart_needed, selected_live))
+    }
+
+    /// Select a virtual chain entry (`chain:<id>`) as the current exit. The
+    /// chain's exit tag only joins the proxy selector after a config rebuild,
+    /// so there is no live selector PUT — the standard restart path applies
+    /// the selection (same shape as the Xray no-live-API flow, which also
+    /// returns `selected_live = false`). Guards mirror the node path (custom
+    /// source / smart-gate), plus two chain-specific ones: the primary core
+    /// must be sing-box (Xray/mihomo have no chain semantics) and every hop
+    /// must currently resolve (see `ensure_chain_selectable`).
+    fn select_chain_exit(
+        &self,
+        chain_id: &str,
+        manual: bool,
+        core_running: bool,
+    ) -> AppResult<(crate::domain::AppSettings, bool, bool)> {
+        self.with_store(|store| {
+            if store.settings.runtime_source().is_custom() {
+                return Err(crate::error::AppError::Core(
+                    "自写配置模式下无法切换节点".into(),
+                ));
+            }
+            if !manual && !store.settings.auto_select.is_smart() {
+                return Err(crate::error::AppError::Core("智能切换已关闭".into()));
+            }
+            let core_kind = crate::core::CoreKind::parse(store.settings.core_type.as_str());
+            if core_kind != crate::core::CoreKind::SingBox {
+                return Err(crate::error::AppError::Core(format!(
+                    "代理链出口仅在 sing-box 内核下可选，当前内核为 {}",
+                    core_kind.display_name()
+                )));
+            }
+            let chain = store
+                .chains
+                .iter()
+                .find(|chain| chain.id == chain_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(chain_id.to_string()))?;
+            // Mirror the runtime build universe exactly (C-round contract:
+            // enabled prefix + chain/pool-referenced nodes).
+            let nodes = store.enabled_nodes_with_chain_refs();
+            let keyword_eligible_count = store.enabled_nodes().len();
+            let sidecar =
+                crate::runtime::compute_sidecar_plan(&store.settings, &store.chains, &nodes);
+            crate::config::ensure_chain_selectable(
+                chain,
+                &store.pools,
+                &nodes,
+                keyword_eligible_count,
+                sidecar.as_ref(),
+            )
+        })?;
+        let (settings, was_kernel) = self.with_store_mut(|store| {
+            let was_kernel = apply_selected_node(
+                &mut store.settings,
+                crate::domain::chain_virtual_node_id(chain_id),
+                manual,
+            );
+            // No-op for virtual ids (guarded inside) — kept for symmetry
+            // with the node path.
+            store.remember_current_node();
+            Ok((store.settings.clone(), was_kernel))
+        })?;
+        Ok((settings, was_kernel || core_running, false))
     }
 
     /// When auto_select=kernel, read Clash API group `now` and persist as current_node_id.

@@ -1579,7 +1579,82 @@ pub fn chain_hop_outbound_tag(chain: &crate::domain::ProxyChain, hop_index: usiz
 /// target — the previous hop — already precedes it). Returns `None` if any
 /// hop is unreachable (stale id / empty pool / member that can't map to an
 /// outbound) — a chain with a broken link can't route traffic, so the whole
-/// chain is treated as absent rather than silently truncated.
+/// Select-time mirror of [`build_chain_outbounds_for`]'s liveness semantics:
+/// a chain may only become the current exit when every hop resolves — `Node`
+/// hops must exist in the chain-aware universe AND map to a native outbound
+/// (hop clones are always emitted natively; the sidecar socks rewrite only
+/// applies to the node's main outbound), `Pool` hops must reference an
+/// existing pool with usable members (a hop[0] pool rides the shared
+/// selector so sidecar-delegated members count; pools at i ≥ 1 expand into
+/// native per-member clones, so every member must map natively). Failing
+/// loudly at selection time beats letting the build silently drop the chain
+/// and fall back to the first node.
+pub fn ensure_chain_selectable(
+    chain: &crate::domain::ProxyChain,
+    pools: &[crate::domain::NodePool],
+    nodes: &[ProxyNode],
+    keyword_eligible_count: usize,
+    sidecar: Option<&SidecarPlan>,
+) -> AppResult<()> {
+    use crate::domain::ChainHop;
+
+    let scope = PoolScope::restricted(nodes, keyword_eligible_count);
+    // Main-universe tags exactly as the builder's node loop collects them:
+    // sidecar-delegated nodes keep their tag (loopback socks outbound),
+    // everything else must map to a native outbound.
+    let main_tags: Vec<String> = nodes
+        .iter()
+        .filter_map(|node| {
+            if sidecar.and_then(|plan| plan.port_for(&node.id)).is_some() {
+                return Some(outbound_tag(node));
+            }
+            node_to_outbound(node).ok().map(|(tag, _, _)| tag)
+        })
+        .collect();
+    for (i, hop) in chain.hops.iter().enumerate() {
+        match hop {
+            ChainHop::Node { node_id } => {
+                let live = scope
+                    .all
+                    .iter()
+                    .find(|n| &n.id == node_id)
+                    .is_some_and(|n| node_to_outbound(n).is_ok());
+                if !live {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳的节点不可用（已删除或当前内核无法承载该协议/传输）",
+                        chain.name,
+                        i + 1
+                    )));
+                }
+            }
+            ChainHop::Pool { pool_id } => {
+                let Some(pool) = pools.iter().find(|p| &p.id == pool_id) else {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳引用的节点池不存在",
+                        chain.name,
+                        i + 1
+                    )));
+                };
+                let live = if i == 0 {
+                    !pool_member_tags(pool, &scope, &main_tags).is_empty()
+                } else {
+                    let members = pool_member_nodes(pool, &scope, &main_tags);
+                    !members.is_empty() && members.iter().all(|n| node_to_outbound(n).is_ok())
+                };
+                if !live {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳的节点池「{}」没有可用成员",
+                        chain.name,
+                        i + 1,
+                        pool.name
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_chain_outbounds_for(
     chain: &crate::domain::ProxyChain,
     pools: &[crate::domain::NodePool],
@@ -4830,6 +4905,87 @@ mod tests {
             .expect("proxy selector");
         assert_eq!(proxy["outbounds"], json!([outbound_tag(&entry), "direct"]));
         assert_eq!(proxy["default"], json!(outbound_tag(&entry)));
+    }
+
+    #[test]
+    fn ensure_chain_selectable_mirrors_build_liveness() {
+        use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+
+        // Live two-hop chain passes.
+        let chain = ProxyChain::new(
+            "live",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        ensure_chain_selectable(&chain, &[], &nodes, usize::MAX, None)
+            .expect("live chain selectable");
+
+        // Stale node hop → rejected, naming the hop position.
+        let stale = ProxyChain::new(
+            "stale",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: "gone".into(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&stale, &[], &nodes, usize::MAX, None)
+            .expect_err("stale hop rejected");
+        assert!(err.to_string().contains("第 2 跳"), "{err}");
+
+        // Keyword pool with zero matches → rejected as a pool without members.
+        let pool = NodePool::new(
+            "empty",
+            PoolMode::Keyword {
+                include: vec!["不存在".into()],
+                exclude: vec![],
+            },
+        );
+        let pool_chain = ProxyChain::new(
+            "pool chain",
+            vec![
+                ChainHop::Pool {
+                    pool_id: pool.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&pool_chain, &[pool], &nodes, usize::MAX, None)
+            .expect_err("empty pool rejected");
+        assert!(err.to_string().contains("没有可用成员"), "{err}");
+
+        // Missing pool id → rejected.
+        let ghost = ProxyChain::new(
+            "ghost",
+            vec![
+                ChainHop::Pool {
+                    pool_id: "pool-gone".into(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&ghost, &[], &nodes, usize::MAX, None)
+            .expect_err("missing pool rejected");
+        assert!(err.to_string().contains("节点池不存在"), "{err}");
     }
 
     // ---- Xray sidecar delegation -----------------------------------------
