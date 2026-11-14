@@ -84,3 +84,49 @@ test("后端命令与注册一览：list_chain_nodes 已接线", async () => {
   assert.match(chainCmd, /wire_node\(stored\.node\.clone\(\)\)/);
   assert.match(api, /invoke<ProxyNode\[\]>\("list_chain_nodes"\)/);
 });
+
+test("池候选可展开勾选并逐个添加为节点跳（B 回归）", () => {
+  // 展开开关 + 成员预览 + 批量添加必须同时存在，防止后续改动把展开
+  // 砍成只读列表。成员预览必须走 chainPoolPreviewMembers（explicit 含
+  // 跨订阅成员、keyword 仅启用宇宙——与池卡片圆点同语义）。
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(page, /chain-pool-expand/);
+  assert.match(page, /chainPoolPreviewMembers\(p, nodes\)/);
+  assert.match(page, /function appendHops\(/);
+  assert.match(page, /"chain\.addSelectedHops", \{ n: picks\.length \}\)/);
+  // 勾选成员只能以 individual node hop 形式上画布——不得再发明一种
+  // “部分池”shape：后端只认 ChainHop::Node / ChainHop::Pool。
+  assert.match(
+    page,
+    /picks\.map\(\s*\(nodeId\): ChainHop => \(\{ kind: "node", node_id: nodeId \}\),/,
+  );
+  // 失效成员（explicit 池指向已删节点）只提示，不勾选不上画布。
+  assert.match(page, /preview\.length - liveMembers\.length/);
+});
+
+test("池展开双语文案与源码同步（B 回归）", () => {
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.expandPoolMembers", "Show/hide pool members");
+  has("chain.noPoolMembers", "(no members right now)");
+  has("chain.addSelectedHops", "Add selected ({n})");
+  has("chain.expandPoolMembers", "展开/收起池成员");
+  has("chain.noPoolMembers", "（当前没有成员）");
+  has("chain.addSelectedHops", "添加选中（{n}）");
+  assert.match(
+    messages,
+    /"chain\.poolStaleHint": "\{n\} referenced node\(s\) no longer exist and can't be picked"/,
+  );
+  assert.match(messages, /"chain\.poolStaleHint": "\{n\} 个成员节点已不存在，无法勾选"/);
+});

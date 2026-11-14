@@ -827,6 +827,101 @@
   background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
 }
 
+/* Pool candidates: the whole pool stays draggable, with an inline expander
+   that lists its members for per-node picking ("add selected" appends each
+   checked member as an individual node hop). */
+.chain-candidate-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > .glyph,
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > span:not(.chain-node-sub) {
+  white-space: nowrap;
+}
+
+.chain-pool-expand {
+  flex: none;
+  width: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+
+.chain-pool-expand:hover,
+.chain-candidate-pool.expanded .chain-pool-expand {
+  color: var(--text);
+  border-color: var(--accent-purple);
+}
+
+.chain-pool-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.3rem 0.4rem 0.4rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.chain-pool-member {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.18rem 0.25rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.chain-pool-member:hover {
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+}
+
+.chain-pool-member > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-pool-member[data-disabled] {
+  opacity: 0.6;
+}
+
+.chain-pool-members .chain-pool-add {
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.4rem;
+  height: auto;
+  min-height: 0;
+}
+
 /* Cursor-following label shown while dragging a candidate onto the canvas
    (see ChainFlowEditor's pointer-event drag implementation). Fixed to the
    viewport, not the modal, since dragging can cross the canvas boundary. */

@@ -37,6 +37,7 @@ import { GlassSeg } from "../components/GlassSeg";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
 import {
+  chainPoolPreviewMembers,
   enabledUniverse,
   parseKeywords,
   poolKeywordMatch,
@@ -751,6 +752,11 @@ function ChainFlowEditor({
     edgesFromHops(chain?.hops ?? []),
   );
   const [candidateKind, setCandidateKind] = useState<"node" | "pool">("node");
+  // Pool-candidate expansion: members listed under one pool at a time,
+  // picked members can be appended as individual node hops. Per-pool
+  // ordered selections survive collapse/expand but reset once added.
+  const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
+  const [poolPicks, setPoolPicks] = useState<Record<string, string[]>>({});
   // Quick filter over the sidebar candidates — substring match on the name,
   // same convention as the pool editor's node picker.
   const [candidateQuery, setCandidateQuery] = useState("");
@@ -937,40 +943,77 @@ function ChainFlowEditor({
    *  the current chain tail, auto-connecting it so a chain can be built with
    *  keyboard-free clicks alone. */
   function appendHop(hop: ChainHop) {
-    const id = hopFlowId(hop);
-    if (flowNodes.some((n) => n.id === id)) {
-      const existing = flowNodes.find((n) => n.id === id)!;
-      selectOnly(id);
-      revealPosition(existing.position);
+    appendHops([hop]);
+  }
+
+  /** Append several hops in one state transition: pool members picked via
+   *  checkboxes land in pool order one after another. Calling `appendHop` in
+   *  a loop would re-read the stale flowNodes/edges between set-state calls
+   * and drop all but the first hop, so positioning folds over one copy. */
+  function appendHops(hops: ChainHop[]) {
+    if (hops.length === 0) return;
+    let nextNodes: FlowNode[] = flowNodes.map((n) => ({ ...n, selected: false }));
+    let nextEdges: Edge[] = [...edges];
+    let appendedAny = false;
+    let existingSurfaceId: string | null = null;
+    for (const hop of hops) {
+      const id = hopFlowId(hop);
+      if (nextNodes.some((n) => n.id === id)) {
+        // Already on the canvas — surface it instead of a silent no-op,
+        // same as the single-hop path.
+        existingSurfaceId = id;
+        continue;
+      }
+      const order = hopsFromGraph(nextNodes, nextEdges);
+      const tailId = order && order.length > 0 ? order[order.length - 1].id : null;
+      const anchor = tailId ? nextNodes.find((n) => n.id === tailId) : undefined;
+      let position: { x: number; y: number };
+      if (anchor) {
+        position = { x: anchor.position.x + 320, y: anchor.position.y };
+      } else if (nextNodes.length > 0) {
+        const maxX = Math.max(...nextNodes.map((n) => n.position.x));
+        position = { x: maxX + 320, y: 60 };
+      } else {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        position = rect
+          ? screenToFlowPosition({
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+            })
+          : { x: 60, y: 60 };
+      }
+      const edgeTail = tailId;
+      if (edgeTail && edgeTail !== id) {
+        const edge = hopEdge(edgeTail, id);
+        if (!nextEdges.some((e) => e.id === edge.id)) nextEdges = [...nextEdges, edge];
+      }
+      const card = hopCardData(hop, nodeById, poolById, keywordNodes);
+      nextNodes = [
+        ...nextNodes,
+        {
+          id,
+          type: "hop",
+          position,
+          data: { ...card, hop },
+          selected: true,
+        },
+      ];
+      appendedAny = true;
+    }
+    if (!appendedAny) {
+      if (existingSurfaceId) {
+        const existing = nextNodes.find((n) => n.id === existingSurfaceId);
+        setFlowNodes([
+          ...nextNodes.map((n) => ({ ...n, selected: n.id === existingSurfaceId })),
+        ]);
+        if (existing) revealPosition(existing.position);
+      }
       return;
     }
-    const card = hopCardData(hop, nodeById, poolById, keywordNodes);
-    const path = hopsFromGraph(flowNodes, edges);
-    const tailId = path && path.length > 0 ? path[path.length - 1].id : null;
-    const anchor = tailId ? flowNodes.find((n) => n.id === tailId) : undefined;
-    let position: { x: number; y: number };
-    if (anchor) {
-      position = { x: anchor.position.x + 320, y: anchor.position.y };
-    } else if (flowNodes.length > 0) {
-      // Not a valid path right now — still append visibly to the right.
-      const maxX = Math.max(...flowNodes.map((n) => n.position.x));
-      position = { x: maxX + 320, y: 60 };
-    } else {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      position = rect
-        ? screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-        : { x: 60, y: 60 };
-    }
-    setFlowNodes((cur) => [
-      ...cur.map((n) => ({ ...n, selected: false })),
-      { id, type: "hop", position, data: { ...card, hop }, selected: true },
-    ]);
-    if (tailId && tailId !== id) {
-      const edge = hopEdge(tailId, id);
-      setEdges((cur) => (cur.some((e) => e.id === edge.id) ? cur : [...cur, edge]));
-    }
-    // Bring the freshly-appended hop into view (see revealPosition).
-    revealPosition(position);
+    setFlowNodes(nextNodes);
+    setEdges(nextEdges);
+    const lastHopNode = nextNodes[nextNodes.length - 1];
+    if (lastHopNode) revealPosition(lastHopNode.position);
   }
 
   /** Re-lay the nodes into a clean left-to-right line (in graph order when
@@ -1110,21 +1153,112 @@ function ChainFlowEditor({
                       )}
                     </div>
                   ))
-                : candidatePools.map((p) => (
-                    <div
-                      key={p.id}
-                      onPointerDown={(e) =>
-                        onCandidatePointerDown(e, { kind: "pool", pool_id: p.id }, p.name)
-                      }
-                      className="chain-candidate-item"
-                      title={t("chain.dragHint")}
-                    >
-                      <span className="chain-candidate-glyph" aria-hidden="true">
-                        <PoolGlyph />
-                      </span>
-                      {p.name}
-                    </div>
-                  ))}
+                : candidatePools.map((p) => {
+                    const expanded = expandedPoolId === p.id;
+                    // Only expandable pools pay the preview cost (explicit
+                    // pools resolve members from the full universe incl.
+                    // disabled subscriptions; keyword pools re-match the
+                    // enabled universe — same semantics as hop-card dots).
+                    const preview = expanded ? chainPoolPreviewMembers(p, nodes) : [];
+                    const liveMembers = preview.filter((m) => !m.stale);
+                    const staleCount = preview.length - liveMembers.length;
+                    const picks = poolPicks[p.id] ?? [];
+                    const pickedSet = new Set(picks);
+                    return (
+                      <div key={p.id} className={`chain-candidate-pool${expanded ? " expanded" : ""}`}>
+                        <div className="chain-candidate-pool-row">
+                          <div
+                            className="chain-candidate-item pool-drag"
+                            onPointerDown={(e) =>
+                              onCandidatePointerDown(e, { kind: "pool", pool_id: p.id }, p.name)
+                            }
+                            title={t("chain.dragHint")}
+                          >
+                            <span className="chain-candidate-glyph" aria-hidden="true">
+                              <PoolGlyph />
+                            </span>
+                            {p.name}
+                          </div>
+                          <button
+                            type="button"
+                            className="chain-pool-expand"
+                            aria-expanded={expanded}
+                            aria-label={t("chain.expandPoolMembers")}
+                            title={t("chain.expandPoolMembers")}
+                            onClick={() =>
+                              setExpandedPoolId(expanded ? null : p.id)
+                            }
+                          >
+                            {expanded ? "▴" : "▾"}
+                          </button>
+                        </div>
+                        {expanded && (
+                          <div className="chain-pool-members">
+                            {liveMembers.length === 0 && (
+                              <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                                {t("chain.noPoolMembers")}
+                              </p>
+                            )}
+                            {liveMembers.map(({ node }) => (
+                              <label
+                                key={node.id}
+                                className="chain-pool-member"
+                                data-disabled={node.enabled === false ? "" : undefined}
+                                title={
+                                  node.enabled === false && node.subscription_name
+                                    ? `${node.subscription_name} · ${t("chain.subDisabled")}`
+                                    : node.subscription_name || undefined
+                                }
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={pickedSet.has(node.id)}
+                                  onChange={() =>
+                                    setPoolPicks((cur) => {
+                                      const curPicks = cur[p.id] ?? [];
+                                      const next = curPicks.includes(node.id)
+                                        ? curPicks.filter((id) => id !== node.id)
+                                        : [...curPicks, node.id];
+                                      return { ...cur, [p.id]: next };
+                                    })
+                                  }
+                                />
+                                <span>{node.name}</span>
+                                {node.subscription_name && (
+                                  <span className="chain-node-sub">{node.subscription_name}</span>
+                                )}
+                              </label>
+                            ))}
+                            {staleCount > 0 && (
+                              <p
+                                className="muted"
+                                style={{ margin: 0, fontSize: 11 }}
+                                title={t("chain.poolStaleHint", { n: staleCount })}
+                              >
+                                {t("chain.poolStaleHint", { n: staleCount })}
+                              </p>
+                            )}
+                            {liveMembers.length > 0 && (
+                              <GlassButton
+                                className="chain-pool-add"
+                                disabled={picks.length === 0}
+                                onClick={() => {
+                                  appendHops(
+                                    picks.map(
+                                      (nodeId): ChainHop => ({ kind: "node", node_id: nodeId }),
+                                    ),
+                                  );
+                                  setPoolPicks((cur) => ({ ...cur, [p.id]: [] }));
+                                }}
+                              >
+                                {t("chain.addSelectedHops", { n: picks.length })}
+                              </GlassButton>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               {candidateKind === "node" && nodes.length === 0 && (
                 <p className="muted" style={{ fontSize: 12 }}>
                   {t("rules.noNodes")}
