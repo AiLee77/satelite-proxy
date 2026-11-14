@@ -1,5 +1,7 @@
 # AGENTS.md — Satelite Proxy 项目地图
 
+2026-11-13 链导出（D，随A/B/C 同在 feature-chain-pool-fixes）：链卡 ⋮ 菜单新增「复制链文本」与「导出 mihomo YAML」（均写剪贴板，成功反馈为 transient notice）。后端 build_mihomo_chain_export 以 hop[i≥1].`dialer-proxy`=hop[i-1] 复现应用侧 detour 接线，入口跳剥离原文 dialer-proxy 防链外泄漏；导出 tag 用「i/节点名」（重名 -N 去重），尾部 `chain-exit: <链名>` select 组 + MATCH 全收。节点宇宙用 enabled_nodes_with_chain_refs（禁用订阅的前置跳也可导）；池跳、失效引用、单跳、mihomo 不支持协议一律硬报错不静默降级。live_exported_chain_config_validates 在 build-windows.yml 用真 mihomo -t 校验导出 YAML；本机无 cargo，仅 Node/tsc，Rust 以 CI 为准。
+
 2026-11-13 节点网格与SOCKS导入：更多按钮必须使用icon-btn并参与卡片头部布局，不能被全局主按钮规则染色或绝对定位盖协议。网格列数按实际容器宽度计算并同步虚拟行，不再仅按window断点猜测。SOCKS的URI先分离userinfo再解析地址，兼容含/的标准Base64；有显式冒号按组件解码一次，无冒号仅对有效UTF-8且含冒号的Base64凭据对解码，内部凭据不再percent decode；普通用户名及空认证保留。SS2022本轮已取消，不夹带修改。新增合成导入/导出回归与真实节点网格浏览器检查，Rust/浏览器/打包仅Actions，版本1.0.46。
 
 2026-11-13 订阅收录手动节点：upsert_subscription在源ID稳定匹配后，根据完整protocol/server/port/config/TLS/transport/UDP及编辑前baseline匹配同订阅appended；完整快照双向唯一才接管，采用手动ID放回源位置、清appended、保留本地编辑及其他手动节点。旧版已有远端副本时迁移选点/收藏/选核/规则/池/链引用，池成员去重后同步单点。未知协议、歧义、源副本已有独立编辑、明确clone、链同时使用双方时保持独立。Rust测试仅Actions，保持1.0.46，本轮不直接修改活动store。

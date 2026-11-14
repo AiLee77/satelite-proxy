@@ -187,6 +187,13 @@
   opacity: 0.55;
 }
 
+/* Transient feedback banner after copy/export menu actions (ChainPage). */
+.chain-page-notice {
+  font-size: 12px;
+  margin: 0;
+  padding: 0.2rem 0 0.8rem;
+}
+
 .chain-list {
   display: flex;
   flex-direction: column;

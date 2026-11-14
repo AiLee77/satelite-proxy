@@ -1041,6 +1041,19 @@ export function deleteChain(id: string) {
   return invoke<void>("delete_chain", { id });
 }
 
+/** 导出单条链的独立 mihomo 配置：hop[i≥1].`dialer-proxy` = hop[i-1]，
+ * 复现本应用 detour 接线的另一客户端可运行 YAML。池跳/失效引用/单跳/
+ * mihomo 不支持协议在后端硬报错，不静默降级。 */
+export function exportChainMihomoYaml(id: string) {
+  return invoke<string>("export_chain_mihomo_yaml", { id });
+}
+
+/** 链的可分享文本（「链名: [入口] a → [出口] b」），失效引用以
+ * `[missing: <id8>]` 现形而非空跳。 */
+export function exportChainText(id: string) {
+  return invoke<string>("export_chain_text", { id });
+}
+
 export function diagnoseChain(chainId: string) {
   return invoke<ChainDiagnosis>("diagnose_chain", { chainId });
 }

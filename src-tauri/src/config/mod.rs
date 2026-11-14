@@ -20,7 +20,7 @@ pub use builder::{
 pub use custom::{inspect_mihomo_config, inspect_singbox_config, inspect_xray_config};
 pub use dns_build::lookup_hosts;
 pub use dns_files::dump_dns_rules_file;
-pub use mihomo::{build_mihomo_config, build_mihomo_sidecar_config};
+pub use mihomo::{build_mihomo_chain_export, build_mihomo_config, build_mihomo_sidecar_config};
 pub use punycode::to_ascii_domain;
 pub use rule_files::{dump_rule_set_files, remove_rule_set_files};
 pub use write::{

@@ -25,6 +25,8 @@ import {
   deleteChain,
   deletePool,
   diagnoseChain,
+  exportChainMihomoYaml,
+  exportChainText,
   listChainNodes,
   listChainUsage,
   listChains,
@@ -32,6 +34,7 @@ import {
   updateChain,
   updatePool,
 } from "../api";
+import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
 import { ErrorModal } from "../components/ErrorModal";
@@ -1662,6 +1665,47 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   /** Which ⋮ menu is open ("pool-…"/"chain-…") — single owner for every
       RowMenu on the page so a second one replaces the first. */
   const [menuId, setMenuId] = useState<string | null>(null);
+  /** Transient feedback after a copy/export menu action (auto-clears). */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current != null) window.clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
+
+  function showNotice(message: string, durationMs = 2200) {
+    if (noticeTimerRef.current != null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+    setNotice(message);
+    if (durationMs > 0) {
+      noticeTimerRef.current = window.setTimeout(() => setNotice(null), durationMs);
+    }
+  }
+
+  /** D-3: chain as shareable text (`链名: [入口] a → [出口] b`). */
+  async function copyChainText(c: ProxyChain) {
+    try {
+      await copyNodeShareText(await exportChainText(c.id));
+      showNotice(t("chain.textCopied"));
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+    }
+  }
+
+  /** D-1: standalone mihomo YAML expressing the same hops via `dialer-proxy`.
+   *  Pool hops / dead references / unsupported protocols error out on the
+   *  backend — surface the message, never fall back. */
+  async function copyChainMihomoYaml(c: ProxyChain) {
+    try {
+      await copyNodeShareText(await exportChainMihomoYaml(c.id));
+      showNotice(t("chain.yamlCopied"), 3000);
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+    }
+  }
 
   useEffect(() => {
     if (!menuId) return;
@@ -1749,6 +1793,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
           </div>
         </header>
       )}
+      {notice && <p className="muted chain-page-notice">{notice}</p>}
 
       <section className="chain-section">
         <div className="chain-section-head">
@@ -1819,6 +1864,16 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                         flipUp={i >= Math.ceil(chains.length / 2)}
                         items={[
                           { key: "diag", label: t("chain.diag"), onClick: () => setDiagFor(c) },
+                          {
+                            key: "copyText",
+                            label: t("chain.copyText"),
+                            onClick: () => void copyChainText(c),
+                          },
+                          {
+                            key: "exportMihomo",
+                            label: t("chain.exportMihomo"),
+                            onClick: () => void copyChainMihomoYaml(c),
+                          },
                           {
                             key: "edit",
                             label: t("common.edit"),

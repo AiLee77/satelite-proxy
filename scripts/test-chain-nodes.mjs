@@ -130,3 +130,64 @@ test("池展开双语文案与源码同步（B 回归）", () => {
   );
   assert.match(messages, /"chain\.poolStaleHint": "\{n\} 个成员节点已不存在，无法勾选"/);
 });
+
+test("链导出双入口已全链路接线：mihomo YAML 与链文本（D 回归）", async () => {
+  // 1) 后端：导出器只产 dialer-proxy 接线，池跳硬报错而非静默展开。
+  const mihomo = readFileSync(
+    new URL("../src-tauri/src/config/mihomo.rs", import.meta.url),
+    "utf8",
+  );
+  assert.match(mihomo, /pub fn build_mihomo_chain_export\(/);
+  // 池跳拒绝信息必须保留“换具体节点”指引，不允许改成静默展开。
+  assert.match(mihomo, /无法表达动态池/);
+  assert.match(mihomo, /先把该跳换成具体节点/);
+  // 入口跳剥离原文 dialer-proxy —— 防止链外泄露路径。
+  assert.match(mihomo, /mapping\.remove\(str_yaml\("dialer-proxy"\)\)/);
+  // 2) commands + 注册 + api 桥。
+  const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  const chainCmd = readFileSync(
+    new URL("../src-tauri/src/commands/chain.rs", import.meta.url),
+    "utf8",
+  );
+  const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+  assert.match(lib, /commands::export_chain_mihomo_yaml,/);
+  assert.match(lib, /commands::export_chain_text,/);
+  assert.match(chainCmd, /pub fn export_chain_mihomo_yaml/);
+  assert.match(chainCmd, /pub fn export_chain_text/);
+  // 导出用链感知节点宇宙：禁用订阅里的链跳也必须可导。
+  assert.match(chainCmd, /enabled_nodes_with_chain_refs\(\)/);
+  assert.match(api, /invoke<string>\("export_chain_mihomo_yaml"/);
+  assert.match(api, /invoke<string>\("export_chain_text"/);
+  // 3) UI 菜单双入口 + 文案双语。
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(page, /"chain\.copyText"/);
+  assert.match(page, /"chain\.exportMihomo"/);
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.copyText", "Copy chain text");
+  has("chain.exportMihomo", "Export mihomo YAML");
+  has("chain.textCopied", "Chain text copied");
+  has("chain.yamlCopied", "mihomo chain YAML copied to clipboard");
+  has("chain.copyText", "复制链文本");
+  has("chain.exportMihomo", "导出 mihomo YAML");
+  has("chain.textCopied", "链文本已复制");
+  has("chain.yamlCopied", "mihomo 链 YAML 已复制到剪贴板");
+  // live 验证挂在 Actions（本机无内核）。
+  assert.match(mihomo, /fn live_exported_chain_config_validates\(/);
+  const wf = readFileSync(
+    new URL("../.github/workflows/build-windows.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(wf, /live_exported_chain_config_validates -- --ignored/);
+});

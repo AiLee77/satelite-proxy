@@ -177,6 +177,103 @@ pub fn delete_chain(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     Ok(())
 }
 
+/// Export one chain as a standalone mihomo (Clash Meta) config that
+/// externally replays the same hop semantics via `dialer-proxy` — for
+/// users who run mihomo somewhere else and just want the chain wiring.
+/// Node resolution deliberately uses the chain-aware node universe
+/// (enabled prefix + nodes referenced by chains/explicit pools), so a
+/// chain whose entry hop sits in a currently-disabled subscription still
+/// exports — keyword pools are unrelated here (export rejects pool hops
+/// outright, see `build_mihomo_chain_export`).
+#[tauri::command(async)]
+pub fn export_chain_mihomo_yaml(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    state
+        .with_store(|store| {
+            let chain = store
+                .chains
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or_else(|| crate::error::AppError::Config(format!("链 {id} 不存在")))?;
+            let nodes = store.enabled_nodes_with_chain_refs();
+            crate::config::build_mihomo_chain_export(&nodes, &chain)
+        })
+        .map(|built| built.yaml)
+        .map_err(|e| e.to_string())
+}
+
+/// Human-readable chain text (`入口 → … → 出口` with node/pool names) for
+/// clipboard export — the hand-shareable summary of a chain. Reuses the
+/// editor's node universe so stale ids surface as `[missing: <id8>]` rather
+/// than an empty hop.
+#[tauri::command(async)]
+pub fn export_chain_text(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    state
+        .with_store(|store| {
+            let chain = store
+                .chains
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or_else(|| crate::error::AppError::Config(format!("链 {id} 不存在")))?;
+            let nodes = store.enabled_nodes_with_chain_refs();
+            let node_by_id: std::collections::HashMap<&str, &str> = nodes
+                .iter()
+                .map(|n| (n.id.as_str(), n.name.as_str()))
+                .collect();
+            let pools: std::collections::HashMap<&str, &str> = store
+                .pools
+                .iter()
+                .map(|p| (p.id.as_str(), p.name.as_str()))
+                .collect();
+            let mut out = String::new();
+            if chain.hops.is_empty() {
+                return Ok(chain.name);
+            }
+            for (idx, hop) in chain.hops.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(" → ");
+                }
+                match hop {
+                    ChainHop::Pool { pool_id } => {
+                        out.push_str(&format!(
+                            "[池] {}",
+                            pools
+                                .get(pool_id.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| short_missing(pool_id))
+                        ));
+                    }
+                    ChainHop::Node { node_id } => {
+                        out.push_str(&format!(
+                            "[{}] {}",
+                            if idx == 0 {
+                                "入口"
+                            } else if idx == chain.hops.len() - 1 {
+                                "出口"
+                            } else {
+                                "中转"
+                            },
+                            node_by_id
+                                .get(node_id.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| short_missing(node_id))
+                        ));
+                    }
+                }
+            }
+            Ok(format!("{}: {out}", chain.name))
+        })
+        .map_err(|e| e.to_string())
+}
+
+fn short_missing(id: &str) -> String {
+    format!("[missing: {}]", &id[..id.len().min(8)])
+}
+
 /// Probe every hop of one chain through the live Clash delay API — solo
 /// latency per hop plus chain-prefix latency (the last hop's prefix is the
 /// whole chain). Localizes which hop breaks a multi-hop chain; requires the

@@ -17,9 +17,10 @@ use crate::config::builder::{
 };
 use crate::config::punycode::to_ascii_domain;
 use crate::core::kind::CoreKind;
+use crate::domain::chain::ChainHop;
 use crate::domain::{
-    DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyNode, RuleSet,
-    RuleSetDnsStrategy, RuleSetStrategy, Transport, DOMESTIC_DNS_POOL,
+    DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyChain, ProxyNode,
+    RuleSet, RuleSetDnsStrategy, RuleSetStrategy, Transport, DOMESTIC_DNS_POOL,
 };
 use crate::error::{AppError, AppResult};
 use serde::Deserialize as _;
@@ -603,6 +604,126 @@ pub fn build_mihomo_sidecar_config(entries: &[(ProxyNode, u16)]) -> AppResult<Bu
     Ok(BuiltMihomoConfig {
         yaml,
         selected_tag: tags[0].clone(),
+        outbound_tags: tags,
+    })
+}
+
+/// Standalone mihomo (Clash Meta) config expressing ONE chain, for carrying
+/// the chain's hop semantics into a hand-managed mihomo (dialer-proxy is
+/// mihomo's native pre-hop wiring: traffic flows client → hop[0] → … →
+/// hop[N-1] → internet, i.e. `hop[i ≥ 1].dialer-proxy = tag[i-1]`).
+///
+/// Deliberate restrictions — an export must never guess semantics:
+/// - every hop is a [`ChainHop::Node`]; pool hops are app-side selector
+///   groups, a `dialer-proxy` rung would silently pin whatever the group
+///   happens to select, so they are rejected instead of expanded;
+/// - nodes must pass `CoreKind::Mihomo.supports_node` (bodies from raw
+///   entries still go through the shared emit + validation helpers);
+/// - hop tags are `<i>/<node name>` (1-based, readable top-down in another
+///   client), deduplicated with a `-2` suffix — ids in tags would make the
+///   export unreadable;
+/// - entry hop gets its raw `dialer-proxy` stripped (the chain defines the
+///   full path; a stray raw dialer would leak outside the chain).
+pub fn build_mihomo_chain_export(
+    nodes: &[ProxyNode],
+    chain: &ProxyChain,
+) -> AppResult<BuiltMihomoConfig> {
+    if chain.hops.len() < 2 {
+        return Err(AppError::Config(
+            "链至少需要两跳：单跳只是节点/池钉选，不需要链语义".into(),
+        ));
+    }
+
+    let by_id: std::collections::HashMap<&str, &ProxyNode> =
+        nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+
+    let mut names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut unique_name = |base: &str| -> String {
+        let entry = names.entry(base.to_string()).or_insert(0);
+        *entry += 1;
+        if *entry == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{}", entry)
+        }
+    };
+
+    let mut proxies: Vec<Yaml> = Vec::with_capacity(chain.hops.len());
+    let mut tags: Vec<String> = Vec::with_capacity(chain.hops.len());
+    for (idx, hop) in chain.hops.iter().enumerate() {
+        let node_id = match hop {
+            ChainHop::Node { node_id } => node_id,
+            ChainHop::Pool { .. } => {
+                return Err(AppError::Config(format!(
+                    "第 {} 跳是节点池：mihomo dialer-proxy 只能指向单一出口，无法表达动态池。请先把该跳换成具体节点，或使用本应用运行时链路",
+                    idx + 1,
+                )));
+            }
+        };
+        let node = *by_id.get(node_id.as_str()).ok_or_else(|| {
+            AppError::Config(format!(
+                "第 {} 跳引用的节点已不存在（id {}），无法导出",
+                idx + 1,
+                &node_id[..node_id.len().min(8)]
+            ))
+        })?;
+        if !CoreKind::Mihomo.supports_node(node) {
+            return Err(AppError::Config(format!(
+                "第 {} 跳节点「{}」的协议组合 mihomo 不支持，无法导出",
+                idx + 1,
+                node.name
+            )));
+        }
+        let mut mapping = mihomo_proxy_mapping(node)?;
+        let tag = unique_name(&format!("{}/{}", idx + 1, node.name));
+        mapping.insert(str_yaml("name"), str_yaml(&tag));
+        if idx == 0 {
+            mapping.remove(str_yaml("dialer-proxy"));
+        }
+        proxies.push(Yaml::Mapping(mapping));
+        tags.push(tag);
+    }
+
+    // dialer-proxy rung: hop[i ≥ 1] dials through hop[i-1], so the chain
+    // direction matches the app's detour wiring (entry is client-side).
+    // Raw entries may carry their own `dialer-proxy` — overwrite, not merge.
+    for (idx, mapping) in proxies.iter_mut().enumerate() {
+        if idx == 0 {
+            continue; // entry hop dials directly
+        }
+        if let Yaml::Mapping(m) = mapping {
+            m.insert(str_yaml("dialer-proxy"), str_yaml(&tags[idx - 1]));
+        }
+    }
+
+    let exit_tag = tags[tags.len() - 1].clone();
+    let group_name = format!("chain-exit: {}", chain.name);
+    let mut group = Mapping::new();
+    group.insert(str_yaml("name"), str_yaml(&group_name));
+    group.insert(str_yaml("type"), str_yaml("select"));
+    group.insert(
+        str_yaml("proxies"),
+        Yaml::Sequence(vec![str_yaml(&exit_tag), str_yaml("DIRECT")]),
+    );
+
+    let mut root = Mapping::new();
+    root.insert(str_yaml("mode"), str_yaml("rule"));
+    root.insert(str_yaml("log-level"), str_yaml("warning"));
+    root.insert(str_yaml("proxies"), Yaml::Sequence(proxies));
+    root.insert(
+        str_yaml("proxy-groups"),
+        Yaml::Sequence(vec![Yaml::Mapping(group)]),
+    );
+    root.insert(
+        str_yaml("rules"),
+        Yaml::Sequence(vec![str_yaml(&format!("MATCH,{group_name}"))]),
+    );
+
+    let yaml = serde_yaml::to_string(&root)
+        .map_err(|e| AppError::Config(format!("serialize mihomo chain export: {e}")))?;
+    Ok(BuiltMihomoConfig {
+        yaml,
+        selected_tag: exit_tag,
         outbound_tags: tags,
     })
 }
@@ -2502,6 +2623,128 @@ Dh8aZf9uMe34poL6mGQxVWTsiVWSiQbcgOzxHI8Bu6Vebx4=
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    }
+
+    #[test]
+    fn chain_export_wires_dialer_rung_and_rejects_pool_or_single_hops() {
+        // ss_node leaves ids empty — the export resolves hops by id, so each
+        // fixture node needs a distinct one.
+        let mut a = ss_node("日本 前置");
+        a.id = "chain-a".into();
+        let mut b = ss_node("香港 出口");
+        b.id = "chain-b".into();
+        let mut c = ss_node("日本 前置");
+        c.id = "chain-c".into();
+        let mut d = ss_node("备用");
+        d.id = "chain-d".into();
+        let mut un = ss_node("不可用跳");
+        un.id = "chain-un".into();
+        let hop = |node_id: &str| crate::domain::ChainHop::Node {
+            node_id: node_id.to_string(),
+        };
+        let chain = crate::domain::ProxyChain::new("示例链", vec![hop(&a.id), hop(&b.id)]);
+        let built = build_mihomo_chain_export(&[a.clone(), b.clone()], &chain).unwrap();
+        assert_eq!(built.outbound_tags, vec!["1/日本 前置", "2/香港 出口"]);
+        assert_eq!(built.selected_tag, "2/香港 出口");
+        let doc = parse(&built);
+        assert_eq!(doc["proxies"].as_sequence().map(Vec::len), Some(2));
+        assert_eq!(
+            doc["proxies"][0]["name"].as_str(),
+            Some("1/日本 前置")
+        );
+        // Entry hop dials directly — no raw-inherited dialer may survive.
+        assert!(doc["proxies"][0].get("dialer-proxy").is_none());
+        assert_eq!(
+            doc["proxies"][1]["dialer-proxy"].as_str(),
+            Some("1/日本 前置")
+        );
+        assert_eq!(
+            doc["proxy-groups"][0]["proxies"][0].as_str(),
+            Some("2/香港 出口")
+        );
+        assert_eq!(
+            doc["proxy-groups"][0]["proxies"][1].as_str(),
+            Some("DIRECT")
+        );
+        assert_eq!(
+            doc["rules"][0].as_str(),
+            Some("MATCH,chain-exit: 示例链")
+        );
+
+        // Duplicate display names must still produce unique mihomo names.
+        let chain2 = crate::domain::ProxyChain::new("重名", vec![hop(&a.id), hop(&c.id)]);
+        let built2 = build_mihomo_chain_export(&[a, c], &chain2).unwrap();
+        assert_eq!(built2.outbound_tags, vec!["1/日本 前置", "2/日本 前置-2"]);
+
+        // Pool hops are selector groups — a dialer-proxy rung would pin
+        // whatever the group currently selects, so the export refuses.
+        let pool_hop = crate::domain::ChainHop::Pool {
+            pool_id: "pool-x".into(),
+        };
+        let chain3 = crate::domain::ProxyChain::new("含池", vec![hop(&d.id), pool_hop, hop(&b.id)]);
+        let err = build_mihomo_chain_export(&[d, b.clone()], &chain3).unwrap_err();
+        assert!(err.to_string().contains("节点池"));
+
+        // Single hop is a pin, not a chain.
+        let chain4 = crate::domain::ProxyChain::new("单跳", vec![hop(&b.id)]);
+        let err2 = build_mihomo_chain_export(&[b.clone()], &chain4).unwrap_err();
+        assert!(err2.to_string().contains("至少需要两跳"));
+
+        // Missing node id references surface as explicit errors.
+        let chain5 = crate::domain::ProxyChain::new("失效", vec![hop("gone"), hop(&b.id)]);
+        let err3 = build_mihomo_chain_export(&[b.clone()], &chain5).unwrap_err();
+        assert!(err3.to_string().contains("已不存在"));
+
+        // Protocol combos mihomo can't map (ss + model-built shadow-tls)
+        // must be refused per-hop with the failing hop called out.
+        if let crate::domain::ProtocolConfig::Shadowsocks { shadow_tls, .. } = &mut un.config {
+            *shadow_tls = Some(crate::domain::ShadowTlsOpts {
+                version: 3,
+                host: "tls.example.com".into(),
+                password: "pw".into(),
+                fingerprint: None,
+            });
+        }
+        let chain6 = crate::domain::ProxyChain::new("不支持", vec![hop(&un.id), hop(&b.id)]);
+        let err4 = build_mihomo_chain_export(&[un, b], &chain6).unwrap_err();
+        assert!(err4.to_string().contains("mihomo 不支持"));
+    }
+
+    /// `cargo test --lib config::mihomo::tests::live_exported_chain_config_validates -- --ignored`
+    #[test]
+    #[ignore]
+    fn live_exported_chain_config_validates() {
+        let bin = crate::core::find_bundled_core(None, CoreKind::Mihomo)
+            .expect("bundled mihomo binary — run the fetch-bundled-mihomo script");
+        let mut a = ss_node("entry 01");
+        a.id = "chain-live-a".into();
+        let mut b = ss_node("exit 01");
+        b.id = "chain-live-b".into();
+        let chain = crate::domain::ProxyChain::new(
+            "live chain",
+            vec![
+                crate::domain::ChainHop::Node { node_id: a.id.clone() },
+                crate::domain::ChainHop::Node { node_id: b.id.clone() },
+            ],
+        );
+        let built = build_mihomo_chain_export(&[a, b], &chain).unwrap();
+        let tmp = std::env::temp_dir().join(format!(
+            "satelite-mihomo-chain-export-{}.yaml",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, &built.yaml).unwrap();
+        let output = std::process::Command::new(&bin)
+            .args(["-t", "-f"])
+            .arg(&tmp)
+            .output()
+            .expect("spawn mihomo");
+        let _ = std::fs::remove_file(&tmp);
+        assert!(
+            output.status.success(),
+            "Mihomo -t rejected the exported chain config:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 
     #[test]
