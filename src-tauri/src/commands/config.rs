@@ -44,7 +44,7 @@ pub struct ListedNode {
 /// Strip the verbatim raw body before flattening a node onto the wire —
 /// listings would otherwise carry hundreds of KB of YAML the UI never uses
 /// (generation reads the store directly, not the wire copy).
-fn wire_node(mut node: ProxyNode) -> ProxyNode {
+pub(crate) fn wire_node(mut node: ProxyNode) -> ProxyNode {
     node.raw = None;
     node
 }

@@ -25,7 +25,7 @@ import {
   deleteChain,
   deletePool,
   diagnoseChain,
-  listAllNodes,
+  listChainNodes,
   listChainUsage,
   listChains,
   listPools,
@@ -36,6 +36,11 @@ import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
+import {
+  enabledUniverse,
+  parseKeywords,
+  poolKeywordMatch,
+} from "../chainNodeUniverse";
 import type {
   ChainDiagnosis,
   ChainHop,
@@ -61,20 +66,8 @@ function hopLabel(
 }
 
 /** Client-side mirror of a keyword pool's include/exclude name filter —
- *  display-only (dot count preview); the backend re-evaluates at build time. */
-function poolKeywordMatch(name: string, include: string[], exclude: string[]): boolean {
-  const n = name.toLowerCase();
-  if (include.length && !include.some((k) => n.includes(k.toLowerCase()))) return false;
-  return !exclude.some((k) => n.includes(k.toLowerCase()));
-}
-
-/** Whitespace-separated keyword list → trimmed non-empty tokens. */
-function parseKeywords(raw: string): string[] {
-  return raw
-    .split(/\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+ *  display-only (dot count preview); the backend re-evaluates at build time
+ *  against the same enabled-only universe (see ../chainNodeUniverse). */
 
 /** Vector glyph marking node pools (layers/stack = a reusable collection).
  *  Replaces the 📦 emoji: emoji fonts vary per platform and can't be themed;
@@ -101,14 +94,17 @@ function PoolGlyph({ size = 12 }: { size?: number }) {
 
 const MAX_POOL_DOTS = 12;
 
-/** Rich card payload for a flow node (network-console style): single nodes are
- *  compact entity cards (protocol + last-known latency), pools are bigger
- *  aggregate cards (member dot grid + count). Computed once when the hop is
- *  placed on the canvas; order badges are merged in live by the editor. */
+/** Rich card payload for one hop, computed once when the hop is placed on
+ *  the canvas (order badges are merged in live by the editor). Single nodes
+ *  show protocol + last-known latency; pools show a member dot grid + count.
+ *  `keywordNodes` is the enabled-subscription universe — keyword pool
+ *  previews mirror runtime semantics, while explicit pools keep showing
+ *  members from disabled subscriptions (node-ID references, any sub). */
 function hopCardData(
   hop: ChainHop,
   nodeById: Map<string, ProxyNode>,
   poolById: Map<string, NodePool>,
+  keywordNodes: ProxyNode[],
 ): Record<string, unknown> {
   if (hop.kind === "node") {
     const n = nodeById.get(hop.node_id);
@@ -137,7 +133,7 @@ function hopCardData(
     };
   }
   const { include, exclude } = p.mode;
-  const matched = Array.from(nodeById.values()).filter((n) =>
+  const matched = enabledUniverse(keywordNodes).filter((n) =>
     poolKeywordMatch(n.name, include, exclude),
   );
   return {
@@ -312,12 +308,13 @@ function layoutHops(
   hops: ChainHop[],
   nodeById: Map<string, ProxyNode>,
   poolById: Map<string, NodePool>,
+  keywordNodes: ProxyNode[],
 ): FlowNode[] {
   return hops.map((hop, i) => ({
     id: hopFlowId(hop),
     type: "hop",
     position: { x: 40 + i * 320, y: 60 },
-    data: { ...hopCardData(hop, nodeById, poolById), hop },
+    data: { ...hopCardData(hop, nodeById, poolById, keywordNodes), hop },
   }));
 }
 
@@ -411,7 +408,7 @@ function RowMenu({
 
 function PoolRow({
   pool,
-  nodes,
+  keywordNodes,
   usedByChains,
   flipUp,
   openMenuId,
@@ -420,7 +417,10 @@ function PoolRow({
   onDelete,
 }: {
   pool: NodePool;
-  nodes: ProxyNode[];
+  /** Enabled-subscription universe — keyword pools preview exactly what the
+   *  runtime build matches (explicit counts come from the fixed node-ID
+   *  references instead and don't need the list at all). */
+  keywordNodes: ProxyNode[];
   /** How many chains route through this pool — deletion-risk hint. */
   usedByChains: number;
   /** Lower-half rows open the ⋮ menu upward (no room below the list). */
@@ -438,7 +438,9 @@ function PoolRow({
     keywords = null;
   } else {
     const { include, exclude } = pool.mode;
-    memberCount = nodes.filter((n) => poolKeywordMatch(n.name, include, exclude)).length;
+    memberCount = keywordNodes.filter((n) =>
+      poolKeywordMatch(n.name, include, exclude),
+    ).length;
     keywords = [
       ...include.map((k) => `+${k}`),
       ...exclude.map((k) => `−${k}`),
@@ -481,12 +483,20 @@ function PoolRow({
 function PoolEditorModal({
   pool,
   nodes,
+  keywordNodes,
   onClose,
   onSaved,
 }: {
   /** `null` = creating a new pool. */
   pool: NodePool | null;
+  /** Full stored-node universe (any subscription, including disabled ones):
+   *  explicit pools hold fixed node-ID references, so their members must
+   *  keep showing even after the owning subscription is switched away. */
   nodes: ProxyNode[];
+  /** Enabled-subscription universe — the live keyword-match preview keeps
+   *  the runtime's enabled-only semantics (cross-subscription needs an
+   *  explicit pool instead). */
+  keywordNodes: ProxyNode[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -523,10 +533,14 @@ function PoolEditorModal({
 
   // Live keyword-filter preview: same parsing + matching as submit, so the
   // count/names shown while typing are exactly what the pool will contain.
+  // Keyword pools match the enabled-subscription universe only.
   const matchedNodes = useMemo(
-    () => nodes.filter((n) => poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude))),
-    [nodes, include, exclude],
-  );
+    () =>
+      enabledUniverse(keywordNodes).filter((n) =>
+        poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude)),
+      ),
+    [keywordNodes, include, exclude],
+  );;
 
   async function onSubmit() {
     const trimmed = name.trim();
@@ -613,13 +627,25 @@ function PoolEditorModal({
                   />
                   <div className="chain-pool-node-list">
                     {filteredNodes.map((n) => (
-                      <label key={n.id} className="chain-pool-node-item">
+                      <label
+                        key={n.id}
+                        className="chain-pool-node-item"
+                        data-disabled={n.enabled === false ? "" : undefined}
+                        title={
+                          n.enabled === false && n.subscription_name
+                            ? `${n.subscription_name} · ${t("chain.subDisabled")}`
+                            : n.subscription_name || undefined
+                        }
+                      >
                         <input
                           type="checkbox"
                           checked={nodeIds.has(n.id)}
                           onChange={() => toggleNode(n.id)}
                         />
                         <span>{n.name}</span>
+                        {n.subscription_name && (
+                          <span className="chain-node-sub">{n.subscription_name}</span>
+                        )}
                       </label>
                     ))}
                   </div>
@@ -693,6 +719,7 @@ function ChainFlowEditor({
   pools,
   nodeById,
   poolById,
+  keywordNodes,
   onSubmit,
   busy,
   onClose,
@@ -703,6 +730,9 @@ function ChainFlowEditor({
   pools: NodePool[];
   nodeById: Map<string, ProxyNode>;
   poolById: Map<string, NodePool>;
+  /** Enabled-subscription universe — keyword pool previews on hop cards
+   *  mirror the runtime's enabled-only keyword semantics. */
+  keywordNodes: ProxyNode[];
   onSubmit: (flowNodes: FlowNode[], edges: Edge[]) => void;
   busy: boolean;
   onClose: () => void;
@@ -715,7 +745,7 @@ function ChainFlowEditor({
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<FlowNode>(
-    layoutHops(chain?.hops ?? [], nodeById, poolById),
+    layoutHops(chain?.hops ?? [], nodeById, poolById, keywordNodes),
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     edgesFromHops(chain?.hops ?? []),
@@ -899,7 +929,7 @@ function ChainFlowEditor({
     const position = { x: p.x - 95 / zoom, y: p.y - 30 / zoom };
     setFlowNodes((cur) => [
       ...cur,
-      { id, type: "hop", position, data: { ...hopCardData(hop, nodeById, poolById), hop } },
+      { id, type: "hop", position, data: { ...hopCardData(hop, nodeById, poolById, keywordNodes), hop } },
     ]);
   }
 
@@ -914,7 +944,7 @@ function ChainFlowEditor({
       revealPosition(existing.position);
       return;
     }
-    const card = hopCardData(hop, nodeById, poolById);
+    const card = hopCardData(hop, nodeById, poolById, keywordNodes);
     const path = hopsFromGraph(flowNodes, edges);
     const tailId = path && path.length > 0 ? path[path.length - 1].id : null;
     const anchor = tailId ? flowNodes.find((n) => n.id === tailId) : undefined;
@@ -1067,9 +1097,17 @@ function ChainFlowEditor({
                         onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
                       }
                       className="chain-candidate-item"
-                      title={t("chain.dragHint")}
+                      data-disabled={n.enabled === false ? "" : undefined}
+                      title={
+                        n.enabled === false && n.subscription_name
+                          ? `${n.subscription_name} · ${t("chain.subDisabled")}`
+                          : n.subscription_name || t("chain.dragHint")
+                      }
                     >
                       {n.name}
+                      {n.subscription_name && (
+                        <span className="chain-node-sub">{n.subscription_name}</span>
+                      )}
                     </div>
                   ))
                 : candidatePools.map((p) => (
@@ -1351,6 +1389,7 @@ function ChainDiagModal({ chain, onClose }: { chain: ProxyChain; onClose: () => 
 function ChainEditorModal({
   chain,
   nodes,
+  keywordNodes,
   pools,
   onClose,
   onSaved,
@@ -1358,6 +1397,8 @@ function ChainEditorModal({
   /** `null` = creating a new chain. */
   chain: ProxyChain | null;
   nodes: ProxyNode[];
+  /** Enabled-subscription universe for keyword pool previews on hop cards. */
+  keywordNodes: ProxyNode[];
   pools: NodePool[];
   onClose: () => void;
   onSaved: () => void;
@@ -1455,6 +1496,7 @@ function ChainEditorModal({
             pools={pools}
             nodeById={nodeById}
             poolById={poolById}
+            keywordNodes={keywordNodes}
             onSubmit={onSubmit}
             busy={busy}
             onClose={onClose}
@@ -1507,6 +1549,11 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const poolById = useMemo(() => new Map(pools.map((p) => [p.id, p])), [pools]);
+  /** Enabled-subscription universe — every keyword-style preview on this
+   *  page (pool row counts, editor preimages, hop-card dot grids) mirrors
+   *  the runtime's enabled-only keywords; explicit pools and chains keep
+   *  listing their full cross-subscription references. */
+  const enabledNodes = useMemo(() => enabledUniverse(nodes), [nodes]);
   const poolChainCount = useMemo(() => {
     const counts = new Map<string, number>();
     for (const c of chains) {
@@ -1524,7 +1571,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
       const [p, c, n, usage] = await Promise.all([
         listPools(),
         listChains(),
-        listAllNodes(),
+        listChainNodes(),
         listChainUsage(),
       ]);
       setPools(p);
@@ -1586,7 +1633,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
               <PoolRow
                 key={p.id}
                 pool={p}
-                nodes={nodes}
+                keywordNodes={enabledNodes}
                 usedByChains={poolChainCount.get(p.id) ?? 0}
                 flipUp={i >= Math.ceil(pools.length / 2)}
                 openMenuId={menuId}
@@ -1705,6 +1752,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         <PoolEditorModal
           pool={poolEditor.pool}
           nodes={nodes}
+          keywordNodes={enabledNodes}
           onClose={() => setPoolEditor(null)}
           onSaved={() => {
             setPoolEditor(null);
@@ -1716,6 +1764,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         <ChainEditorModal
           chain={chainEditor.chain}
           nodes={nodes}
+          keywordNodes={enabledNodes}
           pools={pools}
           onClose={() => setChainEditor(null)}
           onSaved={() => {

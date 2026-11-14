@@ -508,6 +508,7 @@ pub fn run() {
             commands::reset_rule_set,
             commands::reset_builtin_rule_set,
             commands::list_pools,
+            commands::list_chain_nodes,
             commands::create_pool,
             commands::update_pool,
             commands::delete_pool,

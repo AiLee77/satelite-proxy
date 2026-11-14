@@ -167,6 +167,26 @@
   border-bottom: none;
 }
 
+/* Subscription tag on pool/editor/candidate rows — with the cross-subscription
+   node listing (list_chain_nodes) users need to tell which config a node came
+   from, and rows from a currently-disabled config dim slightly. */
+.chain-node-sub {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 9rem;
+  flex: none;
+}
+
+.chain-pool-node-item[data-disabled] > span:first-of-type,
+.chain-candidate-item[data-disabled] {
+  opacity: 0.55;
+}
+
 .chain-list {
   display: flex;
   flex-direction: column;

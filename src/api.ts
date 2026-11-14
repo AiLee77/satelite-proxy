@@ -1002,6 +1002,13 @@ export function listPools() {
   return invoke<NodePool[]>("list_pools");
 }
 
+/** 池/链编辑器专用全量节点：含未启用订阅的节点，带 `enabled` 标记（后端
+ *  list_chain_nodes）。keyword 池的语义保持只匹配启用订阅节点，前端用
+ *  `chainNodeUniverse.enabledUniverse` 过滤后再做关键词匹配。 */
+export function listChainNodes() {
+  return invoke<ProxyNode[]>("list_chain_nodes");
+}
+
 export function createPool(name: string, mode: PoolMode) {
   return invoke<NodePool>("create_pool", { name, mode });
 }

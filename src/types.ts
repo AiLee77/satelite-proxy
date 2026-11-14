@@ -372,6 +372,11 @@ export interface ProxyNode {
   subscription_name?: string;
   /** Present from list_all_nodes — true if the node id is in favorite_nodes. */
   favorite?: boolean;
+  /** Node listing only (`list_chain_nodes`): false when the owning
+   *  subscription is currently disabled. Keyword pools stay enabled-only by
+   *  mirroring this flag; absent = legacy listing without the information
+   *  (treated as enabled). */
+  enabled?: boolean;
   /** Full protocol parameters (serde-flattened from Rust; always present on
    * list_all_nodes payloads, optional so summary-shaped consumers still type). */
   config?: ProtocolConfig;

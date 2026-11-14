@@ -2,9 +2,12 @@
 //! multi-hop chains built from them (see `config::builder`'s
 //! `build_pool_selectors` / `build_chain_outbounds`).
 
-use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain, ProxyNode};
 use crate::state::AppState;
+use serde::Serialize;
 use tauri::{AppHandle, State};
+
+use super::config::wire_node;
 
 /// Queue one globally debounced restart — mirrors `rules.rs::apply_running`.
 /// Pool/chain edits change the generated outbounds the same way rule edits
@@ -17,6 +20,69 @@ fn apply_running(app: &AppHandle) {
 pub fn list_pools(state: State<'_, AppState>) -> Result<Vec<NodePool>, String> {
     state
         .with_store(|store| Ok(store.pools.clone()))
+        .map_err(|e| e.to_string())
+}
+
+/// Node listing for the pool/chain editors: every stored node from every
+/// subscription, not just enabled ones. Pools and chains hold node-ID
+/// references that routinely cross subscriptions — build a pool from sub A,
+/// switch the active sub to B (MIX off) and the pool must still list and
+/// keep A's nodes — so the editing UI needs the full universe. The
+/// enabled-subscription node pages keep listing via `list_all_nodes`.
+///
+/// `enabled` mirrors exactly what a config build consults (same predicate as
+/// `AppStore::enabled_nodes`, i.e. subscription enabled AND it feeds nodes
+/// into the generated config): UI previews that must match runtime keyword
+/// semantics — keyword pool membership, smart-style keyword filtering over
+/// the hop cards — filter on it client-side instead of widening the runtime
+/// semantic here.
+#[derive(Debug, Serialize)]
+pub struct ChainListedNode {
+    #[serde(flatten)]
+    pub node: ProxyNode,
+    pub subscription_id: String,
+    pub subscription_name: String,
+    pub favorite: bool,
+    /// False when the owning subscription is currently disabled: the node is
+    /// editable/selectable inside pools and chains, but keyword pools and
+    /// config-build keyword filtering only match enabled-subscription nodes.
+    pub enabled: bool,
+}
+
+#[tauri::command(async)]
+pub fn list_chain_nodes(state: State<'_, AppState>) -> Result<Vec<ChainListedNode>, String> {
+    state
+        .with_store(|store| {
+            let names: std::collections::HashMap<&str, &str> = store
+                .subscriptions
+                .iter()
+                .map(|sub| (sub.id.as_str(), sub.name.as_str()))
+                .collect();
+            let enabled_subs: std::collections::HashSet<&str> = store
+                .subscriptions
+                .iter()
+                .filter(|sub| sub.enabled && sub.source.contributes_nodes())
+                .map(|sub| sub.id.as_str())
+                .collect();
+            Ok(store
+                .ordered_nodes()
+                .into_iter()
+                .map(|stored| {
+                    let id = stored.node.id.clone();
+                    ChainListedNode {
+                        subscription_id: stored.subscription_id.clone(),
+                        subscription_name: names
+                            .get(stored.subscription_id.as_str())
+                            .copied()
+                            .unwrap_or("")
+                            .to_string(),
+                        favorite: store.favorite_nodes.contains(&id),
+                        enabled: enabled_subs.contains(stored.subscription_id.as_str()),
+                        node: wire_node(stored.node.clone()),
+                    }
+                })
+                .collect())
+        })
         .map_err(|e| e.to_string())
 }
 
