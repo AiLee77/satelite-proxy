@@ -67,13 +67,45 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci-fetch-nsis.sh
 
-      - name: 构建 NSIS 安装包
+      # 2026-11 CI run #6 事故：NSIS 构建步骤编译失败会连坐 skip 后面的全部
+      # Rust 场景测试/Mihomo 真内核校验/便携版。测试与校验前置，打包殿后；
+      # 上传产物仍在末尾（需要两种包都造完）。
+      - name: 运行 Rust 单元测试
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -Bundle nsis
+        run: |
+          # 默认安装包只内置 sing-box。cargo test 也必须使用相同覆盖配置，
+          # 否则 Tauri build.rs 会按基础配置查找未下载的 Xray/Mihomo 文件。
+          $env:TAURI_CONFIG = Get-Content src-tauri/tauri.singbox-windows.conf.json -Raw
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --test parse_subscription
+
+      - name: 预取 Mihomo 供原文配置兼容验证
+        shell: bash
+        run: bash scripts/ci-fetch-with-retry.sh scripts/fetch-bundled-mihomo-windows-amd64.ps1
+
+      - name: Mihomo 原文及副核配置真实内核校验
+        shell: pwsh
+        run: |
+          # 仅配置 -t 校验，不启动代理、不连接测试节点。安装包仍只内置 sing-box。
+          $env:TAURI_CONFIG = Get-Content src-tauri/tauri.singbox-windows.conf.json -Raw
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_openvpn_raw_validates -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_sidecar_config_validates -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_sudoku_validates -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_user_template_validates -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_exported_chain_config_validates -- --ignored
 
       - name: 构建便携版
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Bundle portable
+
+      - name: 构建 NSIS 安装包
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Bundle nsis
 
       - name: 确认弹窗安全回归测试
         shell: pwsh
@@ -126,16 +158,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: 运行 Rust 单元测试
-        shell: pwsh
-        run: |
-          # 默认安装包只内置 sing-box。cargo test 也必须使用相同覆盖配置，
-          # 否则 Tauri build.rs 会按基础配置查找未下载的 Xray/Mihomo 文件。
-          $env:TAURI_CONFIG = Get-Content src-tauri/tauri.singbox-windows.conf.json -Raw
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --test parse_subscription
-
       - name: 服务请求 HTTPS CONNECT 连接归属回归
         shell: pwsh
         run: |
@@ -163,25 +185,6 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib services::xray_latency::tests::live_xray_http_probe_uses_node_and_cleans_up -- --ignored
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib services::xray_latency::live_protocol_tests:: -- --ignored
-
-      - name: 预取 Mihomo 供原文配置兼容验证
-        shell: bash
-        run: bash scripts/ci-fetch-with-retry.sh scripts/fetch-bundled-mihomo-windows-amd64.ps1
-
-      - name: Mihomo 原文及副核配置真实内核校验
-        shell: pwsh
-        run: |
-          # 仅配置 -t 校验，不启动代理、不连接测试节点。安装包仍只内置 sing-box。
-          $env:TAURI_CONFIG = Get-Content src-tauri/tauri.singbox-windows.conf.json -Raw
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_openvpn_raw_validates -- --ignored
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_sidecar_config_validates -- --ignored
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_sudoku_validates -- --ignored
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_mihomo_user_template_validates -- --ignored
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_exported_chain_config_validates -- --ignored
 
       - name: 上传安装包
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
