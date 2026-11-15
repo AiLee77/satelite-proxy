@@ -345,6 +345,38 @@ test("G1 链页启用控件：setCurrentNode 走 chain:<id>，非 sing-box 隐�
   assert.match(page, /activateChainById/);
 });
 
+// —— G6：连线 Handle 热区（纯 CSS 方案 A） ——
+
+test("G6 连线 Handle：本体 24px 透明热区 + ::after 8px 视觉圆点，不碰定位 transform", () => {
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  // 本体热区：24px、透明、无边框、crosshair（xyflow 的
+  // pointer-events: none/connectionindicator 默认语义保留，点到不可连
+  // 状态不产生交互）。
+  const box = css.match(/\.chain-hop-node \.react-flow__handle \{[^}]*\}/s)?.[0] ?? "";
+  assert.ok(box, "handle 主规则缺失");
+  assert.match(box, /width: 24px;/);
+  assert.match(box, /height: 24px;/);
+  assert.match(box, /background: transparent;/);
+  assert.match(box, /cursor: crosshair;/);
+  // 圆点几何迁移到 ::after（8px、显隐/放大同层平移）；xyflow 的
+  // translate(-50%,-50%) 中心定位在本体上，绝不能被 scale 覆盖。
+  const dot = css.match(/\.react-flow__handle::after \{[^}]*\}/s)?.[0] ?? "";
+  assert.ok(dot, "handle ::after 规则缺失");
+  assert.match(dot, /width: 8px;/);
+  assert.match(dot, /opacity: 0;/);
+  assert.doesNotMatch(box, /scale\(/);
+  // 显形状态 selectors 必须作用在 ::after 上（hover/selected/连线中）。
+  assert.match(css, /:hover \.react-flow__handle::after/);
+  assert.match(css, /\.selected \.chain-hop-node \.react-flow__handle::after/);
+  assert.match(css, /\.connecting::after/);
+  // 放大反馈只允许出现在 ::after 规则段（本体不得被 scale 改写定位）。
+  const scaleRules = css.match(/transform: scale\(1\.25\);/g) ?? [];
+  assert.ok(scaleRules.length > 0, "scale 反馈丢失");
+});
+
 test("G1 双语文案与源码同步", () => {
   const messages = readFileSync(
     new URL("../src/i18n/messages.ts", import.meta.url),

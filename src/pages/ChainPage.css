@@ -1064,10 +1064,31 @@
     var(--shadow-card);
 }
 
-/* Connection dots on the hop capsules stay hidden until relevant (node hover,
-   node selected, or a connection being dragged nearby) — a row of always-on
-   purple dots at every node edge reads as visual noise. */
+/* Connection affordances on the hop capsules (G6): the handle element is a
+   transparent 24px hit zone whose centre is the connection point — xyflow
+   pins _left/_right to the node edge with translate(-50%,-50%) centre
+   alignment, so widening the box keeps the anchor exactly where the old
+   8px dot sat. The visible 8px dot moves to ::after, which lets the scale
+   feedback live on the pseudoelement without ever touching the element
+   transform xyflow uses for positioning (scale on the box itself used to
+   collide with the translate and offset the dot by a few px on hover).
+   Dots stay hidden until relevant (node hover, node selected, or a live
+   connection start/end nearby) — always-on purple dots at every node edge
+   read as visual noise. */
 .chain-editor-canvas .chain-hop-node .react-flow__handle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: crosshair;
+}
+
+.chain-editor-canvas .chain-hop-node .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -1079,15 +1100,15 @@
     transform 0.15s ease;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting::after {
   opacity: 1;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after {
   transform: scale(1.25);
 }
 
