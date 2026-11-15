@@ -335,13 +335,44 @@
   background: var(--danger);
 }
 
-/* Usage hints — preset-library info only, no runtime state on this page. */
-.chain-card-usage {
-  color: var(--accent-purple);
+/* G1: exit-activation control in the chain card header. `current` reads as
+ *  the live-exit badge (the chain already is the outbound), `unavailable`
+ *  explains the sing-box-only gating without an interactive affordance. */
+.chain-exit-btn {
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.chain-card-usage.none {
-  opacity: 0.75;
+.chain-exit-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.chain-exit-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chain-exit-btn.current {
+  color: var(--primary);
+  border-color: var(--primary);
+  cursor: default;
+  pointer-events: none;
+}
+
+.chain-exit-btn.unavailable {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
 }
 
 /* Chain diagnostics: per-hop probe table. The last row (whole chain) gets a

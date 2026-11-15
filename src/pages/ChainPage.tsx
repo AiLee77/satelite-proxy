@@ -27,16 +27,24 @@ import {
   diagnoseChain,
   exportChainMihomoYaml,
   exportChainText,
+  generateSingboxConfig,
+  getProxyStatus,
+  getSettings,
   listChainNodes,
-  listChainUsage,
   listChains,
   listPools,
+  onProxySnapshot,
+  peekSettings,
+  setCurrentNode,
   updateChain,
   updatePool,
 } from "../api";
+import { chainVirtualNodeId } from "../chainVirtualNode";
+import { waitForCoreRestart } from "../coreBusy";
 import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
+import { GlassSwitch } from "../components/GlassSwitch";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
 import {
@@ -728,6 +736,7 @@ function ChainFlowEditor({
   busy,
   onClose,
   autoName,
+  onSaveActivate,
 }: {
   chain: ProxyChain | null;
   nodes: ProxyNode[];
@@ -743,7 +752,13 @@ function ChainFlowEditor({
   /** New-chain mode: receives "A → B → C" derived from the live graph order,
    *  so the name field can auto-follow the hops being placed. */
   autoName?: (label: string) => void;
+  /** G1: "Save & activate" footer switch (sing-box only). When toggled
+   *  on, Save also queues the same activation handler the card uses —
+   *  the parent resolves the chain id after saving (by id for existing
+   *  chains, by name for freshly created ones). */
+  onSaveActivate?: (() => void) | null;
 }) {
+  const [saveActivate, setSaveActivate] = useState(false);
   const { t } = useI18n();
   const { screenToFlowPosition, fitView, getZoom, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1339,10 +1354,24 @@ function ChainFlowEditor({
       )}
       <footer className="modal-footer">
         <GlassButton onClick={onClose}>{t("common.cancel")}</GlassButton>
+        {onSaveActivate && (
+          <GlassSwitch
+            checked={saveActivate}
+            onChange={setSaveActivate}
+            label={t("chain.saveAndActivate")}
+            title={t("chain.saveAndActivateHint")}
+            disabled={busy}
+            capsule
+            size="sm"
+          />
+        )}
         <GlassButton
           variant="primary"
           disabled={busy}
-          onClick={() => onSubmit(flowNodes, edges)}
+          onClick={() => {
+            if (saveActivate) onSaveActivate?.();
+            onSubmit(flowNodes, edges);
+          }}
         >
           {t("common.save")}
         </GlassButton>
@@ -1530,6 +1559,7 @@ function ChainEditorModal({
   pools,
   onClose,
   onSaved,
+  onSaveActivate,
 }: {
   /** `null` = creating a new chain. */
   chain: ProxyChain | null;
@@ -1538,7 +1568,12 @@ function ChainEditorModal({
   keywordNodes: ProxyNode[];
   pools: NodePool[];
   onClose: () => void;
-  onSaved: () => void;
+  /** Saved chain's trimmed name — the caller uses it to resolve the id of
+   *  a freshly created chain when "Save & activate" was queued. */
+  onSaved: (savedName?: string) => void;
+  /** G1: "Save & activate" — queues the same activation handler the card
+   *  uses (E2 liveness checks + restart semantics) to run after save. */
+  onSaveActivate?: (() => void) | null;
 }) {
   const { t } = useI18n();
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -1592,7 +1627,7 @@ function ChainEditorModal({
       } else {
         await createChain(trimmed, hops);
       }
-      onSaved();
+      onSaved(trimmed);
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
@@ -1638,6 +1673,7 @@ function ChainEditorModal({
             busy={busy}
             onClose={onClose}
             autoName={chain ? undefined : handleAutoName}
+            onSaveActivate={onSaveActivate}
           />
         </ReactFlowProvider>
       </div>
@@ -1651,10 +1687,33 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   const [pools, setPools] = useState<NodePool[]>([]);
   const [chains, setChains] = useState<ProxyChain[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
-  /** Rule-set names referencing each chain (deletion-risk hint). */
-  const [chainUsage, setChainUsage] = useState<Record<string, string[]>>({});
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** G1: live activation context — current exit id, core running and the
+   *  primary core kind (chain exits only exist under sing-box; E3 hides
+   *  the virtual entries on the other cores). Seeded from the module
+   *  snapshot to avoid a default-value flash, then kept in sync by the
+   *  proxy-status snapshot stream. */
+  const [active, setActive] = useState<{
+    currentNodeId: string | null;
+    coreType: string;
+    running: boolean;
+  }>(() => {
+    const s = peekSettings();
+    return {
+      currentNodeId: s?.current_node_id ?? null,
+      coreType: s?.core_type ?? "singbox",
+      running: false,
+    };
+  });
+  /** Chain id whose activation is in flight (disables every chain control). */
+  const [activating, setActivating] = useState<string | null>(null);
+  /** Chain identity queued by "Save & activate". The editor passes the
+   *  saved chain's identity back through its onSaved callback. */
+  const [activateOnSave, setActivateOnSave] = useState<
+    { kind: "name"; name: string } | { kind: "id"; id: string } | null
+  >(null);
 
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
   const [chainEditor, setChainEditor] = useState<{ chain: ProxyChain | null } | null>(null);
@@ -1746,16 +1805,14 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      const [p, c, n, usage] = await Promise.all([
+      const [p, c, n] = await Promise.all([
         listPools(),
         listChains(),
         listChainNodes(),
-        listChainUsage(),
       ]);
       setPools(p);
       setChains(c);
       setNodes(n);
-      setChainUsage(usage);
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
@@ -1766,6 +1823,73 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // G1: track the live exit / core context for the activation controls.
+  // Fetching status (not just settings) gives us `running` — stopped cores
+  // only need the generated config written, running ones must be restarted.
+  useEffect(() => {
+    let cancelled = false;
+    const dispose = onProxySnapshot((status) => {
+      if (cancelled || !status) return;
+      setActive({
+        currentNodeId: status.current_node_id ?? null,
+        coreType: status.core_type ?? "singbox",
+        running: status.running,
+      });
+    });
+    void Promise.all([getSettings(), getProxyStatus()])
+      .then(([s, p]) => {
+        if (cancelled) return;
+        setActive({
+          currentNodeId: s.current_node_id ?? p.current_node_id ?? null,
+          coreType: p.core_type ?? s.core_type ?? "singbox",
+          running: p.running,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, []);
+
+  /** G1: select `chain:<id>` as the exit through the E2 channel — liveness
+   *  checks and error text live in the backend (`select_chain_exit`), and
+   *  chain outbounds only exist after a rebuild, so a running core always
+   *  goes through the restart wait (no hot-swap in v1). Stopped cores just
+   *  get the config written. Shared by the card control and the editor's
+   *  "Save & activate" (one handler, one semantics). */
+  async function activateChainById(chainId: string) {
+    if (activating) return;
+    setActivating(chainId);
+    setError(null);
+    try {
+      await setCurrentNode(chainVirtualNodeId(chainId));
+      if (active.running) {
+        const result = await waitForCoreRestart();
+        if (result !== "ready") {
+          throw new Error(t("settings.coreSwitchWaitFailed"));
+        }
+      } else {
+        await generateSingboxConfig();
+      }
+      setActive((a) => ({ ...a, currentNodeId: chainVirtualNodeId(chainId) }));
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setActivating(null);
+    }
+  }
+
+  /** New chains have no id until saved — "Save & activate" resolves the
+   *  freshly created chain by name from the reloaded list. */
+  async function activateChainByName(name: string) {
+    if (activating) return;
+    const fresh = await listChains().catch(() => null);
+    const target = fresh?.find((c) => c.name === name);
+    if (!target) return;
+    await activateChainById(target.id);
+  }
 
   async function onConfirmDelete() {
     if (!confirmDelete) return;
@@ -1839,7 +1963,10 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         ) : (
           <div className="chain-list">
             {chains.map((c, i) => {
-              const usageNames = chainUsage[c.id] ?? [];
+              const virtualId = chainVirtualNodeId(c.id);
+              const isActive = active.currentNodeId === virtualId;
+              const isBusy = activating != null;
+              const singbox = active.coreType === "singbox";
               return (
                 <div key={c.id} className="card chain-card">
                   <div className="chain-card-head">
@@ -1850,12 +1977,29 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                       <span className="chain-row-meta">
                         {t("chain.hopsCount", { n: c.hops.length })}
                       </span>
-                      {usageNames.length > 0 ? (
-                        <span className="chain-card-usage" title={usageNames.join(" · ")}>
-                          {t("chain.usedByRuleSets", { n: usageNames.length })}
+                      {isActive ? (
+                        <span className="chain-exit-btn current" aria-disabled="true">
+                          {t("chain.inUse")}
                         </span>
+                      ) : singbox ? (
+                        <button
+                          type="button"
+                          className="chain-exit-btn"
+                          disabled={isBusy}
+                          onClick={() => void activateChainById(c.id)}
+                        >
+                          {activating === c.id
+                            ? t("chain.activating")
+                            : t("chain.useAsExit")}
+                        </button>
                       ) : (
-                        <span className="chain-card-usage none">{t("chain.notUsedByRules")}</span>
+                        <span
+                          className="chain-exit-btn unavailable"
+                          aria-disabled="true"
+                          title={t("chain.exitSingboxOnlyHint")}
+                        >
+                          {t("chain.exitSingboxOnly")}
+                        </span>
                       )}
                       <RowMenu
                         id={`chain-${c.id}`}
@@ -1955,10 +2099,28 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
           nodes={nodes}
           keywordNodes={enabledNodes}
           pools={pools}
-          onClose={() => setChainEditor(null)}
-          onSaved={() => {
+          onClose={() => {
             setChainEditor(null);
+            setActivateOnSave(null);
+          }}
+          onSaveActivate={
+            active.coreType === "singbox"
+              ? () =>
+                  setActivateOnSave(
+                    chainEditor.chain
+                      ? { kind: "id", id: chainEditor.chain.id }
+                      : { kind: "name", name: "" },
+                  )
+              : null
+          }
+          onSaved={(savedName) => {
+            const pending = activateOnSave;
+            setChainEditor(null);
+            setActivateOnSave(null);
             void reload();
+            if (!pending) return;
+            if (pending.kind === "id") void activateChainById(pending.id);
+            else if (savedName) void activateChainByName(savedName);
           }}
         />
       )}

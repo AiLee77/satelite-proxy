@@ -20,6 +20,13 @@
 /** Id namespace prefix — mirrors `domain::chain::CHAIN_NODE_ID_PREFIX`. */
 export const CHAIN_NODE_ID_PREFIX = "chain:";
 
+/** Mirrors `domain::chain::chain_virtual_node_id` — the listed-node id
+ *  selecting a chain as exit goes by (`setCurrentNode("chain:" + id)`).
+ *  Real node ids are 32-char hex digests, so this never collides. */
+export function chainVirtualNodeId(chainId: string): string {
+  return `${CHAIN_NODE_ID_PREFIX}${chainId}`;
+}
+
 /** True for virtual chain entry ids (`chain:<chain_id>`). */
 export function isChainVirtualId(id: string): boolean {
   return id.startsWith(CHAIN_NODE_ID_PREFIX);

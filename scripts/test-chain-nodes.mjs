@@ -309,3 +309,46 @@ test("E3 前端接线：类型、页面守卫与双语文案", () => {
   assert.match(messages, /"nodes\.chainEntryHint": "Chain exit/);
   assert.match(messages, /"nodes\.chainEntryHint": "代理链出口/);
 });
+
+// —— G1：链卡片/编辑器直接启用为出口 ——
+
+test("G1 链页启用控件：setCurrentNode 走 chain:<id>，非 sing-box 隐藏并说明", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // 复用 E2 通道：虚拟 id 前缀 + setCurrentNode，运行中必须走重启等待。
+  assert.match(page, /chainVirtualNodeId\(/);
+  assert.match(page, /setCurrentNode\(chainVirtualNodeId\(/);
+  assert.match(page, /waitForCoreRestart\(\)/);
+  assert.match(page, /settings\.coreSwitchWaitFailed/);
+  // 当前出口链显示「使用中」，非 sing-box 隐藏控件并给说明。
+  assert.match(page, /"chain\.inUse"/);
+  assert.match(page, /"chain\.exitSingboxOnly"/);
+  assert.match(page, /active\.coreType === "singbox"/);
+  // 编辑器保存并启用开关只在 sing-box 下出现，新建链按名回查 id。
+  assert.match(page, /onSaveActivate/);
+  assert.match(page, /activateChainByName/);
+  assert.match(page, /activateChainById/);
+});
+
+test("G1 双语文案与源码同步", () => {
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.useAsExit", "Use as exit");
+  has("chain.inUse", "In use");
+  has("chain.activating", "Switching…");
+  has("chain.saveAndActivate", "Save & activate");
+  has("chain.useAsExit", "启用为出口");
+  has("chain.inUse", "使用中");
+  has("chain.activating", "切换中…");
+  has("chain.saveAndActivate", "保存并启用");
+});
