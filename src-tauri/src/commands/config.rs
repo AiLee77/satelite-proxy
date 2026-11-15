@@ -884,8 +884,8 @@ fn sort_listed_nodes(nodes: &mut [ListedNode], sort_mode: Option<&str>) {
                 None if n.node.latency_at.is_some() => (1, 0),
                 None => (2, 0),
             };
-            (is_chain(a) as u8)
-                .cmp(&(is_chain(b) as u8))
+            (!is_chain(a) as u8)
+                .cmp(&(!is_chain(b) as u8))
                 .then_with(|| score(a).cmp(&score(b)))
                 .then_with(|| a.node.name.to_lowercase().cmp(&b.node.name.to_lowercase()))
         }),
@@ -1718,5 +1718,59 @@ mod tests {
                 id: "sub-1".to_string(),
             });
         assert!(chain_virtual_listed_nodes(&store, "").is_empty());
+    }
+
+    #[test]
+    fn sort_listed_nodes_pins_chain_entries_first_in_latency_mode() {
+        use crate::domain::{ChainHop, ProxyChain};
+        use crate::storage::AppStore;
+        let real = |id: &str, name: &str, latency_ms: Option<u64>| ListedNode {
+            node: wire_node(ProxyNode {
+                id: id.to_string(),
+                name: name.to_string(),
+                protocol: crate::domain::Protocol::Shadowsocks,
+                server: "s.example.com".to_string(),
+                port: 8388,
+                tls: None,
+                transport: None,
+                udp: None,
+                config: crate::domain::ProtocolConfig::Unknown,
+                source: None,
+                raw: None,
+                latency_ms,
+                latency_at: None,
+            }),
+            subscription_id: "sub1".to_string(),
+            subscription_name: "Sub".to_string(),
+            latency_method: None,
+            latency_error: None,
+            favorite: false,
+            chain_hops: None,
+        };
+        let mut store = AppStore::default();
+        store.chains.push(ProxyChain {
+            id: "chain-ab12".to_string(),
+            name: "美转港".to_string(),
+            hops: vec![
+                ChainHop::Node {
+                    node_id: "n1".to_string(),
+                },
+                ChainHop::Node {
+                    node_id: "n2".to_string(),
+                },
+            ],
+        });
+        let chain = chain_virtual_listed_nodes(&store, "").remove(0);
+        // Fast real node first, chain entry last: latency mode must still
+        // pull the chain ahead of every real node (it carries no latency).
+        let mut nodes = vec![
+            real("r1", "Alpha", Some(10)),
+            real("r2", "Beta", Some(20)),
+            chain,
+        ];
+        sort_listed_nodes(&mut nodes, Some("latency"));
+        assert_eq!(nodes[0].node.id, "chain:chain-ab12");
+        assert_eq!(nodes[1].node.id, "r1");
+        assert_eq!(nodes[2].node.id, "r2");
     }
 }
