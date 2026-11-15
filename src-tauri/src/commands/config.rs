@@ -1137,6 +1137,7 @@ pub async fn generate_singbox_config(
     let (
         mut nodes,
         keyword_eligible_count,
+        subscription_members,
         settings,
         rules,
         remote_rule_sets,
@@ -1166,6 +1167,7 @@ pub async fn generate_singbox_config(
             Ok((
                 nodes,
                 keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1246,6 +1248,7 @@ pub async fn generate_singbox_config(
                         &opts,
                         settings.close_connections_on_switch,
                         keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1313,6 +1316,7 @@ pub async fn preview_singbox_config(
     let (
         mut nodes,
         keyword_eligible_count,
+        subscription_members,
         settings,
         rules,
         remote_rule_sets,
@@ -1340,6 +1344,7 @@ pub async fn preview_singbox_config(
             Ok((
                 nodes,
                 keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1414,6 +1419,7 @@ pub async fn preview_singbox_config(
                         &opts,
                         settings.close_connections_on_switch,
                         keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;

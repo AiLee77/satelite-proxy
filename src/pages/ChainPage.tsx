@@ -32,6 +32,7 @@ import {
   getSettings,
   listChainNodes,
   listChains,
+  listSubscriptions,
   listPools,
   onProxySnapshot,
   peekSettings,
@@ -61,6 +62,7 @@ import type {
   PoolMode,
   ProxyChain,
   ProxyNode,
+  SubscriptionView,
 } from "../types";
 
 /** Display label for one hop, resolved against the current node/pool lists
@@ -165,6 +167,25 @@ function hopCardData(
       overflow: Math.max(0, ids.length - MAX_POOL_DOTS),
     };
   }
+  if (p.mode.mode === "subscription") {
+    // Whole-subscription pools resolve dynamically at build time against that
+    // subscription's enabled universe; the dot grid mirrors the same live
+    // preview (store order, no latency sorting — mirrors the Rust arm).
+    const subId = p.mode.subscription_id;
+    const matched = enabledUniverse(keywordNodes).filter(
+      (n) => (n.subscription_id ?? "") === subId,
+    );
+    return {
+      kind: "pool",
+      label: p.name,
+      stale: false,
+      poolMode: "subscription" as const,
+      memberCount: matched.length,
+      dots: matched.slice(0, MAX_POOL_DOTS).map(() => true),
+      overflow: Math.max(0, matched.length - MAX_POOL_DOTS),
+      subscriptionId: p.mode.subscription_id,
+    };
+  }
   const { include, exclude } = p.mode;
   const matched = enabledUniverse(keywordNodes).filter((n) =>
     poolKeywordMatch(n.name, include, exclude),
@@ -209,7 +230,7 @@ function HopNode({ data }: NodeProps) {
   if (stale) {
     sub = <span className="chain-hop-sub">{t("rules.nodeStale")}</span>;
   } else if (kind === "pool") {
-    const poolMode = data.poolMode as "explicit" | "keyword" | undefined;
+    const poolMode = data.poolMode as "explicit" | "keyword" | "subscription" | undefined;
     const memberCount = (data.memberCount as number | undefined) ?? 0;
     const include = (data.include as string[] | undefined) ?? [];
     const exclude = (data.exclude as string[] | undefined) ?? [];
@@ -217,7 +238,9 @@ function HopNode({ data }: NodeProps) {
     const modeText =
       poolMode === "keyword"
         ? kws || t("chain.poolKeywordAll")
-        : t("chain.poolModeExplicit");
+        : poolMode === "subscription"
+          ? t("chain.poolModeSubscription")
+          : t("chain.poolModeExplicit");
     sub = (
       <span className="chain-hop-sub">
         {modeText} · {memberCount} {t("chain.poolMembersSuffix")}
@@ -446,6 +469,7 @@ function RowMenu({
 function PoolRow({
   pool,
   keywordNodes,
+  subscriptions,
   usedByChains,
   flipUp,
   openMenuId,
@@ -458,6 +482,9 @@ function PoolRow({
    *  runtime build matches (explicit counts come from the fixed node-ID
    *  references instead and don't need the list at all). */
   keywordNodes: ProxyNode[];
+  /** Subscription list — subscription pools need the fresh owner (name
+   *  lookup; a missing entry flips the row to "subscription gone"). */
+  subscriptions: SubscriptionView[];
   /** How many chains route through this pool — deletion-risk hint. */
   usedByChains: number;
   /** Lower-half rows open the ⋮ menu upward (no room below the list). */
@@ -470,9 +497,24 @@ function PoolRow({
   const { t } = useI18n();
   let memberCount: number;
   let keywords: string | null;
+  let subNote: string | null = null;
+  let pillClass = "target-node";
+  let pillText: string;
   if (pool.mode.mode === "explicit") {
     memberCount = pool.mode.node_ids.length;
     keywords = null;
+    pillText = t("chain.poolModeExplicit");
+  } else if (pool.mode.mode === "subscription") {
+    const subId = pool.mode.subscription_id;
+    memberCount = keywordNodes.filter(
+      (n) => (n.subscription_id ?? "") === subId,
+    ).length;
+    keywords = null;
+    pillClass = "target-smart";
+    pillText = t("chain.poolModeSubscription");
+    const sub = subscriptions.find((s) => s.id === subId);
+    if (!sub) subNote = t("chain.poolSubMissing");
+    else if (!sub.enabled) subNote = t("chain.subDisabled");
   } else {
     const { include, exclude } = pool.mode;
     memberCount = keywordNodes.filter((n) =>
@@ -482,6 +524,8 @@ function PoolRow({
       ...include.map((k) => `+${k}`),
       ...exclude.map((k) => `−${k}`),
     ].join(" ");
+    pillClass = "target-smart";
+    pillText = t("chain.poolModeKeyword");
   }
   return (
     <div className="chain-pool-row" title={keywords ?? undefined}>
@@ -491,10 +535,10 @@ function PoolRow({
         </span>
         {pool.name}
       </span>
-      {keywords && <span className="chain-pool-row-kw">{keywords}</span>}
-      <span className={`pill ${pool.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
-        {pool.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
-      </span>
+      {(keywords || subNote) && (
+        <span className="chain-pool-row-kw">{subNote ?? keywords}</span>
+      )}
+      <span className={`pill ${pillClass}`}>{pillText}</span>
       <span className="chain-row-meta">
         {memberCount} {t("chain.poolMembersSuffix")}
       </span>
@@ -521,6 +565,7 @@ function PoolEditorModal({
   pool,
   nodes,
   keywordNodes,
+  subscriptions,
   onClose,
   onSaved,
 }: {
@@ -534,12 +579,17 @@ function PoolEditorModal({
    *  the runtime's enabled-only semantics (cross-subscription needs an
    *  explicit pool instead). */
   keywordNodes: ProxyNode[];
+  /** Fresh subscription list — the subscription picker; custom profiles
+   *  (raw config, contributes_nodes() == false) are filtered out. */
+  subscriptions: SubscriptionView[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t } = useI18n();
   const [name, setName] = useState(pool?.name ?? "");
-  const [mode, setMode] = useState<"explicit" | "keyword">(pool?.mode.mode ?? "explicit");
+  const [mode, setMode] = useState<"explicit" | "keyword" | "subscription">(
+    pool?.mode.mode ?? "explicit",
+  );
   const [nodeIds, setNodeIds] = useState<Set<string>>(
     new Set(pool?.mode.mode === "explicit" ? pool.mode.node_ids : []),
   );
@@ -548,6 +598,9 @@ function PoolEditorModal({
   );
   const [exclude, setExclude] = useState(
     pool?.mode.mode === "keyword" ? pool.mode.exclude.join(" ") : "",
+  );
+  const [subscriptionId, setSubscriptionId] = useState(
+    pool?.mode.mode === "subscription" ? pool.mode.subscription_id : "",
   );
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -579,6 +632,17 @@ function PoolEditorModal({
     [keywordNodes, include, exclude],
   );;
 
+  // Local subscription picker: raw-config (custom) profiles never feed
+  // nodes, so they stay out of the pool targets; disabled subscriptions
+  // remain pickable — their pool builds empty until re-enabled (same
+  // tolerance as the backend validate arm).
+  const pickableSubs = useMemo(
+    () => subscriptions.filter((s) => s.source_kind !== "custom"),
+    [subscriptions],
+  );
+  const subscriptionGone =
+    subscriptionId !== "" && !subscriptions.some((s) => s.id === subscriptionId);
+
   async function onSubmit() {
     const trimmed = name.trim();
     if (!trimmed) {
@@ -588,9 +652,15 @@ function PoolEditorModal({
     const poolMode: PoolMode =
       mode === "explicit"
         ? { mode: "explicit", node_ids: Array.from(nodeIds) }
-        : { mode: "keyword", include: parseKeywords(include), exclude: parseKeywords(exclude) };
+        : mode === "subscription"
+          ? { mode: "subscription", subscription_id: subscriptionId.trim() }
+          : { mode: "keyword", include: parseKeywords(include), exclude: parseKeywords(exclude) };
     if (poolMode.mode === "explicit" && poolMode.node_ids.length === 0) {
       setError(t("chain.needPoolNodes"));
+      return;
+    }
+    if (poolMode.mode === "subscription" && !poolMode.subscription_id) {
+      setError(t("chain.needPoolSub"));
       return;
     }
     setBusy(true);
@@ -637,10 +707,11 @@ function PoolEditorModal({
             <GlassSeg
               value={mode}
               ariaLabel={t("chain.poolMode")}
-              onChange={(v) => setMode(v as "explicit" | "keyword")}
+              onChange={(v) => setMode(v as "explicit" | "keyword" | "subscription")}
               options={[
                 { value: "explicit", label: t("chain.poolModeExplicit") },
                 { value: "keyword", label: t("chain.poolModeKeyword") },
+                { value: "subscription", label: t("chain.poolModeSubscription") },
               ]}
             />
           </label>
@@ -692,7 +763,7 @@ function PoolEditorModal({
                 </>
               )}
             </div>
-          ) : (
+          ) : mode === "keyword" ? (
             <div className="field rule-smart-filters">
               <label className="field" style={{ marginBottom: 8 }}>
                 <span>{t("rules.smartInclude")}</span>
@@ -735,6 +806,48 @@ function PoolEditorModal({
                   </span>
                 )}
               </div>
+            </div>
+          ) : (
+            <div className="field rule-node-pick">
+              <span>{t("chain.poolPickSub")}</span>
+              {pickableSubs.length === 0 ? (
+                <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                  {t("chain.poolSubEmptyList")}
+                </p>
+              ) : (
+                <>
+                  <div className="chain-pool-node-list">
+                    {pickableSubs.map((s) => (
+                      <label
+                        key={s.id}
+                        className="chain-pool-node-item"
+                        data-disabled={s.enabled ? undefined : ""}
+                        title={
+                          s.enabled
+                            ? t("chain.poolSubHint")
+                            : `${t("chain.subDisabled")} · ${t("chain.poolSubHint")}`
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="chain-pool-subscription"
+                          checked={subscriptionId === s.id}
+                          onChange={() => setSubscriptionId(s.id)}
+                        />
+                        <span>{s.name}</span>
+                        {!s.enabled && (
+                          <span className="chain-node-sub">{t("chain.subDisabled")}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="muted" style={{ margin: "6px 0 0", fontSize: 12 }}>
+                    {subscriptionGone
+                      ? t("chain.poolSubMissing")
+                      : t("chain.poolSubHint")}
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1799,6 +1912,10 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   const [pools, setPools] = useState<NodePool[]>([]);
   const [chains, setChains] = useState<ProxyChain[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  /** Subscription list — names for subscription pools (PoolRow owner lookup
+   *  + the editor's picker). Reloaded together with pools so the pool row
+   *  stays in sync right after add/remove/profile edits. */
+  const [subscriptions, setSubscriptions] = useState<SubscriptionView[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1920,14 +2037,16 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      const [p, c, n] = await Promise.all([
+      const [p, c, n, subs] = await Promise.all([
         listPools(),
         listChains(),
         listChainNodes(),
+        listSubscriptions(),
       ]);
       setPools(p);
       setChains(c);
       setNodes(n);
+      setSubscriptions(subs);
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
@@ -2052,6 +2171,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                 key={p.id}
                 pool={p}
                 keywordNodes={enabledNodes}
+                subscriptions={subscriptions}
                 usedByChains={poolChainCount.get(p.id) ?? 0}
                 flipUp={i >= Math.ceil(pools.length / 2)}
                 openMenuId={menuId}
@@ -2199,6 +2319,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
           pool={poolEditor.pool}
           nodes={nodes}
           keywordNodes={enabledNodes}
+          subscriptions={subscriptions}
           onClose={() => setPoolEditor(null)}
           onSaved={() => {
             setPoolEditor(null);

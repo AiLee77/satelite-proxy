@@ -2523,6 +2523,7 @@ impl AppState {
             // enabled prefix + chain/pool-referenced nodes).
             let nodes = store.enabled_nodes_with_chain_refs();
             let keyword_eligible_count = store.enabled_nodes().len();
+            let subscription_members = store.enabled_subscription_member_ids();
             let sidecar =
                 crate::runtime::compute_sidecar_plan(&store.settings, &store.chains, &nodes);
             crate::config::ensure_chain_selectable(
@@ -2530,6 +2531,7 @@ impl AppState {
                 &store.pools,
                 &nodes,
                 keyword_eligible_count,
+                &subscription_members,
                 sidecar.as_ref(),
             )
         })?;

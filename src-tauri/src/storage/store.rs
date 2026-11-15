@@ -1361,6 +1361,34 @@ impl AppStore {
             .collect()
     }
 
+    /// subscription_id → member node ids, for subscription pools
+    /// (`crate::domain::PoolMode::Subscription`): exactly the enabled-node
+    /// universe grouped by owning subscription, in store order — no latency
+    /// sorting. Disabled subscriptions have no entry and deleted ones vanish
+    /// from the map entirely, so a subscription pool over them resolves
+    /// EMPTY by design (mirrors `enabled_nodes()`); the build path treats
+    /// that like any other empty pool (selector skipped, chain rules fall
+    /// back to `direct`).
+    pub fn enabled_subscription_member_ids(
+        &self,
+    ) -> std::collections::BTreeMap<String, Vec<String>> {
+        let enabled: std::collections::HashSet<&str> = self
+            .subscriptions
+            .iter()
+            .filter(|s| s.enabled && s.source.contributes_nodes())
+            .map(|s| s.id.as_str())
+            .collect();
+        let mut map = std::collections::BTreeMap::new();
+        for stored in &self.nodes {
+            if enabled.contains(stored.subscription_id.as_str()) {
+                map.entry(stored.subscription_id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(stored.node.id.clone());
+            }
+        }
+        map
+    }
+
     /// Node ids actually referenced by proxy chains (node hops) and explicit
     /// node pools (fixed members). Keyword pools are deliberately excluded:
     /// their membership is re-evaluated at build time against the
@@ -2393,6 +2421,16 @@ impl AppStore {
                         "关键词不能同时出现在白名单和黑名单中：{keyword}"
                     )));
                 }
+            }
+            crate::domain::PoolMode::Subscription { subscription_id } => {
+                if subscription_id.trim().is_empty() {
+                    return Err(AppError::Config("订阅池必须选择一个订阅".into()));
+                }
+                // A missing or disabled subscription stays LEGAL: the pool
+                // resolves empty at build time (selector skipped, chain rules
+                // fall back) — same tolerance as an empty keyword match. Only
+                // a blank id is rejected so the pool can never dangle on an
+                // empty string.
             }
         }
         Ok(())
@@ -6695,6 +6733,90 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("不能同时出现在白名单和黑名单"));
+    }
+
+    #[test]
+    fn subscription_pool_rejects_blank_id_but_tolerates_missing_subscription() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let err = store
+            .create_pool(
+                "空 id",
+                PoolMode::Subscription {
+                    subscription_id: "   ".into(),
+                },
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("必须选择一个订阅"));
+        // A dangling (deleted / never-existed) subscription id stays legal —
+        // the pool is simply empty until the subscription comes back.
+        store
+            .create_pool(
+                "悬空池",
+                PoolMode::Subscription {
+                    subscription_id: "no-such-sub".into(),
+                },
+            )
+            .expect("missing subscription must be tolerated");
+    }
+
+    #[test]
+    fn enabled_subscription_member_ids_groups_enabled_universe_in_store_order() {
+        use crate::domain::{Protocol, ProtocolConfig, ProxyNode};
+        let mk = |id: &str, sub: &str| StoredNode {
+            subscription_id: sub.into(),
+            node: ProxyNode {
+                id: id.into(),
+                name: format!("节点 {id}"),
+                protocol: Protocol::Trojan,
+                server: "example.com".into(),
+                port: 443,
+                tls: None,
+                transport: None,
+                udp: None,
+                config: ProtocolConfig::Trojan {
+                    password: "pw".into(),
+                },
+                source: None,
+                raw: None,
+                latency_ms: None,
+                latency_at: None,
+            },
+            latency_method: None,
+            latency_error: None,
+        };
+        let mut store = AppStore::default();
+        let mut sub_a = sample_url_sub("airport-a");
+        sub_a.id = "sub-a".into();
+        let mut sub_b = sample_url_sub("airport-b");
+        sub_b.id = "sub-b".into();
+        sub_b.enabled = false;
+        store.subscriptions.push(sub_a);
+        store.subscriptions.push(sub_b);
+        store.nodes.push(mk("n1", "sub-a"));
+        store.nodes.push(mk("n2", "sub-b"));
+        store.nodes.push(mk("n3", "sub-a"));
+        let map = store.enabled_subscription_member_ids();
+        // Enabled subscription keeps store-ordered members; the disabled
+        // one has no entry; a deleted subscription id is simply absent.
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map.get("sub-a"),
+            Some(&vec!["n1".to_string(), "n3".to_string()])
+        );
+        assert!(!map.contains_key("sub-b"));
+        assert!(!map.contains_key("sub-deleted"));
+        // Subscription pools must not widen chain-referenced ids (that
+        // closure stays explicit-only by design).
+        store
+            .pools
+            .push(crate::domain::NodePool::new(
+                "订阅池",
+                crate::domain::PoolMode::Subscription {
+                    subscription_id: "sub-a".into(),
+                },
+            ));
+        assert!(store.chain_referenced_node_ids().is_empty());
     }
 
     #[test]

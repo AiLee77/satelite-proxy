@@ -27,6 +27,13 @@ use sha2::{Digest, Sha256};
 pub struct PoolScope<'a> {
     pub all: &'a [ProxyNode],
     pub keyword: &'a [ProxyNode],
+    /// subscription_id → member node ids for subscription pools
+    /// (`crate::domain::PoolMode::Subscription`), gathered from the store by
+    /// the build entry points — `ProxyNode` itself carries no subscription
+    /// id, so the builder cannot derive ownership on its own. `None` = this
+    /// context knows no membership (tests / callers without any
+    /// subscription pool); such pools always resolve empty, never error.
+    pub subscription_members: Option<&'a std::collections::BTreeMap<String, Vec<String>>>,
 }
 
 impl<'a> PoolScope<'a> {
@@ -34,6 +41,7 @@ impl<'a> PoolScope<'a> {
         Self {
             all: nodes,
             keyword: nodes,
+            subscription_members: None,
         }
     }
     /// Restrict keyword matches to the first `keyword_count` entries of
@@ -42,6 +50,18 @@ impl<'a> PoolScope<'a> {
         Self {
             all,
             keyword: &all[..keyword_count.min(all.len())],
+            subscription_members: None,
+        }
+    }
+    /// Attach the subscription membership map. Leaves `all`/`keyword`
+    /// untouched; `None` keeps the empty-resolution default.
+    pub fn with_subscriptions(
+        self,
+        members: Option<&'a std::collections::BTreeMap<String, Vec<String>>>,
+    ) -> Self {
+        Self {
+            subscription_members: members,
+            ..self
         }
     }
 }
@@ -311,7 +331,15 @@ pub fn apply_udp_node_compatibility(nodes: &mut [ProxyNode], allow_insecure: boo
 
 /// Convert nodes into a complete sing-box config document.
 pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResult<BuiltConfig> {
-    build_singbox_config_with_connection_policy(nodes, opts, true, usize::MAX)
+    build_singbox_config_with_connection_policy(
+        nodes,
+        opts,
+        true,
+        usize::MAX,
+        // No pools/chains are surfaced by this entry, so a subscription
+        // pool can never exist on this path — an empty map is exact.
+        &std::collections::BTreeMap::new(),
+    )
 }
 
 /// Build a generated config while preserving the user's connection policy.
@@ -325,6 +353,9 @@ pub fn build_singbox_config_with_connection_policy(
     // see `PoolScope`. Pass `usize::MAX` for the historic whole-list
     // keyword behavior. (Doc comments are not allowed on fn params.)
     keyword_eligible_count: usize,
+    // Subscription-pool membership (empty when the caller surfaces no
+    // pools at all — this wrapper's popover always passes `&[]` pools).
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> AppResult<BuiltConfig> {
     build_singbox_config_with_chain_context(
         nodes,
@@ -333,6 +364,7 @@ pub fn build_singbox_config_with_connection_policy(
         &[],
         &[],
         keyword_eligible_count,
+        subscription_members,
     )
 }
 
@@ -348,6 +380,10 @@ pub fn build_singbox_config_with_chain_context(
     // How many leading entries of `nodes` are keyword-match-eligible (the
     // enabled-subscription universe — see `PoolScope`).
     keyword_eligible_count: usize,
+    // subscription_id → enabled member node ids for subscription pools, from
+    // `AppStore::enabled_subscription_member_ids()`. An empty map is legal —
+    // every subscription pool then resolves empty (disabled/missing/absent).
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> AppResult<BuiltConfig> {
     if nodes.is_empty() {
         return Err(AppError::Config(
@@ -370,7 +406,8 @@ pub fn build_singbox_config_with_chain_context(
     // (prefix); explicit ID references (chain hops, explicit pool members)
     // keep scanning the full list. `usize::MAX` clamps to the whole list
     // (historic behavior for every caller without chain-ref collection).
-    let scope = PoolScope::restricted(nodes, keyword_eligible_count);
+    let scope = PoolScope::restricted(nodes, keyword_eligible_count)
+        .with_subscriptions(Some(subscription_members));
 
     let mut node_outbounds = Vec::new();
     let mut node_endpoints = Vec::new();
@@ -1485,6 +1522,21 @@ fn pool_member_tags(
         PoolMode::Keyword { include, exclude } => {
             filter_pool_tags(include, exclude, scope.keyword, tags)
         }
+        // Dynamic whole-subscription membership: the map holds only
+        // enabled-subscription nodes in store order (no latency sorting);
+        // a missing entry (disabled / deleted subscription, or no map at
+        // all) means an EMPTY pool — tolerated everywhere, same as an empty
+        // keyword match.
+        PoolMode::Subscription { subscription_id } => scope
+            .subscription_members
+            .and_then(|members| members.get(subscription_id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|nid| scope.all.iter().find(|n| &n.id == nid))
+            .map(outbound_tag)
+            .filter(|tag| tags.iter().any(|t| t == tag))
+            .collect(),
     }
 }
 
@@ -1542,6 +1594,18 @@ fn pool_member_nodes<'a>(
             members.sort_by_key(|n| n.latency_ms.unwrap_or(u32::MAX / 4));
             members
         }
+        // Store-ordered members from the subscription map (mirrors
+        // [`pool_member_tags`]'s Subscription arm, including the empty
+        // fallback for a disabled / missing subscription).
+        PoolMode::Subscription { subscription_id } => scope
+            .subscription_members
+            .and_then(|members| members.get(subscription_id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|nid| nodes.iter().find(|n| &n.id == nid))
+            .filter(|n| live(n))
+            .collect(),
     }
 }
 
@@ -1594,11 +1658,13 @@ pub fn ensure_chain_selectable(
     pools: &[crate::domain::NodePool],
     nodes: &[ProxyNode],
     keyword_eligible_count: usize,
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
     sidecar: Option<&SidecarPlan>,
 ) -> AppResult<()> {
     use crate::domain::ChainHop;
 
-    let scope = PoolScope::restricted(nodes, keyword_eligible_count);
+    let scope = PoolScope::restricted(nodes, keyword_eligible_count)
+        .with_subscriptions(Some(subscription_members));
     // Main-universe tags exactly as the builder's node loop collects them:
     // sidecar-delegated nodes keep their tag (loopback socks outbound),
     // everything else must map to a native outbound.
@@ -3557,9 +3623,14 @@ mod tests {
         assert_eq!(proxy["type"], "selector");
         assert_eq!(proxy["interrupt_exist_connections"], true);
 
-        let keep_existing =
-            build_singbox_config_with_connection_policy(&nodes, &options, false, usize::MAX)
-                .unwrap();
+        let keep_existing = build_singbox_config_with_connection_policy(
+            &nodes,
+            &options,
+            false,
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .unwrap();
         let proxy = keep_existing.value["outbounds"]
             .as_array()
             .unwrap()
@@ -3635,6 +3706,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -4591,6 +4663,7 @@ mod tests {
             &[],
             &[chain.clone()],
             usize::MAX,
+            &std::collections::BTreeMap::new(),
         )
         .expect("chain config");
         let h0 = chain_hop_outbound_tag(&chain, 0);
@@ -4715,6 +4788,7 @@ mod tests {
             &[chain.clone()],
             // Only the enabled prefix is keyword-eligible.
             1,
+            &std::collections::BTreeMap::new(),
         )
         .expect("chain config with collected nodes");
 
@@ -4801,6 +4875,7 @@ mod tests {
             &[],
             &[chain.clone()],
             usize::MAX,
+            &std::collections::BTreeMap::new(),
         )
         .expect("chain config");
         let exit_tag = chain_hop_outbound_tag(&chain, 1);
@@ -4854,6 +4929,7 @@ mod tests {
             &[],
             &[chain.clone()],
             usize::MAX,
+            &std::collections::BTreeMap::new(),
         )
         .expect("chain config");
         let outbounds = built.value["outbounds"].as_array().expect("outbounds");
@@ -4896,6 +4972,7 @@ mod tests {
             &[],
             &[chain],
             usize::MAX,
+            &std::collections::BTreeMap::new(),
         )
         .expect("config with stale chain");
         let outbounds = built.value["outbounds"].as_array().expect("outbounds");
@@ -4929,7 +5006,7 @@ mod tests {
                 },
             ],
         );
-        ensure_chain_selectable(&chain, &[], &nodes, usize::MAX, None)
+        ensure_chain_selectable(&chain, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
             .expect("live chain selectable");
 
         // Stale node hop → rejected, naming the hop position.
@@ -4944,7 +5021,7 @@ mod tests {
                 },
             ],
         );
-        let err = ensure_chain_selectable(&stale, &[], &nodes, usize::MAX, None)
+        let err = ensure_chain_selectable(&stale, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
             .expect_err("stale hop rejected");
         assert!(err.to_string().contains("第 2 跳"), "{err}");
 
@@ -4967,7 +5044,7 @@ mod tests {
                 },
             ],
         );
-        let err = ensure_chain_selectable(&pool_chain, &[pool], &nodes, usize::MAX, None)
+        let err = ensure_chain_selectable(&pool_chain, &[pool], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
             .expect_err("empty pool rejected");
         assert!(err.to_string().contains("没有可用成员"), "{err}");
 
@@ -4983,9 +5060,110 @@ mod tests {
                 },
             ],
         );
-        let err = ensure_chain_selectable(&ghost, &[], &nodes, usize::MAX, None)
+        let err = ensure_chain_selectable(&ghost, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
             .expect_err("missing pool rejected");
         assert!(err.to_string().contains("节点池不存在"), "{err}");
+    }
+
+    // ---- Subscription pools ---------------------------------------------
+
+    #[test]
+    fn subscription_pool_members_follow_enabled_universe_in_store_order() {
+        use crate::domain::PoolMode;
+        use std::collections::BTreeMap;
+        let n1 = sample_node("n1", "香港 01");
+        let n2 = sample_node("n2", "美国 02"); // belongs to a disabled sub
+        let n3 = sample_node("n3", "香港 03");
+        let nodes = vec![n1.clone(), n2.clone(), n3.clone()];
+        let pool = crate::domain::NodePool::new(
+            "机场 A 整组",
+            PoolMode::Subscription {
+                subscription_id: "sub-a".into(),
+            },
+        );
+        // The map is the store-side truth: enabled members in store order;
+        // a node from a disabled subscription simply never appears in it.
+        let mut members = BTreeMap::new();
+        members.insert(
+            "sub-a".to_string(),
+            vec!["n1".to_string(), "n3".to_string()],
+        );
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &sidecar_opts(None),
+            true,
+            &[pool.clone()],
+            &[],
+            usize::MAX,
+            &members,
+        )
+        .expect("build with subscription pool");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let pool_tag = crate::domain::pool_outbound_tag_for_id(&pool.id);
+        let selector = outbounds
+            .iter()
+            .find(|o| o["tag"] == pool_tag.as_str())
+            .expect("subscription pool selector exists");
+        let selector_members = selector["outbounds"].as_array().expect("members");
+        assert_eq!(
+            selector_members
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![outbound_tag(&n1), outbound_tag(&n3)],
+            "store order preserved, disabled-subscription nodes never join"
+        );
+    }
+
+    #[test]
+    fn subscription_pool_resolves_empty_when_missing_or_disabled() {
+        use crate::domain::{ChainHop, PoolMode, ProxyChain};
+        use std::collections::BTreeMap;
+        let entry = sample_node("entry", "入口");
+        let nodes = vec![entry.clone()];
+        let pool = crate::domain::NodePool::new(
+            "悬空订阅池",
+            PoolMode::Subscription {
+                subscription_id: "sub-deleted".into(),
+            },
+        );
+        // No map entry (deleted / disabled subscription): the pool resolves
+        // empty — the build still succeeds, the selector is skipped, and
+        // selecting a chain whose hop resolves empty reports exactly the
+        // same "no live members" as an empty keyword pool.
+        let empty: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &sidecar_opts(None),
+            true,
+            &[pool.clone()],
+            &[],
+            usize::MAX,
+            &empty,
+        )
+        .expect("empty subscription pool must not fail the build");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let pool_tag = crate::domain::pool_outbound_tag_for_id(&pool.id);
+        assert!(
+            !outbounds.iter().any(|o| o["tag"] == pool_tag.as_str()),
+            "empty pool emits no selector (chain rules fall back to direct)"
+        );
+
+        let chain = ProxyChain::new(
+            "订阅池链",
+            vec![
+                ChainHop::Pool {
+                    pool_id: pool.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err =
+            ensure_chain_selectable(&chain, &[pool], &nodes, usize::MAX, &BTreeMap::new(), None)
+                .expect_err("empty subscription pool chain rejected");
+        assert!(err.to_string().contains("没有可用成员"), "{err}");
     }
 
     // ---- Xray sidecar delegation -----------------------------------------
@@ -5211,6 +5389,7 @@ mod tests {
         let built = build_singbox_config(
             &[sample_node("n1", "A"), sample_masque("m1")],
             &sidecar_opts(Some(plan)),
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let tag = "node-m1";

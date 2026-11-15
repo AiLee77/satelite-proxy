@@ -41,7 +41,10 @@ export function poolKeywordMatch(name: string, include: string[], exclude: strin
  *  - `explicit` pools list EVERY referenced node (any subscription, stale
  *    ids resolved as far as the node list allows) — membership is fixed
  *    node-ID references, not re-filtered at build time;
- *  - `keyword` pools match only the enabled-subscription universe.
+ *  - `keyword` pools match only the enabled-subscription universe;
+ *  - `subscription` pools take the enabled universe of one subscription
+ *    (the backend rebuild re-evaluates this at build time, in store order,
+ *    skipping latency-sort — mirror of the Rust build arm).
  */
 export function chainPoolPreviewMembers(
   pool: Pick<NodePool, "mode">,
@@ -53,6 +56,14 @@ export function chainPoolPreviewMembers(
       const node = nodes.find((n) => n.id === id);
       return node ? { node, stale: false } : { node: null, stale: true };
     });
+  }
+  if (mode.mode === "subscription") {
+    // A deleted/disabled subscription simply has another zero members —
+    // the keyword-style "missing" case resolves to [] — never an error;
+    // editions never resolve as "stale" since membership is dynamic.
+    return enabledUniverse(nodes)
+      .filter((n) => (n.subscription_id ?? "") === mode.subscription_id)
+      .map((n) => ({ node: n, stale: false }));
   }
   return enabledUniverse(nodes)
     .filter((n) => poolKeywordMatch(n.name, mode.include, mode.exclude))

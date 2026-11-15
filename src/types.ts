@@ -940,7 +940,8 @@ export interface Rule {
 /** How a reusable node pool selects its live members. */
 export type PoolMode =
   | { mode: "explicit"; node_ids: string[] }
-  | { mode: "keyword"; include: string[]; exclude: string[] };
+  | { mode: "keyword"; include: string[]; exclude: string[] }
+  | { mode: "subscription"; subscription_id: string };
 
 export interface NodePool {
   id: string;

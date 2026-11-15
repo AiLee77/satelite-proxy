@@ -1117,6 +1117,10 @@ impl Runtime {
         // disabled subscriptions — are explicit-ID references only and
         // must NOT silently widen keyword semantics.
         let keyword_eligible_count = store.enabled_nodes().len();
+        // Subscription pools re-resolve their whole membership at build
+        // time against this map (disabled/deleted subscriptions absent →
+        // empty pool, selector skipped, chain rules fall back).
+        let subscription_members = store.enabled_subscription_member_ids();
 
         // Sidecar delegation (sing-box main mode only; Xray and/or mihomo
         // per `protocol_cores` pins). Resolved before any build work: the
@@ -1199,6 +1203,7 @@ impl Runtime {
             &store.pools,
             &store.chains,
             keyword_eligible_count,
+            &subscription_members,
         )?;
         if crate::core_selection::needs_kernel_restriction(&store.settings) {
             crate::core_selection::restrict_kernel_candidates(

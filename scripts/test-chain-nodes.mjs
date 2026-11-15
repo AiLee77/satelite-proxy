@@ -458,3 +458,83 @@ test("G1 双语文案与源码同步", () => {
   has("chain.activating", "切换中…");
   has("chain.saveAndActivate", "保存并启用");
 });
+
+// ── G5 订阅整池（PoolMode::Subscription）────────────────────────────────
+
+test("G5 订阅池预览：仅取该订阅的启用节点，store 顺序、无订阅=空池、永不 stale", () => {
+  const nodes = [
+    node("a", "香港 01", { enabled: true, subscription_id: "sub-a" }),
+    node("b", "香港 02", { enabled: false, subscription_id: "sub-a" }),
+    node("c", "东京 01", { enabled: true, subscription_id: "sub-b" }),
+    node("d", "东京 02", { enabled: true, subscription_id: "sub-a" }),
+  ];
+  const pool = { mode: { mode: "subscription", subscription_id: "sub-a" } };
+  const members = chainPoolPreviewMembers(pool, nodes);
+  assert.deepEqual(members.map((m) => m.node.id), ["a", "d"]); // store 顺序，禁用 b 剔除
+  assert.ok(members.every((m) => m.stale === false)); // 订阅池永不标 stale
+
+  const missing = chainPoolPreviewMembers(
+    { mode: { mode: "subscription", subscription_id: "gone" } },
+    nodes,
+  );
+  assert.deepEqual(missing, []); // 订阅缺失 = 空池而非报错
+  assert.deepEqual(
+    chainPoolPreviewMembers({ mode: { mode: "subscription", subscription_id: "sub-b" } }, nodes)
+      .map((m) => m.node.id),
+    ["c"],
+  );
+});
+
+test("G5 ChainPage 订阅池接线：三分支池行/编辑器订阅单选/页面拉订阅列表", () => {
+  assert.match(source, /poolMode === "subscription"[\s\S]{0,40}t\("chain\.poolModeSubscription"\)/); // HopNode modeText 三分支
+  assert.match(source, /pool\.mode\.mode === "subscription"/); // PoolRow 三分支
+  assert.match(source, /s\.source_kind !== "custom"/); // 订阅下拉排除 custom（contributes_nodes() == false）
+  assert.match(source, /subscription_id: subscriptionId\.trim\(\)/); // 提交构造 subscription arm
+  assert.match(source, /t\("chain\.needPoolSub"\)/); // 空校验
+  assert.match(source, /type="radio"\s*\n\s*name="chain-pool-subscription"/); // 订阅单选列表
+  assert.match(source, /listSubscriptions\(\),/); // reload 并拉订阅
+  assert.match(source, /setSubscriptionId/); // 编辑器订阅 state
+  assert.match(source, /t\("chain\.poolSubMissing"\)/); // 订阅缺失提示（行/编辑器共用）
+});
+
+test("G5 Rust 契约锚：builder 原生 arm、store 动态成员表、三入口各传一次", async () => {
+  const { readFileSync } = await import("node:fs");
+  const chainRs = readFileSync(new URL("../src-tauri/src/domain/chain.rs", import.meta.url), "utf8");
+  const storeRs = readFileSync(new URL("../src-tauri/src/storage/store.rs", import.meta.url), "utf8");
+  const builderRs = readFileSync(new URL("../src-tauri/src/config/builder.rs", import.meta.url), "utf8");
+  const runtimeRs = readFileSync(new URL("../src-tauri/src/runtime.rs", import.meta.url), "utf8");
+  const stateRs = readFileSync(new URL("../src-tauri/src/state.rs", import.meta.url), "utf8");
+  const cmdCfgRs = readFileSync(new URL("../src-tauri/src/commands/config.rs", import.meta.url), "utf8");
+  const mihomoRs = readFileSync(new URL("../src-tauri/src/config/mihomo.rs", import.meta.url), "utf8");
+  const msgs = readFileSync(new URL("../src/i18n/messages.ts", import.meta.url), "utf8");
+
+  // wire 契约：serde tag="mode" + snake_case → { mode: "subscription", subscription_id }
+  assert.match(chainRs, /Subscription\s*\{\s*subscription_id:\s*String\s*\}/);
+  assert.match(storeRs, /PoolMode::Subscription \{ subscription_id \} =>/); // validate 宽容 arm
+  assert.match(storeRs, /订阅池必须选择一个订阅/);
+  assert.match(storeRs, /enabled_subscription_member_ids/);
+  // builder 原生 arm + PoolScope 注入（非构建期展开 id 列表）
+  assert.match(builderRs, /PoolMode::Subscription \{\s*subscription_id\s*\} =>/);
+  assert.match(builderRs, /subscription_members: Option<&'a std::collections::BTreeMap<String, Vec<String>>>/);
+  // 三个构建入口各传一次
+  assert.match(runtimeRs, /store\.enabled_subscription_member_ids\(\)/);
+  assert.match(cmdCfgRs, /store\.enabled_subscription_member_ids\(\)/);
+  assert.match(stateRs, /store\.enabled_subscription_member_ids\(\)/);
+  // ensure_chain_selectable 签名 +1 同型参数（state 调用处传动态成员表）
+  assert.match(stateRs, /crate::config::ensure_chain_selectable\(\s*chain,/);
+  // 差异 3 零改动锚：mihomo 链导出对 Pool 跳硬报错（订阅池自动被拒）
+  assert.match(mihomoRs, /ChainHop::Pool \{ \.\. \} =>/);
+  // i18n 双语同键（6 新键）：en 段与 zh 段各出现一次
+  for (const key of [
+    "chain.poolModeSubscription",
+    "chain.poolPickSub",
+    "chain.poolSubHint",
+    "chain.poolSubMissing",
+    "chain.poolSubEmptyList",
+    "chain.needPoolSub",
+  ]) {
+    const re = new RegExp(`^\\s*"${key}":`, "gm");
+    const hits = (msgs.match(re) || []).length;
+    assert.equal(hits, 2, `i18n key ${key} must appear exactly twice (en + zh)`);
+  }
+});

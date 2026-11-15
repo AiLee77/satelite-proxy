@@ -16,6 +16,16 @@ pub enum PoolMode {
         #[serde(default)]
         exclude: Vec<String>,
     },
+    /// Dynamic whole-subscription pool: the members are exactly the nodes of
+    /// the referenced subscription that are currently enabled — re-evaluated
+    /// on every build, in store order (no latency sorting). A disabled or
+    /// deleted subscription resolves to an EMPTY pool: creating/saving such
+    /// a pool stays legal (validation only requires a non-empty id), build
+    /// skips its selector and chain rules fall back to `direct` (same empty-
+    /// pool path as keyword pools), and selecting a chain whose hop resolves
+    /// empty reports "no live members". Subscriptions that produce nodes
+    /// (`contributes_nodes`) qualify — anything but custom profiles.
+    Subscription { subscription_id: String },
 }
 
 /// Named, reusable node pool. Referenced by [`ProxyChain`] hops and (later)
@@ -151,6 +161,18 @@ mod tests {
         );
         assert!(pool.id.starts_with("pool-"));
         assert!(pool.outbound_tag().starts_with("pool-"));
+    }
+
+    #[test]
+    fn subscription_pool_mode_wire_round_trips() {
+        let mode = PoolMode::Subscription {
+            subscription_id: "sub-abc".into(),
+        };
+        let wire = serde_json::to_value(&mode).expect("serialize");
+        assert_eq!(wire["mode"], "subscription");
+        assert_eq!(wire["subscription_id"], "sub-abc");
+        let back: PoolMode = serde_json::from_value(wire).expect("deserialize");
+        assert!(matches!(back, PoolMode::Subscription { subscription_id } if subscription_id == "sub-abc"));
     }
 
     #[test]
