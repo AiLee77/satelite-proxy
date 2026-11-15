@@ -869,19 +869,27 @@ pub fn reorder_nodes(state: State<'_, AppState>, ids: Vec<String>) -> Result<(),
 }
 
 fn sort_listed_nodes(nodes: &mut [ListedNode], sort_mode: Option<&str>) {
+    // G3(c): chain virtual entries always sort before real nodes in every
+    // mode — they carry no latency and would otherwise interleave by name or
+    // sink to the bottom of the latency view. Among chains (and among real
+    // nodes) the pre-existing per-mode order is preserved.
+    let is_chain = |n: &ListedNode| n.chain_hops.is_some();
     match sort_mode {
-        Some("name") => nodes.sort_by_cached_key(|n| n.node.name.to_lowercase()),
+        Some("name") => nodes.sort_by_cached_key(|n| {
+            (!is_chain(n) as u8, n.node.name.to_lowercase())
+        }),
         Some("latency") => nodes.sort_by(|a, b| {
             let score = |n: &ListedNode| match n.node.latency_ms {
                 Some(ms) => (0u8, ms as u64),
                 None if n.node.latency_at.is_some() => (1, 0),
                 None => (2, 0),
             };
-            score(a)
-                .cmp(&score(b))
+            (is_chain(a) as u8)
+                .cmp(&(is_chain(b) as u8))
+                .then_with(|| score(a).cmp(&score(b)))
                 .then_with(|| a.node.name.to_lowercase().cmp(&b.node.name.to_lowercase()))
         }),
-        _ => {}
+        _ => nodes.sort_by_key(|n| !is_chain(n)),
     }
 }
 
@@ -934,8 +942,8 @@ pub fn list_nodes_page(
                     chain_hops: None,
                 })
                 .collect();
-            // Chains merge before sorting: name sort interleaves them,
-            // latency sort parks them at the end (they carry no latency).
+            // Chains merge before sorting; sort_listed_nodes then pins them
+            // ahead of real nodes in every mode (G3(c)).
             nodes.extend(chain_virtual_listed_nodes(store, &query));
             sort_listed_nodes(&mut nodes, sort_mode.as_deref());
             let total = nodes.len();
