@@ -330,15 +330,20 @@ pub fn apply_udp_node_compatibility(nodes: &mut [ProxyNode], allow_insecure: boo
 }
 
 /// Convert nodes into a complete sing-box config document.
-pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResult<BuiltConfig> {
+pub fn build_singbox_config(
+    nodes: &[ProxyNode],
+    opts: &BuildOptions,
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
+) -> AppResult<BuiltConfig> {
     build_singbox_config_with_connection_policy(
         nodes,
         opts,
         true,
         usize::MAX,
-        // No pools/chains are surfaced by this entry, so a subscription
-        // pool can never exist on this path — an empty map is exact.
-        &std::collections::BTreeMap::new(),
+        // No pools are surfaced by this entry — callers pass the store's
+        // resolver map (or an empty one in tests); a subscription pool can
+        // never be reached here unless the caller handed its ids over.
+        subscription_members,
     )
 }
 
@@ -2733,6 +2738,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let outbounds = built.value["outbounds"].as_array().unwrap();
@@ -3338,6 +3344,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -3455,6 +3462,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3505,7 +3513,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let localhost = build_singbox_config(&nodes, &base()).unwrap();
+        let localhost = build_singbox_config(&nodes, &base(), &std::collections::BTreeMap::new()).unwrap();
         assert_eq!(
             localhost.value["inbounds"][0]["listen"], "127.0.0.1",
             "main mixed inbound defaults to loopback"
@@ -3517,6 +3525,7 @@ mod tests {
                 allow_lan: true,
                 ..base()
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(
@@ -3556,7 +3565,7 @@ mod tests {
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
         };
-        let built = build_singbox_config(&nodes, &options).unwrap();
+        let built = build_singbox_config(&nodes, &options, &std::collections::BTreeMap::new()).unwrap();
         assert_eq!(built.outbound_tags.len(), 1);
         assert_eq!(built.selected_tag, "node-aabbccddeeff0011");
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3752,6 +3761,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let proxy = built.value["outbounds"]
@@ -3778,7 +3788,7 @@ mod tests {
             ("replacement.example.net", RuleTarget::Proxy, "proxy"),
         ] {
             opts.rules = vec![Rule::new(RuleType::Domain, domain.into(), target, 0)];
-            let built = build_singbox_config(&nodes, &opts).unwrap();
+            let built = build_singbox_config(&nodes, &opts, &std::collections::BTreeMap::new()).unwrap();
             let rules = built.value["route"]["rules"].as_array().unwrap();
             let route = rules
                 .iter()
@@ -3824,6 +3834,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -3868,6 +3879,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3938,12 +3950,12 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let v4_only = build_singbox_config(&nodes, &base(false)).unwrap();
+        let v4_only = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let addrs = v4_only.value["inbounds"][2]["address"].as_array().unwrap();
         assert_eq!(addrs.len(), 1, "default must be IPv4-only: {addrs:?}");
         assert_eq!(addrs[0], "172.19.0.1/30");
 
-        let dual_stack = build_singbox_config(&nodes, &base(true)).unwrap();
+        let dual_stack = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let addrs = dual_stack.value["inbounds"][2]["address"]
             .as_array()
             .unwrap();
@@ -3987,6 +3999,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["experimental"]["cache_file"]["enabled"], true);
@@ -4028,7 +4041,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let off = build_singbox_config(&nodes, &base(false)).unwrap();
+        let off = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let rules = off.value["route"]["rules"].as_array().unwrap();
         assert!(
             !rules
@@ -4037,7 +4050,7 @@ mod tests {
             "block_quic off must not add a quic rule"
         );
 
-        let on = build_singbox_config(&nodes, &base(true)).unwrap();
+        let on = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let rules = on.value["route"]["rules"].as_array().unwrap();
         let sniff_idx = rules
             .iter()
@@ -4098,7 +4111,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let off = build_singbox_config(&nodes, &base(false)).unwrap();
+        let off = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let rules = off.value["route"]["rules"].as_array().unwrap();
         assert!(
             !rules
@@ -4118,7 +4131,7 @@ mod tests {
 
         let mut ipv4_only = base(false);
         ipv4_only.direct_ip_strategy = DirectIpStrategy::Ipv4Only;
-        let built = build_singbox_config(&nodes, &ipv4_only).unwrap();
+        let built = build_singbox_config(&nodes, &ipv4_only, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -4130,7 +4143,7 @@ mod tests {
 
         let mut system = base(false);
         system.direct_ip_strategy = DirectIpStrategy::System;
-        let built = build_singbox_config(&nodes, &system).unwrap();
+        let built = build_singbox_config(&nodes, &system, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -4141,7 +4154,7 @@ mod tests {
 
         let mut tun = base(false);
         tun.tun_enabled = true;
-        let built = build_singbox_config(&nodes, &tun).unwrap();
+        let built = build_singbox_config(&nodes, &tun, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -4151,7 +4164,7 @@ mod tests {
         assert_eq!(direct["domain_resolver"]["server"], json!("dns-cn"));
         assert_eq!(direct["domain_resolver"]["strategy"], json!("prefer_ipv4"));
 
-        let on = build_singbox_config(&nodes, &base(true)).unwrap();
+        let on = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let rules = on.value["route"]["rules"].as_array().unwrap();
         let set_idx = rules
             .iter()
@@ -4179,7 +4192,7 @@ mod tests {
         // Global mode proxies everything by choice: no bypass there.
         let mut global = base(true);
         global.outbound_mode = OutboundMode::Global;
-        let built = build_singbox_config(&nodes, &global).unwrap();
+        let built = build_singbox_config(&nodes, &global, &std::collections::BTreeMap::new()).unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
         assert!(!rules
             .iter()
@@ -4258,6 +4271,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("no nodes"));
@@ -4296,6 +4310,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["route"]["final"], "direct");
@@ -4335,6 +4350,7 @@ mod tests {
                     tls_fragment_singbox: false,
                     tls_fragment_xray: false,
                 },
+                &std::collections::BTreeMap::new(),
             )
             .unwrap();
             assert_eq!(built.value["route"]["final"], expect, "rf={rf}");
@@ -4380,6 +4396,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["route"]["final"], "proxy");
@@ -4431,6 +4448,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
@@ -4483,6 +4501,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
@@ -4539,6 +4558,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let group = rule.smart_outbound_tag();
@@ -5209,7 +5229,7 @@ mod tests {
     #[test]
     fn sudoku_delegation_preserves_tag_and_never_builds_a_fake_native_outbound() {
         let node = crate::subscription::parse_clash_yaml("proxies:\n- {name: sudoku, type: sudoku, server: example.com, port: 443, key: test-key}").unwrap().nodes.remove(0);
-        assert!(build_singbox_config(&[node.clone()], &sidecar_opts(None)).is_err());
+        assert!(build_singbox_config(&[node.clone()], &sidecar_opts(None), &std::collections::BTreeMap::new()).is_err());
         let mut settings = crate::domain::AppSettings::default();
         settings.multi_core_enabled = true;
         settings.protocol_cores = vec![crate::domain::ProtocolCoreItem {
@@ -5220,7 +5240,7 @@ mod tests {
             .expect("Sudoku delegation");
         assert_eq!(plan.ports[0].kind, crate::core::CoreKind::Mihomo);
         let built =
-            build_singbox_config(&[node.clone()], &sidecar_opts(Some(plan.clone()))).unwrap();
+            build_singbox_config(&[node.clone()], &sidecar_opts(Some(plan.clone())), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&node);
         let outbound = built.value["outbounds"]
             .as_array()
@@ -5247,7 +5267,7 @@ mod tests {
                 kind: crate::core::CoreKind::Xray,
             }],
         };
-        let built = build_singbox_config(&nodes, &sidecar_opts(Some(plan))).unwrap();
+        let built = build_singbox_config(&nodes, &sidecar_opts(Some(plan)), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&nodes[1]);
         let outbounds = built.value["outbounds"].as_array().unwrap();
 
@@ -5282,7 +5302,7 @@ mod tests {
     #[test]
     fn sidecar_plan_none_keeps_everything_native() {
         let nodes = vec![sample_node("n1", "A")];
-        let built = build_singbox_config(&nodes, &sidecar_opts(None)).unwrap();
+        let built = build_singbox_config(&nodes, &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&nodes[0]);
         let out = built.value["outbounds"]
             .as_array()
@@ -5306,7 +5326,7 @@ mod tests {
         };
         let mut opts = sidecar_opts(Some(plan));
         opts.tun_enabled = true;
-        let built = build_singbox_config(&[node.clone()], &opts).unwrap();
+        let built = build_singbox_config(&[node.clone()], &opts, &std::collections::BTreeMap::new()).unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
         assert_eq!(rules[1]["process_name"], json!(["xray", "xray.exe"]));
         assert_eq!(rules[1]["outbound"], "direct");
@@ -5322,7 +5342,7 @@ mod tests {
         assert!(diagnostic > 2 && diagnostic < subscription);
 
         opts.tun_enabled = false;
-        let without_tun = build_singbox_config(&[node], &opts).unwrap();
+        let without_tun = build_singbox_config(&[node], &opts, &std::collections::BTreeMap::new()).unwrap();
         assert!(without_tun.value["route"]["rules"]
             .as_array()
             .unwrap()
@@ -5341,7 +5361,7 @@ mod tests {
             mode: None,
             extra: None,
         });
-        let err = build_singbox_config(&[n], &sidecar_opts(None)).unwrap_err();
+        let err = build_singbox_config(&[n], &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap_err();
         assert!(err.to_string().contains("xhttp"), "got: {err}");
     }
 
@@ -5368,7 +5388,7 @@ mod tests {
     fn masque_node_never_generates_a_native_singbox_outbound() {
         // Same contract as xhttp: sing-box has no masque outbound at all —
         // reject with the mihomo delegation hint, never a silent fallback.
-        let err = build_singbox_config(&[sample_masque("m1")], &sidecar_opts(None)).unwrap_err();
+        let err = build_singbox_config(&[sample_masque("m1")], &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("masque"), "got: {msg}");
         assert!(msg.contains("mihomo"), "delegation hint: {msg}");
@@ -5503,7 +5523,7 @@ mod tests {
             reality_short_id: None,
         });
         let nodes = [tls_node, sample_ss()];
-        let off = build_singbox_config(&nodes, &sidecar_opts(None)).unwrap();
+        let off = build_singbox_config(&nodes, &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap();
         assert!(off.value["outbounds"]
             .as_array()
             .unwrap()
@@ -5512,7 +5532,7 @@ mod tests {
 
         let mut opts = sidecar_opts(None);
         opts.tls_fragment_singbox = true;
-        let on = build_singbox_config(&nodes, &opts).unwrap();
+        let on = build_singbox_config(&nodes, &opts, &std::collections::BTreeMap::new()).unwrap();
         let marked: Vec<_> = on.value["outbounds"]
             .as_array()
             .unwrap()
