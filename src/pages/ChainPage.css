@@ -863,6 +863,59 @@
   gap: 0.25rem;
 }
 
+/* G4: subscription-grouped candidates. Groups are collapsed by default —
+   the flat list kept the whole subscription (~1000 rows) in the DOM, folded
+   groups render heads only. A group is open when the user toggled it open or
+   the search box is active (matches force groups open so hits are visible
+   immediately). */
+.chain-candidate-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+/* Excluded from the App.css global primary-button rule — a group head must
+   read as a passive text row, not an action button. */
+.chain-candidate-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chain-candidate-group-head:hover {
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+}
+
+.chain-candidate-group-arrow {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.chain-candidate-group-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+/* Hops already on the canvas dim in the candidate list so a duplicate is
+   visible before it gets dragged. Still draggable on purpose — placing the
+   same node twice has legitimate uses once isValidConnection permits it. */
+.chain-candidate-item.on-canvas {
+  opacity: 0.45;
+}
+
 .chain-candidate-item {
   text-align: left;
   background: transparent;

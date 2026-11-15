@@ -377,6 +377,67 @@ test("G6 连线 Handle：本体 24px 透明热区 + ::after 8px 视觉圆点，�
   assert.ok(scaleRules.length > 0, "scale 反馈丢失");
 });
 
+// —— G4：候选列表订阅分组 + 默认折叠 + 画布节点淡化 ——
+
+test("G4 候选列表：groupNodes sub 分组、单 map 手动开关、已上画布节点淡化", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // 复用既有 sub 分组口径（与节点页同源），而非另写一套分组。
+  assert.match(page, /groupNodes\(candidateNodes, "sub", locale/);
+  assert.match(page, /import \{ groupNodes \} from "\.\.\/nodeGroups";/);
+  // 单 map 手动开关：缺省 = 无搜索时折叠 / 有搜索时展开，用户最后点击优先。
+  assert.match(page, /manualOpenGroups\[g\.key\] : hasQuery;/);
+  assert.match(page, /setManualOpenGroups\(\(cur\) => \(\{ \.\.\.cur, \[g\.key\]: !open \}\)\)/);
+  // 搜索驱动展开的开关状态存在且只在 ChainFlowEditor 内使用。
+  assert.match(page, /const hasQuery = candidateQuery\.trim\(\)\.length > 0;/);
+  // 已上画布节点：仅个体跳计入（池跳是池引用，其成员仍可作为独立跳）；
+  // 淡化但不素止拖拽（同节点两次入链在 isValidConnection 允许时合法）。
+  const onCanvas = page.match(/const onCanvasNodeIds = useMemo\(\(\) => \{[\s\S]*?kind === "node"[\s\S]*?ids\.add\(hop\.node_id\);[\s\S]*?\}, \[flowNodes\]\);/);
+  assert.ok(onCanvas, "onCanvasNodeIds 收集个体跳的 useMemo 缺失");
+  assert.match(page, /onCanvasNodeIds\.has\(n\.id\)/);
+  assert.match(page, /className=\{`chain-candidate-item\$\{onCanvas \? " on-canvas" : ""\}`\}/);
+  assert.doesNotMatch(page, /expandedGroups/);
+});
+
+test("G4 分组头与层叠样式配套（全局主按钮排除 + 折叠组样式）", () => {
+  const appCss = readFileSync(
+    new URL("../src/App.css", import.meta.url),
+    "utf8",
+  );
+  const chainCss = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  // 组头按钮必须进全局主按钮排除列表（项目惯例）。
+  const primary = appCss.match(/button:not\([^}]*\) \{/s)?.[0] ?? "";
+  assert.ok(primary);
+  assert.notEqual(
+    primary,
+    primary.replace(":not(.chain-candidate-group-head)", ""),
+    "App.css 首条主按钮规则未排除 chain-candidate-group-head",
+  );
+  assert.match(
+    appCss,
+    /:not\(\.chain-candidate-group-head\):hover:not\(:disabled\) \{/,
+  );
+  assert.match(chainCss, /\.chain-candidate-group-head \{/);
+  assert.match(chainCss, /\.chain-candidate-item\.on-canvas \{\n  opacity: 0\.45;/);
+});
+
+test("G4 双语文案同步", () => {
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  const has = (key, value) => {
+    assert.ok(messages.includes(`"${key}": "${value}"`), `missing i18n: ${key}`);
+  };
+  has("chain.alreadyOnCanvas", "Already on the chain — same node twice");
+  has("chain.alreadyOnCanvas", "已在链上——同一节点重复拖入");
+});
+
 test("G1 双语文案与源码同步", () => {
   const messages = readFileSync(
     new URL("../src/i18n/messages.ts", import.meta.url),

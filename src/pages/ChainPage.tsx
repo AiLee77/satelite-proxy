@@ -40,6 +40,7 @@ import {
   updatePool,
 } from "../api";
 import { chainVirtualNodeId } from "../chainVirtualNode";
+import { groupNodes } from "../nodeGroups";
 import { waitForCoreRestart } from "../coreBusy";
 import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
@@ -789,7 +790,7 @@ function ChainFlowEditor({
   onShareYaml?: (() => void) | null;
 }) {
   const [saveActivate, setSaveActivate] = useState(false);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { screenToFlowPosition, fitView, getZoom, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -818,6 +819,39 @@ function ChainFlowEditor({
     if (!q) return pools;
     return pools.filter((p) => p.name.toLowerCase().includes(q));
   }, [pools, candidateQuery]);
+  // G4: subscription-grouped node candidates — same "sub" grouping the
+  // nodes page uses. Extra state below is intentionally minimal: groups are
+  // collapsed unless explicitly toggled open, and an active query forces
+  // every group open (matches must be visible without hunting through
+  // collapsed heads). The old flat list kept the entire subscription in the
+  // DOM (~1000 rows), so grouping fixed both navigation and render load.
+  // One map of explicit user toggles: a group defaults to collapsed
+  // without a query and to open with one — the user's last toggle always
+  // wins over the default.
+  const [manualOpenGroups, setManualOpenGroups] = useState<Record<string, boolean>>({});
+  const hasQuery = candidateQuery.trim().length > 0;
+  const candidateGroups = useMemo(
+    () =>
+      groupNodes(candidateNodes, "sub", locale, {
+        other: t("nodes.groupOther"),
+        noSub: t("nodes.groupNoSub"),
+        chains: t("nodes.groupChains"),
+      }),
+    [candidateNodes, locale, t],
+  );
+  // Nodes already on the canvas (individual hops only — pool hops are a
+  // reference to the pool, their members are fair game as singles) dim in
+  // the list so a duplicate is visible before it gets dragged. Still
+  // draggable: placing the same node twice has legitimate uses when
+  // isValidConnection permits the path.
+  const onCanvasNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const n of flowNodes) {
+      const hop = n.data.hop as ChainHop | undefined;
+      if (hop && hop.kind === "node") ids.add(hop.node_id);
+    }
+    return ids;
+  }, [flowNodes]);
   // Manual pointer-based drag: WKWebView (macOS Tauri) doesn't reliably fire
   // HTML5 drag-and-drop events (dragstart/drop over DataTransfer), so the
   // sidebar → canvas drag is implemented with pointer events instead — a
@@ -1181,26 +1215,56 @@ function ChainFlowEditor({
             />
             <div className="chain-candidate-list">
               {candidateKind === "node"
-                ? candidateNodes.map((n) => (
-                    <div
-                      key={n.id}
-                      onPointerDown={(e) =>
-                        onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
-                      }
-                      className="chain-candidate-item"
-                      data-disabled={n.enabled === false ? "" : undefined}
-                      title={
-                        n.enabled === false && n.subscription_name
-                          ? `${n.subscription_name} · ${t("chain.subDisabled")}`
-                          : n.subscription_name || t("chain.dragHint")
-                      }
-                    >
-                      {n.name}
-                      {n.subscription_name && (
-                        <span className="chain-node-sub">{n.subscription_name}</span>
-                      )}
-                    </div>
-                  ))
+                ? candidateGroups.map((g) => {
+                    // Default: collapsed without a query, open with one (the
+                    // query already filtered to matches, hiding them behind a
+                    // collapsed head would defeat the search). The manual
+                    // toggle always wins: collapsing a noisy group during a
+                    // search, or pre-opening one, both survive.
+                    const open =
+                      g.key in manualOpenGroups ? manualOpenGroups[g.key] : hasQuery;
+                    return (
+                      <div key={g.key} className="chain-candidate-group">
+                        <button
+                          type="button"
+                          className="chain-candidate-group-head"
+                          aria-expanded={open}
+                          onClick={() =>
+                            setManualOpenGroups((cur) => ({ ...cur, [g.key]: !open }))
+                          }
+                        >
+                          <span className="chain-candidate-group-arrow" aria-hidden="true">
+                            {open ? "▾" : "▸"}
+                          </span>
+                          <span className="chain-candidate-group-name">{g.label}</span>
+                          <span className="chain-candidate-group-count">{g.nodes.length}</span>
+                        </button>
+                        {open &&
+                          g.nodes.map((n) => {
+                            const onCanvas = onCanvasNodeIds.has(n.id);
+                            return (
+                              <div
+                                key={n.id}
+                                onPointerDown={(e) =>
+                                  onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
+                                }
+                                className={`chain-candidate-item${onCanvas ? " on-canvas" : ""}`}
+                                data-disabled={n.enabled === false ? "" : undefined}
+                                title={
+                                  n.enabled === false && n.subscription_name
+                                    ? `${n.subscription_name} · ${t("chain.subDisabled")}`
+                                    : onCanvas
+                                      ? t("chain.alreadyOnCanvas")
+                                      : t("chain.dragHint")
+                                }
+                              >
+                                {n.name}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    );
+                  })
                 : candidatePools.map((p) => {
                     const expanded = expandedPoolId === p.id;
                     // Only expandable pools pay the preview cost (explicit
