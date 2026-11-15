@@ -104,6 +104,26 @@ function PoolGlyph({ size = 12 }: { size?: number }) {
   );
 }
 
+/** Monochrome pulse mark for the card-face diagnose button — same stroke
+    idiom as PoolGlyph (currentColor, never emoji fallback colours). */
+function DiagGlyph({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1.5 8h3L6.4 3.8 9 12.2 10.6 8h3.9" />
+    </svg>
+  );
+}
+
 const MAX_POOL_DOTS = 12;
 
 /** Rich card payload for one hop, computed once when the hop is placed on
@@ -367,7 +387,11 @@ type RowMenuItem = {
     by ChainPage (one menuId for every ⋮ on the page), so opening one menu
     closes the previous — per-instance state used to leave both open. Rows in
     the lower half of a list pass flipUp so the popup opens toward the
-    roomier side. */
+    roomier side.
+
+    G2: pool rows and chain cards both thin down to Edit/Delete — diagnose
+    lives on the chain card face, the share/export actions in the editor
+    footer — the menu stays the overflow idiom, not the action hub. */
 function RowMenu({
   id,
   openId,
@@ -737,6 +761,8 @@ function ChainFlowEditor({
   onClose,
   autoName,
   onSaveActivate,
+  onShareText,
+  onShareYaml,
 }: {
   chain: ProxyChain | null;
   nodes: ProxyNode[];
@@ -757,6 +783,10 @@ function ChainFlowEditor({
    *  the parent resolves the chain id after saving (by id for existing
    *  chains, by name for freshly created ones). */
   onSaveActivate?: (() => void) | null;
+  /** G2: share/export actions pulled from the card menu into the footer —
+   *  null for new chains (nothing to share yet) or non-exportable ones. */
+  onShareText?: (() => void) | null;
+  onShareYaml?: (() => void) | null;
 }) {
   const [saveActivate, setSaveActivate] = useState(false);
   const { t } = useI18n();
@@ -1353,6 +1383,16 @@ function ChainFlowEditor({
         </div>
       )}
       <footer className="modal-footer">
+        {(onShareText || onShareYaml) && (
+          <span className="chain-editor-share">
+            {onShareText && (
+              <GlassButton onClick={onShareText}>{t("chain.copyText")}</GlassButton>
+            )}
+            {onShareYaml && (
+              <GlassButton onClick={onShareYaml}>{t("chain.exportMihomo")}</GlassButton>
+            )}
+          </span>
+        )}
         <GlassButton onClick={onClose}>{t("common.cancel")}</GlassButton>
         {onSaveActivate && (
           <GlassSwitch
@@ -1557,6 +1597,8 @@ function ChainEditorModal({
   nodes,
   keywordNodes,
   pools,
+  onShareText,
+  onShareYaml,
   onClose,
   onSaved,
   onSaveActivate,
@@ -1567,6 +1609,10 @@ function ChainEditorModal({
   /** Enabled-subscription universe for keyword pool previews on hop cards. */
   keywordNodes: ProxyNode[];
   pools: NodePool[];
+  /** G2: card-menu share actions relocated to the editor footer — only
+   *  existing chains can be shared out (the caller passes null otherwise). */
+  onShareText: (() => void) | null;
+  onShareYaml: (() => void) | null;
   onClose: () => void;
   /** Saved chain's trimmed name — the caller uses it to resolve the id of
    *  a freshly created chain when "Save & activate" was queued. */
@@ -1674,6 +1720,8 @@ function ChainEditorModal({
             onClose={onClose}
             autoName={chain ? undefined : handleAutoName}
             onSaveActivate={onSaveActivate}
+            onShareText={onShareText}
+            onShareYaml={onShareYaml}
           />
         </ReactFlowProvider>
       </div>
@@ -1717,6 +1765,9 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
 
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
   const [chainEditor, setChainEditor] = useState<{ chain: ProxyChain | null } | null>(null);
+  /** Chain currently being edited, if any — hoisted so closure props keep
+      the null narrowing (G2 footer share handlers rebind to it directly). */
+  const editingChain = chainEditor?.chain ?? null;
   const [diagFor, setDiagFor] = useState<ProxyChain | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<
     { kind: "pool" | "chain"; id: string; name: string } | null
@@ -2001,23 +2052,21 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                           {t("chain.exitSingboxOnly")}
                         </span>
                       )}
+                      <button
+                        type="button"
+                        className="icon-btn chain-card-diag"
+                        aria-label={t("chain.diag")}
+                        title={t("chain.diag")}
+                        onClick={() => setDiagFor(c)}
+                      >
+                        <DiagGlyph />
+                      </button>
                       <RowMenu
                         id={`chain-${c.id}`}
                         openId={menuId}
                         setOpenId={setMenuId}
                         flipUp={i >= Math.ceil(chains.length / 2)}
                         items={[
-                          { key: "diag", label: t("chain.diag"), onClick: () => setDiagFor(c) },
-                          {
-                            key: "copyText",
-                            label: t("chain.copyText"),
-                            onClick: () => void copyChainText(c),
-                          },
-                          {
-                            key: "exportMihomo",
-                            label: t("chain.exportMihomo"),
-                            onClick: () => void copyChainMihomoYaml(c),
-                          },
                           {
                             key: "edit",
                             label: t("common.edit"),
@@ -2113,6 +2162,8 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                   )
               : null
           }
+          onShareText={editingChain ? () => void copyChainText(editingChain) : null}
+          onShareYaml={editingChain ? () => void copyChainMihomoYaml(editingChain) : null}
           onSaved={(savedName) => {
             const pending = activateOnSave;
             setChainEditor(null);

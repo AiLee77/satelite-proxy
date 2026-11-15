@@ -164,17 +164,30 @@ test("链导出双入口已全链路接线：mihomo YAML 与链文本（D 回归
   assert.match(chainCmd, /enabled_nodes_with_chain_refs\(\)/);
   assert.match(api, /invoke<string>\("export_chain_mihomo_yaml"/);
   assert.match(api, /invoke<string>\("export_chain_text"/);
-  // 3) UI 菜单双入口 + 文案双语。
+  // 3) UI 入口（G2 后）：分享/导出移入编辑器 footer，⋮ 菜单瘦成编辑/删除，
+  //    诊断上卡面 icon 按钮——回归同时守护新位置与孤儿清理。
   const page = readFileSync(
     new URL("../src/pages/ChainPage.tsx", import.meta.url),
     "utf8",
   );
+  assert.match(page, /chain-editor-share/);
+  assert.match(page, /onShareText/);
+  assert.match(page, /onShareYaml/);
   assert.match(page, /"chain\.copyText"/);
   assert.match(page, /"chain\.exportMihomo"/);
+  // ⋮ 菜单项不得再携带诊断/分享/导出（防止退回旧菜单形态）。
+  assert.doesNotMatch(page, /key: "diag"/);
+  assert.doesNotMatch(page, /key: "copyText"/);
+  assert.doesNotMatch(page, /key: "exportMihomo"/);
+  // 诊断改为卡面 icon 按钮（icon-btn + 单色脉冲 glyph + tooltip）。
+  assert.match(page, /chain-card-diag/);
+  assert.match(page, /setDiagFor\(c\)/);
   const messages = readFileSync(
     new URL("../src/i18n/messages.ts", import.meta.url),
     "utf8",
   );
+  // G1 遗留 usage 徽标键已随菜单瘦身成为孤儿，必须清理干净。
+  assert.doesNotMatch(messages, /chain\.usedByRuleSets|chain\.notUsedByRules/);
   const has = (key, value) => {
     assert.ok(
       messages.includes(`"${key}": "${value}"`),

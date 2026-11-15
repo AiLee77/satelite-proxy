@@ -335,6 +335,28 @@
   background: var(--danger);
 }
 
+/* G2: card-face diagnose affordance — same square footprint (1.85rem) as
+ *  the ⋮ RuleMenu trigger so the two read as one cluster on the card edge. */
+.chain-card-diag.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  font-size: 1rem;
+}
+
+/* G2: share/export actions pulled left in the chain editor footer — the
+ *  global .modal-footer packs right, so the cluster owns the free side.
+   The glass-btn family already carries the right visual weight at 0.74rem,
+   no extra sizing needed. */
+.chain-editor-share {
+  margin-right: auto;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
 /* G1: exit-activation control in the chain card header. `current` reads as
  *  the live-exit badge (the chain already is the outbound), `unavailable`
  *  explains the sing-box-only gating without an interactive affordance. */
