@@ -1724,7 +1724,7 @@ mod tests {
     fn sort_listed_nodes_pins_chain_entries_first_in_latency_mode() {
         use crate::domain::{ChainHop, ProxyChain};
         use crate::storage::AppStore;
-        let real = |id: &str, name: &str, latency_ms: Option<u64>| ListedNode {
+        let real = |id: &str, name: &str, latency_ms: Option<u32>| ListedNode {
             node: wire_node(ProxyNode {
                 id: id.to_string(),
                 name: name.to_string(),
