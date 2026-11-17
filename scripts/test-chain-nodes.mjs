@@ -618,3 +618,55 @@ test("H链停用后端读取面：SubscriptionDetail.current_node_id 为 additiv
   // TS 侧同字段（可选、旧后端响应允许缺省）。
   assert.match(types, /current_node_id\?: string \| null;/);
 });
+
+test("H出口探测：仅使用中可点，复用 checkExitIp 既有通道，结果/红错上卡", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  // 复用既有 check_exit_ip 诊断通道（经内核实际 HTTP 入口），不新开网络栈。
+  assert.match(page, /async function probeChainExit\(/);
+  assert.match(page, /await checkExitIp\(\)/);
+  // 控件只在 isActive 分支内；停核置灰防误导（直连不经链出口）。
+  assert.match(page, /className="chain-exit-btn chain-exit-probe"/);
+  assert.match(page, /isBusy \|\|\n\s*!active\.running \|\|\n\s*\(exitProbe\?\.chainId === c\.id && exitProbe\.busy\)/);
+  assert.match(page, /chain\.probeStoppedHint/);
+  // 结果行：成功显示 IP+地区（viaProxy=false 追加直连提示），失败红字。
+  assert.match(page, /probeReading\.err \? " err" : ""/);
+  assert.match(page, /countryDisplayName\(info\.countryCode, locale\)/);
+  assert.match(page, /chain\.probeDirect/);
+  // 只对「使用中」的链渲染读数，且按 chain id 键控不串卡。
+  assert.match(page, /exitProbe\.chainId !== c\.id/);
+  // CSS：pill 并置 + 结果行 muted/红。
+  assert.match(css, /\.chain-exit-btn\.chain-exit-probe \{/);
+  assert.match(css, /\.chain-exit-probe-result \{/);
+  assert.match(css, /\.chain-exit-probe-result\.err \{\s*\n\s*color: var\(--danger\);/);
+  // i18n 双语。
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.probeExit", "Check exit");
+  has("chain.probing", "Probing…");
+  has("chain.probeIp", "Exit IP");
+  has("chain.probeDirect", " (direct, not via proxy)");
+  has(
+    "chain.probeStoppedHint",
+    "Start the proxy first — while the core is stopped the probe goes direct, not through the chain.",
+  );
+  has("chain.probeExit", "检测出口");
+  has("chain.probing", "检测中…");
+  has("chain.probeIp", "出口 IP");
+  has("chain.probeDirect", "（直连，未走代理）");
+  has("chain.probeStoppedHint", "先启动代理：停核时检测走直连，不经过链出口。");
+});

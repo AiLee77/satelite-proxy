@@ -396,6 +396,22 @@
   margin-left: 0.4rem;
 }
 
+/* 出口探测：同款 pill 并置；结果行在卡头下方，失败红字。 */
+.chain-exit-btn.chain-exit-probe {
+  margin-left: 0.4rem;
+}
+
+.chain-exit-probe-result {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.chain-exit-probe-result.err {
+  color: var(--danger);
+}
+
 .chain-exit-btn.unavailable {
   opacity: 0.55;
   cursor: default;

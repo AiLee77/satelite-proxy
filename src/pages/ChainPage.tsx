@@ -20,6 +20,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./ChainPage.css";
 import {
+  checkExitIp,
   createChain,
   createPool,
   deleteChain,
@@ -59,6 +60,7 @@ import {
 import type {
   ChainDiagnosis,
   ChainHop,
+  ExitIpInfo,
   NodePool,
   PoolMode,
   ProxyChain,
@@ -79,6 +81,19 @@ function hopLabel(
   }
   const p = poolById.get(hop.pool_id);
   return p ? { text: p.name, stale: false } : { text: hop.pool_id, stale: true };
+}
+
+/** Country code → localized region name — same recipe as the dashboard's
+ *  exit-IP card (HK/TW use the Chinese-specific labels everywhere but en). */
+function countryDisplayName(cc: string, locale: string): string {
+  const code = cc.toUpperCase();
+  if (locale !== "en" && code === "HK") return "中国香港";
+  if (locale !== "en" && code === "TW") return "中国台湾";
+  try {
+    return new Intl.DisplayNames([locale], { type: "region" }).of(code) || cc;
+  } catch {
+    return cc;
+  }
 }
 
 /** Client-side mirror of a keyword pool's include/exclude name filter —
@@ -1909,7 +1924,7 @@ function ChainEditorModal({
 }
 
 export function ChainPage({ embedded = false }: { embedded?: boolean }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [pools, setPools] = useState<NodePool[]>([]);
   const [chains, setChains] = useState<ProxyChain[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
@@ -1939,6 +1954,15 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   });
   /** Chain id whose activation is in flight (disables every chain control). */
   const [activating, setActivating] = useState<string | null>(null);
+  /** H②: exit-IP reading for the in-use chain card. Keyed by chain id so a
+   *  stale reading from a previously active chain never leaks onto another
+   *  card; only the active chain renders it. */
+  const [exitProbe, setExitProbe] = useState<{
+    chainId: string;
+    busy: boolean;
+    info?: ExitIpInfo;
+    error?: string;
+  } | null>(null);
   /** Chain identity queued by "Save & activate". The editor passes the
    *  saved chain's identity back through its onSaved callback. */
   const [activateOnSave, setActivateOnSave] = useState<
@@ -2155,6 +2179,25 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  /** H②：仅「使用中」链可点的出口探测。复用既有 check_exit_ip 诊断通道：
+   *  探测经内核实际 HTTP 入口与路由规则发出，链为当前出口时读到的就是
+   *  链出口的 IP/地区——不新开网络栈、不加依赖。停核时该通道走直连
+   *  （不经过链），按钮置灰避免给出误导读数；失败红色原因显示在卡上。 */
+  async function probeChainExit(chainId: string) {
+    if (exitProbe?.busy) return;
+    setExitProbe({ chainId, busy: true });
+    try {
+      const info = await checkExitIp();
+      setExitProbe({ chainId, info, busy: false });
+    } catch (err) {
+      setExitProbe({
+        chainId,
+        error: typeof err === "string" ? err : String(err),
+        busy: false,
+      });
+    }
+  }
+
   /** New chains have no id until saved — "Save & activate" resolves the
    *  freshly created chain by name from the reloaded list. */
   async function activateChainByName(name: string) {
@@ -2242,6 +2285,31 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
               const isActive = active.currentNodeId === virtualId;
               const isBusy = activating != null;
               const singbox = active.coreType === "singbox";
+              // H②: reading for THIS card only — active chain, finished
+              // probe, and not superseded by another chain's probe.
+              const probeReading = (() => {
+                if (
+                  !isActive ||
+                  !exitProbe ||
+                  exitProbe.chainId !== c.id ||
+                  exitProbe.busy
+                ) {
+                  return null;
+                }
+                if (exitProbe.error) return { text: exitProbe.error, err: true };
+                const info = exitProbe.info;
+                if (!info) return null;
+                const region = info.countryCode
+                  ? countryDisplayName(info.countryCode, locale)
+                  : "";
+                return {
+                  text:
+                    `${t("chain.probeIp")}: ${info.ip}` +
+                    (region ? ` · ${region}` : "") +
+                    (info.viaProxy ? "" : t("chain.probeDirect")),
+                  err: false,
+                };
+              })();
               return (
                 <div key={c.id} className="card chain-card">
                   <div className="chain-card-head">
@@ -2267,6 +2335,25 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                             {activating === c.id
                               ? t("chain.activating")
                               : t("chain.stopExit")}
+                          </button>
+                          <button
+                            type="button"
+                            className="chain-exit-btn chain-exit-probe"
+                            disabled={
+                              isBusy ||
+                              !active.running ||
+                              (exitProbe?.chainId === c.id && exitProbe.busy)
+                            }
+                            title={
+                              active.running
+                                ? t("chain.probeExit")
+                                : t("chain.probeStoppedHint")
+                            }
+                            onClick={() => void probeChainExit(c.id)}
+                          >
+                            {exitProbe?.chainId === c.id && exitProbe.busy
+                              ? t("chain.probing")
+                              : t("chain.probeExit")}
                           </button>
                         </>
                       ) : singbox ? (
@@ -2320,6 +2407,13 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                       />
                     </span>
                   </div>
+                  {probeReading && (
+                    <p
+                      className={`chain-exit-probe-result${probeReading.err ? " err" : ""}`}
+                    >
+                      {probeReading.text}
+                    </p>
+                  )}
                   {/* The pipeline IS the card: stations on a rail — entry
                       dot green, exit dot blue, arrows read client →
                       internet; pools marked by the layer glyph. */}
