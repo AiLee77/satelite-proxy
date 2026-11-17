@@ -78,6 +78,35 @@ fn generated_singbox_selector_sync_plan(
     }
     let api = api?;
     let node_id = store.settings.current_node_id.as_deref()?;
+    // Chain virtual entries (`chain:<id>`) resolve to the chain's exit-hop
+    // clone tag. A restart alone cannot make the selection effective:
+    // sing-box's cache_file persists every live selector PUT and restores it
+    // on start whenever the stored tag is still a member — silently overriding
+    // the config default. Mirror the select-time universe check
+    // (`select_chain_exit`) so the PUT always targets a tag the freshly built
+    // config actually contains; an unresolvable chain is skipped, same as a
+    // deleted node below.
+    if let Some(chain_id) = crate::domain::chain_id_from_virtual_node_id(node_id) {
+        let chain = store.chains.iter().find(|chain| chain.id == chain_id)?;
+        let hop_last = chain.hops.len().checked_sub(1)?;
+        let nodes = store.enabled_nodes_with_chain_refs();
+        let subscription_members = store.enabled_subscription_member_ids();
+        let sidecar = crate::runtime::compute_sidecar_plan(&store.settings, &store.chains, &nodes);
+        crate::config::ensure_chain_selectable(
+            chain,
+            &store.pools,
+            &nodes,
+            store.enabled_nodes().len(),
+            &subscription_members,
+            sidecar.as_ref(),
+        )
+        .ok()?;
+        return Some((
+            api,
+            crate::config::chain_hop_outbound_tag(chain, hop_last),
+            store.settings.close_connections_on_switch,
+        ));
+    }
     let node = store.find_node(node_id)?;
     Some((
         api,
@@ -661,6 +690,227 @@ mod kernel_selection_poll_tests {
                 .expect("sync selector")
         );
         server.join().expect("fake api server");
+    }
+
+    /// Fixture for the selector-sync plan tests: one enabled URL subscription
+    /// with two trojan nodes, one two-hop chain (node-a → node-b), and
+    /// `current_node_id` pre-set to the chain's virtual id.
+    fn chain_sync_plan_store() -> (crate::storage::AppStore, crate::domain::ProxyChain) {
+        use crate::domain::{ChainHop, ProxyChain};
+
+        let sub = crate::domain::Subscription {
+            id: "sub-1".into(),
+            name: "机场".into(),
+            source: crate::domain::SubscriptionSource::Url {
+                url: "https://example.com/sub".into(),
+            },
+            last_update: 1,
+            node_count: 2,
+            enabled: true,
+            format: None,
+            skipped_count: 0,
+            via_proxy: false,
+            auto_update: false,
+            auto_update_interval_min: 1440,
+            traffic: None,
+            clash_config: None,
+            user_agent: None,
+        };
+        let node = |id: &str| crate::domain::ProxyNode {
+            id: id.into(),
+            name: id.into(),
+            protocol: crate::domain::Protocol::Trojan,
+            server: "127.0.0.1".into(),
+            port: 443,
+            tls: None,
+            transport: None,
+            udp: None,
+            config: crate::domain::ProtocolConfig::Trojan {
+                password: "x".into(),
+            },
+            source: None,
+            raw: None,
+            latency_ms: None,
+            latency_at: None,
+        };
+        let mut store = crate::storage::AppStore::default();
+        store
+            .upsert_subscription(sub, vec![node("node-a"), node("node-b")])
+            .expect("seed subscription");
+        let chain = crate::domain::ProxyChain {
+            id: "chain-ab12".to_string(),
+            name: "链".to_string(),
+            hops: vec![
+                ChainHop::Node {
+                    node_id: "node-a".to_string(),
+                },
+                ChainHop::Node {
+                    node_id: "node-b".to_string(),
+                },
+            ],
+            name_manual: None,
+        };
+        store.chains.push(chain.clone());
+        store.settings.current_node_id = Some(crate::domain::chain_virtual_node_id("chain-ab12"));
+        (store, chain)
+    }
+
+    #[test]
+    fn chain_selector_sync_plan_targets_exit_hop_tag() {
+        let (store, chain) = chain_sync_plan_store();
+        let api = crate::api::ClashApi::new("127.0.0.1", 1, "test");
+        let (_, tag, close) = generated_singbox_selector_sync_plan(&store, Some(api))
+            .expect("chain selection must produce a post-restart selector PUT");
+        assert_eq!(tag, crate::config::chain_hop_outbound_tag(&chain, 1));
+        assert_eq!(close, store.settings.close_connections_on_switch);
+    }
+
+    #[test]
+    fn chain_selector_sync_plan_skips_unresolvable_or_foreign_state() {
+        use crate::domain::{AutoSelectMode, ChainHop};
+
+        let api = crate::api::ClashApi::new("127.0.0.1", 1, "test");
+
+        // Broken chain: a hop references a deleted node — the freshly built
+        // config drops the chain exit, so the PUT must not target it.
+        let (mut store, _) = chain_sync_plan_store();
+        store.chains[0].hops[1] = ChainHop::Node {
+            node_id: "node-gone".to_string(),
+        };
+        assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
+
+        // Missing chain (deleted while selected): skip, mirrors the deleted
+        // node arm of the plain-node path.
+        let (mut store, _) = chain_sync_plan_store();
+        store.chains.clear();
+        assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
+
+        // Empty hop list: no exit hop to PUT (guarded select-time mirror would
+        // reject it anyway).
+        let (mut store, _) = chain_sync_plan_store();
+        store.chains[0].hops.clear();
+        assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
+
+        // Kernel auto mode keeps owning the group (urltest — PUT would 400).
+        let (mut store, _) = chain_sync_plan_store();
+        store.settings.auto_select = AutoSelectMode::Kernel;
+        assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
+
+        // Non-sing-box cores have no chain semantics.
+        let (mut store, _) = chain_sync_plan_store();
+        store.settings.core_type = "xray".to_string();
+        assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
+    }
+
+    /// Repro of the chain-exit cache-override bug, against the real sing-box
+    /// binary (CI-only, `--ignored`). sing-box's `cache_file` persists every
+    /// live selector PUT and restores it on the next start whenever the
+    /// stored tag is still a selector member — silently overriding the
+    /// config default. Without the post-start re-PUT (see
+    /// [`generated_singbox_selector_sync_plan`]), a chain enabled through the
+    /// restart path never becomes the runtime selection: the kernel keeps the
+    /// previously hot-switched node and the exit IP shows the first hop.
+    #[test]
+    #[ignore = "needs the bundled dev sing-box binary"]
+    fn live_chain_selector_reselects_after_cache_restore() {
+        use crate::core::CoreKind;
+
+        crate::core::find_bundled_core(None, CoreKind::SingBox)
+            .expect("bundled sing-box binary — run the fetch-bundled-core script");
+        let test_dir = std::env::temp_dir().join(format!(
+            "satelite-chain-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let state = AppState::load(test_dir.clone(), None).expect("load test state");
+        let (seed_store, chain) = chain_sync_plan_store();
+        let chain_virtual = crate::domain::chain_virtual_node_id(&chain.id);
+        state
+            .with_store_mut(|store| {
+                store.settings = seed_store.settings.clone();
+                store.chains = seed_store.chains.clone();
+                store.subscriptions.clone_from(&seed_store.subscriptions);
+                store.nodes = seed_store.nodes.clone();
+                store.settings.current_node_id = Some("node-a".into());
+                Ok(())
+            })
+            .expect("seed live store");
+
+        let node_tag = |id: &str| {
+            state
+                .with_store(|store| {
+                    Ok(crate::config::outbound_tag(
+                        store.find_node(id).expect("seed node must exist"),
+                    ))
+                })
+                .expect("node tag")
+        };
+        let selector_now = |state: &AppState| {
+            let api = state
+                .lock_runtime()
+                .clash_api_clone()
+                .expect("clash api must be up after start");
+            api.proxy_group_now_with_timeout(MAIN_PROXY_GROUP, Duration::from_secs(5))
+                .expect("read selector now")
+        };
+
+        // Start 1: default = node-a (config default, no cache yet).
+        state.start_proxy(None, false).expect("start #1");
+        assert_eq!(
+            selector_now(&state).as_deref(),
+            Some(node_tag("node-a").as_str())
+        );
+
+        // Hot-switch to node-b: the live PUT lands in cache.db.
+        let (_, _, selected_live) = state
+            .select_current_node_serialized("node-b", true, true)
+            .expect("hot switch to node-b");
+        assert!(selected_live, "running sing-box must hot-switch");
+        assert_eq!(
+            selector_now(&state).as_deref(),
+            Some(node_tag("node-b").as_str())
+        );
+
+        // Stop, then enable the chain — a stop-state selection is applied by
+        // rebuild + start, exactly like the H1 enable button while stopped.
+        state.stop_proxy().expect("stop #1");
+        let (_, restart_needed, selected_live) = state
+            .select_current_node_serialized(&chain_virtual, true, true)
+            .expect("enable chain while stopped");
+        assert!(
+            !selected_live,
+            "stop-state chain selection is restart-applied"
+        );
+        assert!(!restart_needed);
+
+        // Start 2: cache.db would restore node-b and override the config
+        // default (chain exit tag) — the post-start PUT must win instead.
+        state.start_proxy(None, false).expect("start #2");
+        let exit_tag = crate::config::chain_hop_outbound_tag(&chain, 1);
+        assert_eq!(selector_now(&state).as_deref(), Some(exit_tag.as_str()));
+
+        // Deactivate-fallback: stop, fall back to a plain node (restart-
+        // applied), start. cache.db now remembers the chain exit tag — it
+        // must not override the node selection either.
+        state.stop_proxy().expect("stop #2");
+        let (_, _, selected_live) = state
+            .select_current_node_serialized("node-a", true, true)
+            .expect("fallback to node-a");
+        assert!(
+            !selected_live,
+            "stop-state node selection is restart-applied"
+        );
+        state.start_proxy(None, false).expect("start #3");
+        assert_eq!(
+            selector_now(&state).as_deref(),
+            Some(node_tag("node-a").as_str())
+        );
+
+        state.stop_proxy().expect("cleanup stop");
+        let _ = std::fs::remove_dir_all(test_dir);
     }
 
     #[test]

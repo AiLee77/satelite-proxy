@@ -953,6 +953,20 @@
   opacity: 0.45;
 }
 
+/* Explicit in-chain marker for on-canvas rows: leading filled dot, same
+   size and semantic color as the nodes-list current-node dot
+   (node-select-dot: ● in --primary at 0.9rem). The sidebar rows stay
+   append-semantics (click = append hop, still draggable) — the mark only
+   says "this node is already a hop of the current chain". */
+.chain-candidate-item > .chain-candidate-mark,
+.chain-pool-member > .chain-candidate-mark {
+  flex: none;
+  padding-right: 0.25rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--primary);
+}
+
 .chain-candidate-item {
   text-align: left;
   background: transparent;

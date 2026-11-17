@@ -108,7 +108,7 @@ test("池候选可展开，点成员行直接入链尾（B 回归，勾选暂存
   // ChainHop::Pool。
   const member =
     page.match(
-      /onPointerDown=\{\(e\) =>\s*onCandidatePointerDown\(\s*e,\s*\{ kind: "node", node_id: node\.id \},\s*node\.name,\s*\)\s*\}[\s\S]{0,1500}?\{staleCount > 0/s,
+      /onPointerDown=\{\(e\) =>\s*onCandidatePointerDown\(\s*e,\s*\{ kind: "node", node_id: node\.id \},\s*node\.name,\s*\)\s*\}[\s\S]{0,2200}?\{staleCount > 0/s,
     )?.[0] ?? "";
   assert.ok(member, "chain-pool-member 渲染块缺失");
   // 成员行复用候选节点的 on-canvas 淡化口径，hover 提示带全名。
@@ -1045,4 +1045,85 @@ test("I9：跳序规则——左→右即 1..N、新节点接尾、删中间跳�
       "上游连线校验文本变化，需复核对齐",
     );
   }
+});
+
+test("K1：链出口缓存覆盖修复——重启后 selector 补 PUT 识别 chain: 虚拟 id", () => {
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  const plan = state.slice(state.indexOf("fn generated_singbox_selector_sync_plan"));
+  assert.ok(plan, "generated_singbox_selector_sync_plan 缺失");
+  // chain: 虚拟 id 分支存在，且解析到链末跳克隆 tag（cache_file 恢复的
+  // 旧选择会覆盖配置 default，重启本身不够——必须有重启后补 PUT）。
+  assert.match(plan, /chain_id_from_virtual_node_id\(node_id\)/);
+  assert.match(plan, /checked_sub\(1\)/);
+  assert.match(plan, /ensure_chain_selectable/);
+  assert.match(plan, /chain_hop_outbound_tag\(chain, hop_last\)/);
+  // 补 PUT 只能指向刚生成配置里真实存在的 tag：失效链跳过（None），
+  // 与普通节点 find_node 失败同口径。
+  assert.match(
+    state,
+    /unresolvable chain is skipped, same as a\s*\/\/ ?deleted node/,
+  );
+});
+
+test("K1：live 复现剧本（真 sing-box，CI --ignored）与单测双锚", () => {
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  // 剧本三段：热切 node-b 落 cache → 停核启用链重启后断言链末跳 →
+  // 停核回落 node-a 重启后断言回落 tag。
+  assert.match(state, /live_chain_selector_reselects_after_cache_restore/);
+  const live = state.slice(
+    state.indexOf("fn live_chain_selector_reselects_after_cache_restore"),
+  );
+  assert.match(live, /select_current_node_serialized\("node-b", true, true\)/);
+  assert.match(live, /chain_virtual_node_id\(&chain\.id\)/);
+  assert.match(live, /chain_hop_outbound_tag\(&chain, 1\)/);
+  // 纯函数双测：链选择产 PUT（末跳 tag）+ 失效/删除/kernel/xray 全跳过。
+  assert.match(state, /fn chain_selector_sync_plan_targets_exit_hop_tag/);
+  assert.match(
+    state,
+    /fn chain_selector_sync_plan_skips_unresolvable_or_foreign_state/,
+  );
+  // live 剧本挂进 Windows CI 的 ignored 清单。
+  const wf = readFileSync(
+    new URL("../.github/workflows/build-windows.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    wf,
+    /state::kernel_selection_poll_tests::live_chain_selector_reselects_after_cache_restore -- --ignored/,
+  );
+});
+
+test("K2：链编辑器候选行 on-canvas 明确选中标记（行首圆点，与节点列表当前节点同口径）", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  // 节点候选行 + 池成员行两处渲染都带 chain-candidate-mark（行首圆点 ●，
+  // aria-hidden —— 语义由既有 title 承载，不新增 i18n 键）。
+  const occurrences = page.match(/chain-candidate-mark/g) ?? [];
+  assert.ok(occurrences.length === 2, "候选行/池成员行标记渲染缺失");
+  assert.match(page, /\{onCanvas && \(\s*<span className="chain-candidate-mark"/);
+  const dots = page.match(/chain-candidate-mark[^●]{0,80}●/g) ?? [];
+  assert.ok(dots.length === 2, "两处标记都必须是实心圆点 ●");
+  // 样式：两处行类型共用，尺寸/语义色复用节点列表当前节点圆点
+  // （node-select-dot：● · --primary · 0.9rem）——同形态不新造语义。
+  assert.match(css, /\.chain-candidate-item > \.chain-candidate-mark,/);
+  assert.match(css, /\.chain-pool-member > \.chain-candidate-mark \{/);
+  const markRule =
+    css.match(/\.chain-pool-member > \.chain-candidate-mark \{[^}]*\}/s)?.[0] ??
+    "";
+  assert.match(markRule, /font-size: 0\.9rem;/);
+  assert.match(markRule, /color: var\(--primary\);/);
+  // on-canvas 淡化保留，标记是补足而非替代。
+  assert.match(css, /\.chain-candidate-item\.on-canvas \{/);
 });

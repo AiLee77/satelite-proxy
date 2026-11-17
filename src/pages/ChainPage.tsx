@@ -1508,6 +1508,11 @@ function ChainFlowEditor({
                                       : `${n.name} · ${t("chain.dragHint")}`
                                 }
                               >
+                                {onCanvas && (
+                                  <span className="chain-candidate-mark" aria-hidden="true">
+                                    ●
+                                  </span>
+                                )}
                                 <EllipsisTail text={n.name} />
                               </div>
                             );
@@ -1585,6 +1590,11 @@ function ChainFlowEditor({
                                           : `${node.name} · ${t("chain.dragHint")}`
                                   }
                                 >
+                                  {onCanvas && (
+                                    <span className="chain-candidate-mark" aria-hidden="true">
+                                      ●
+                                    </span>
+                                  )}
                                   <EllipsisTail text={node.name} />
                                   {node.subscription_name && (
                                     <span className="chain-node-sub">{node.subscription_name}</span>
