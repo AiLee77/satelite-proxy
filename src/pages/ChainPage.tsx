@@ -2606,6 +2606,12 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                     {c.hops.map((hop, i) => {
                       const { text, stale } = hopLabel(hop, nodeById, poolById);
                       const isPool = hop.kind === "pool";
+                      // I6: node 跳名字旁显示该节点最近一次延迟（既有
+                      // latency_ms 缓存，纯显示、不触发探测）；池跳没有
+                      // 单一延迟，保持原样。
+                      const latencyMs = isPool
+                        ? null
+                        : (nodeById.get(hop.node_id)?.latency_ms ?? null);
                       const last = i === c.hops.length - 1;
                       const role = i === 0 ? "entry" : last ? "exit" : "mid";
                       return (
@@ -2631,6 +2637,9 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                               </span>
                             )}
                             {text}
+                            {latencyMs != null && latencyMs > 0 && (
+                              <span className="chain-station-latency">{latencyMs} ms</span>
+                            )}
                           </span>
                           <span className="chain-flow-type">
                             {isPool ? t("chain.pool") : t("rules.pickNode")}

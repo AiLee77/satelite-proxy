@@ -918,3 +918,27 @@ test("I5：节点列表链条款选中/当前态高亮调柔和（纯 CSS）", (
     /\.node-list-row\.row-selected \{\s*\n\s*background: var\(--primary-muted\) !important;\s*\n\}/,
   );
 });
+test("I6：链卡每跳名字旁显示该节点最近延迟（纯显示）", () => {
+  // 复用既有 latency_ms 缓存，不触发探测；池跳没有单一延迟保持原样。
+  // 编辑器跳卡的 latency 展示已在 B/I 回归锚定（hopCardData latencyMs）。
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const stepper = page.slice(page.indexOf("const stepper ="));
+  const block = page.slice(
+    page.indexOf('className={`chain-station${stale ? " stale" : ""}`}'),
+    page.indexOf('chain-flow-type'),
+  );
+  assert.ok(block, "chain-station 渲染块缺失");
+  assert.match(page, /const latencyMs = isPool\s*\n\s*\?\s*null\s*\n\s*: \(nodeById\.get\(hop\.node_id\)\?\.latency_ms \?\? null\);/);
+  assert.match(page, /chain-station-latency/);
+  assert.match(page, /latencyMs != null && latencyMs > 0/);
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const rule = css.slice(css.indexOf(".chain-station-latency {"));
+  assert.match(rule, /margin-left: 0\.3rem;/);
+  assert.match(rule, /color: var\(--muted\);/);
+});

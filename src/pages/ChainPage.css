@@ -317,6 +317,14 @@
   text-align: center;
 }
 
+/* I6：跳名旁的最近延迟小字（纯显示既有 latency_ms 缓存）。 */
+.chain-station-latency {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .chain-flow-glyph {
   flex: none;
 }
