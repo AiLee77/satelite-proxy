@@ -1660,7 +1660,16 @@ function ChainFlowEditor({
                 proOptions={{ hideAttribution: true }}
               >
                 <Background gap={20} />
-                <Controls showInteractive={false} />
+                {/* H: showFitView gives a manual canvas reset for pans that
+                    lost the chain; onFitView re-applies the app's own fit
+                    options so the manual button and the auto paths share one
+                    viewport policy (padding/maxZoom), zero new behavior. */}
+                <Controls
+                  showInteractive={false}
+                  onFitView={() =>
+                    fitView({ padding: 0.3, duration: 250, maxZoom: 1.1 })
+                  }
+                />
               </ReactFlow>
             </div>
             <p

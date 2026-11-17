@@ -1216,6 +1216,21 @@ test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
   assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*border: 1px solid/);
 });
 
+test("H：画布 fit view 手动复位入口与视口策略单源", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // Controls 手动 fit 按钮接线：onFitView 与应用自身 fit 走同一套视口策略
+  // （padding/maxZoom 与打开已有链/整理布局两处自动路径逐字一致）。
+  const controls = page.match(/<Controls[\s\S]*?\/>/)?.[0] ?? "";
+  assert.ok(controls, "Controls 组件缺失");
+  assert.match(controls, /onFitView=\{\(\) =>\s*fitView\(\{ padding: 0\.3, duration: 250, maxZoom: 1\.1 \}\)\s*\}/);
+  // 负断言：不得引入新的坐标换算/重设（screenToFlowPosition 仅供投放点，
+  // 坐标模型未动）。
+  assert.doesNotMatch(controls, /screenToFlowPosition/);
+});
+
 // ===== E（链毕业批）：使用中链出口的存活破坏 → 自动停用回落 =====
 
 test("E 杀跳路径挂钩一览：九处入口都复检存活，delete_chain 靠既有守卫", () => {
