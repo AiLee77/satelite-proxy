@@ -975,3 +975,24 @@ test("I7：链卡菜单「复制」——新 id、名字加后缀、走现有新
   assert.match(store, /eq_ignore_ascii_case\(name\)/);
   assert.match(store, /name\.chars\(\)\.count\(\) > 64/);
 });
+test("I8：启用链成功后自动测一次出口（仅内存结果区）", () => {
+  // 复用既有 probeChainExit（exitProbe 状态/结果区 UI 不动，不落盘）；
+  // 仅内核运行时触发——停核启用只写配置，直连读数会误导。
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const block = page.slice(
+    page.indexOf("async function activateChainById"),
+    page.indexOf("async function deactivateChainExit"),
+  );
+  assert.ok(block, "activateChainById 块缺失");
+  assert.match(
+    block,
+    /if \(active\.running\) void probeChainExit\(chainId\);/,
+  );
+  // probeChainExit 本体保持既有 checkExitIp 通道与 exitProbe 内存语义。
+  const probe = page.slice(page.indexOf("async function probeChainExit"));
+  assert.match(probe, /await checkExitIp\(\)/);
+  assert.match(probe, /setExitProbe\(\{ chainId, info, busy: false \}\)/);
+});

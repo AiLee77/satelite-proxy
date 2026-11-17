@@ -2323,6 +2323,10 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         await generateSingboxConfig();
       }
       setActive((a) => ({ ...a, currentNodeId: chainVirtualNodeId(chainId) }));
+      // I8: 启用成功后自动测一次链出口，结果写进既有 exitProbe 结果区
+      // （仅内存、不落盘）。仅在内核运行时触发——停核启用只写配置，
+      // 直连读数会误导（与卡上探测按钮的置灰条件同口径）。
+      if (active.running) void probeChainExit(chainId);
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
