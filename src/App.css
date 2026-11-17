@@ -2622,6 +2622,37 @@ button.node-card.active,
   background: var(--primary-muted) !important;
 }
 
+/* —— 链条款高亮调柔和：链虚拟条目复用通用行高亮过强——整行实底
+   （--primary-muted）降为轻染 + 左缘细条，链与普通节点一眼可分；
+   链条目以 .sidecar-tag.chain 徽标为标记（:has 纯 CSS，不改 JS）。
+   普通节点行保持原语义不动。 —— */
+.node-list-row:has(.sidecar-tag.chain).row-active {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.node-list-row:has(.sidecar-tag.chain).row-selected {
+  border-color: var(--primary-border);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
+}
+
+.node-card:has(.sidecar-tag.chain).selected {
+  border-color: var(--primary-border);
+  background:
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
+}
+
 .node-card.selected {
   border-color: var(--primary-border);
 }
@@ -9718,6 +9749,17 @@ button.simple-node-item:hover:not(:disabled) {
 .simple-node-item.selected {
   border-color: var(--primary-border);
   background: var(--primary-muted) !important;
+}
+
+/* 链条款高亮调柔和（简洁模式）：同专业列表——轻染 + 左缘细条。 */
+.simple-node-item:has(.sidecar-tag.chain).selected {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
 }
 
 .simple-node-proto {

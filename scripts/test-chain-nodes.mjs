@@ -884,3 +884,37 @@ test("I4：启用链前自动补齐所需订阅（B/I 回归）", () => {
     assert.ok(messages.includes(`"${key}"`), `missing i18n key: ${key}`);
   }
 });
+test("I5：节点列表链条款选中/当前态高亮调柔和（纯 CSS）", () => {
+  // 链虚拟条目复用通用行高亮（--primary-muted 整行实底）过强——链行降为
+  // 轻染 + 左缘细条；以 .sidecar-tag.chain 徽标为 :has() 标记，纯 CSS
+  // 不改 JS，普通节点行语义不动。专业列表/网格 + 简洁模式四处同款。
+  const css = readFileSync(
+    new URL("../src/App.css", import.meta.url),
+    "utf8",
+  );
+  const soft = (rule) =>
+    rule.includes("color-mix(in srgb, var(--primary) 14%, transparent)") ||
+    rule.includes("color-mix(in srgb, var(--primary) 16%, transparent)");
+  for (const sel of [
+    ".node-list-row:has(.sidecar-tag.chain).row-active",
+    ".node-list-row:has(.sidecar-tag.chain).row-selected",
+    ".node-card:has(.sidecar-tag.chain).selected",
+    ".simple-node-item:has(.sidecar-tag.chain).selected",
+  ]) {
+    const i = css.indexOf(sel + " {");
+    assert.ok(i >= 0, `missing softened chain-entry rule: ${sel}`);
+    const rule = css.slice(i, css.indexOf("}", i) + 1);
+    assert.ok(soft(rule), `${sel} 未降为轻染`);
+  }
+  // 左缘细条：链行 active/selected 用 3px 渐变左缘，区别于普通行的整行实底。
+  const rowActive = css.slice(
+    css.indexOf(".node-list-row:has(.sidecar-tag.chain).row-active {"),
+  );
+  assert.match(rowActive, /linear-gradient\(/);
+  assert.match(rowActive, /color-mix\(in srgb, var\(--primary\) 55%, transparent\) 0 3px/);
+  // 普通节点行的通用高亮保持原语义（--primary-muted 实底带 important）。
+  assert.match(
+    css,
+    /\.node-list-row\.row-selected \{\s*\n\s*background: var\(--primary-muted\) !important;\s*\n\}/,
+  );
+});
