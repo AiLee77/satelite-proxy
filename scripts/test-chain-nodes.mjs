@@ -616,7 +616,7 @@ test("F链停用：后端单源接管，热切不重启不串行拉 detail，停
   assert.doesNotMatch(page, /setNodeFront|listNodeFronts|front_node_id|frontNode/);
 });
 
-test("H链停用后端读取面：SubscriptionDetail.current_node_id 为 additive 字段", () => {
+test("D 收官：SubscriptionDetail.current_node_id 读取面已移除（零消费者死字段）", () => {
   const domain = readFileSync(
     new URL("../src-tauri/src/domain/subscription.rs", import.meta.url),
     "utf8",
@@ -629,19 +629,17 @@ test("H链停用后端读取面：SubscriptionDetail.current_node_id 为 additiv
     new URL("../src/types.ts", import.meta.url),
     "utf8",
   );
-  // serde default + 不选中不序列化——旧客户端零感知（additive 唯一后端改动）。
-  assert.match(
-    domain,
-    /#\[serde\(default, skip_serializing_if = "Option::is_none"\)\]\s*\n\s*pub current_node_id: Option<String>,/,
-  );
-  // to_detail 基座初始化为 None，记忆只在 get_subscription 按需填充。
-  assert.match(domain, /current_node_id: None,/);
-  assert.match(
-    commands,
-    /detail\.current_node_id = store\.selected_nodes_by_subscription\.get\(&id\)\.cloned\(\);/,
-  );
-  // TS 侧同字段（可选、旧后端响应允许缺省）。
-  assert.match(types, /current_node_id\?: string \| null;/);
+  // F 根因修复后回落由后端单源接管，H1 的前端读取面整体移除——三处
+  // （domain 字段 / get_subscription 按需填充 / TS SubscriptionDetail
+  // 可选字段）同步清淨。TS 侧锚限定在 SubscriptionDetail 接口体内——
+  // AppSettings.current_node_id 是另一独立字段，不在本清理范围。
+  assert.doesNotMatch(domain, /pub current_node_id: Option<String>/);
+  assert.doesNotMatch(commands, /detail\.current_node_id/);
+  const detailTs = types.match(
+    /export interface SubscriptionDetail \{[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(detailTs, "SubscriptionDetail 接口缺失");
+  assert.doesNotMatch(detailTs, /current_node_id/);
 });
 
 test("H出口探测：仅使用中可点，复用 checkExitIp 既有通道，结果/红错上卡", () => {

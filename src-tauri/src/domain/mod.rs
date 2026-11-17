@@ -9,7 +9,7 @@ mod sudoku;
 
 pub use chain::{
     chain_id_from_virtual_node_id, chain_virtual_node_id, pool_outbound_tag_for_id, ChainHop,
-    NodePool, PoolMode, ProxyChain, CHAIN_NODE_ID_PREFIX,
+    NodePool, PoolMode, ProxyChain,
 };
 pub use dns::*;
 pub use mihomo_profile::*;

@@ -181,7 +181,6 @@ pub fn get_subscription(
                 .get_subscription(&id)
                 .map(|s| s.to_detail())
                 .ok_or_else(|| crate::error::AppError::NotFound(id.clone()))?;
-            detail.current_node_id = store.selected_nodes_by_subscription.get(&id).cloned();
             if detail.source_kind == "node" {
                 detail.node = store
                     .nodes

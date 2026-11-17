@@ -405,12 +405,12 @@ pub struct SubscriptionDetail {
     /// Custom User-Agent for URL fetches (empty = built-in default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
-    /// 该订阅最后一次选中的节点 id（`selected_nodes_by_subscription` 的读取面，
-    /// 链「停用」回落用它对齐后端 `ensure_current_node_valid` 的同款优先级）。
-    /// Additive 字段：serde default + 不选中不序列化，旧客户端零感知。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_node_id: Option<String>,
 }
+
+// D（链毕业批收官）：H1 为链「停用」前端回落加的 additive `current_node_id`
+// 读取面已随 F 根因修复整体移除——回落优先级改由后端单源
+// `chain_exit_fallback_target_in` 接管，前端不再需要逐订阅 detail 读取该
+// 槽位；保留字段会是零消费者的死代码。
 
 impl Subscription {
     pub fn to_view(&self) -> SubscriptionView {
@@ -480,7 +480,6 @@ impl Subscription {
             auto_update_interval_min: self.auto_update_interval_min.max(1),
             traffic: self.traffic.clone(),
             user_agent: self.user_agent.clone(),
-            current_node_id: None,
         };
         match &self.source {
             SubscriptionSource::Url { url } => SubscriptionDetail {
