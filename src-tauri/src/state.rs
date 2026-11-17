@@ -705,7 +705,9 @@ mod kernel_selection_poll_tests {
                 url: "https://example.com/sub".into(),
             },
             last_update: 1,
-            node_count: 2,
+            // node-c is NOT a chain hop — after the 返修③ deactivate
+            // exclusion it is the only legal fallback landing node.
+            node_count: 3,
             enabled: true,
             format: None,
             skipped_count: 0,
@@ -735,7 +737,7 @@ mod kernel_selection_poll_tests {
         };
         let mut store = crate::storage::AppStore::default();
         store
-            .upsert_subscription(sub, vec![node("node-a"), node("node-b")])
+            .upsert_subscription(sub, vec![node("node-a"), node("node-b"), node("node-c")])
             .expect("seed subscription");
         let chain = ProxyChain {
             id: "chain-ab12".to_string(),
@@ -1068,12 +1070,17 @@ mod kernel_selection_poll_tests {
         let deactivate_ms = t.elapsed().as_millis();
         let (fallback_id, restart_needed) =
             outcome.expect("chain was active; must deactivate");
-        // The baseline switch to node-b re-pointed the subscription's
-        // remembered slot, so the fallback target is node-b — exactly the
-        // shared priority (remembered beats first-node).
-        assert_eq!(fallback_id, "node-b", "remembered node wins the fallback");
+        // 返修③: the fallback must never land on a hop of the deactivated
+        // chain. node-a and node-b are exactly the chain's two hops, so even
+        // though the remembered slot points at node-b (baseline switch), the
+        // shared exclusion skips both hops and lands on the first non-hop
+        // node, node-c.
+        assert_eq!(
+            fallback_id, "node-c",
+            "chain hops (node-a/node-b) are excluded; non-hop node-c wins"
+        );
         assert!(!restart_needed, "hot path must not request a restart");
-        assert_eq!(selector_now(&state).as_deref(), Some(node_tag("node-b").as_str()));
+        assert_eq!(selector_now(&state).as_deref(), Some(node_tag("node-c").as_str()));
         // Idempotence: no chain exit anymore → no-op.
         assert!(state
             .deactivate_chain_exit_serialized()

@@ -1696,11 +1696,54 @@ impl AppStore {
             .or_else(|| enabled.first().map(|node| node.id.clone()))
     }
 
+    /// 返修③: same fallback priority but with every hop of the given chain
+    /// removed from the candidate universe first. Deactivating a chain exit
+    /// must never land back on one of that chain's own hops (including its
+    /// first hop) — those nodes stay in the store, they are just not valid
+    /// *fallback* targets for leaving this chain.
+    pub fn chain_exit_fallback_target_in_excluding_chain(
+        &self,
+        enabled: &[ProxyNode],
+        chain_id: &str,
+    ) -> Option<String> {
+        let excluded: std::collections::HashSet<&str> = self
+            .chains
+            .iter()
+            .find(|chain| chain.id == chain_id)
+            .map(|chain| {
+                chain
+                    .hops
+                    .iter()
+                    .filter_map(|hop| match hop {
+                        crate::domain::ChainHop::Node { node_id } => Some(node_id.as_str()),
+                        crate::domain::ChainHop::Pool { .. } => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let candidates: Vec<ProxyNode> = enabled
+            .iter()
+            .filter(|node| !excluded.contains(node.id.as_str()))
+            .cloned()
+            .collect();
+        self.chain_exit_fallback_target_in(&candidates)
+    }
+
     /// Convenience wrapper resolving the enabled universe first — the exact
     /// priority the H1 deactivate button and the E auto-deactivation use.
+    /// When the current exit is a chain virtual id, that chain's hops are
+    /// excluded from the fallback candidates (返修③).
     pub fn chain_exit_fallback_target(&self) -> Option<String> {
         let enabled = self.enabled_nodes();
-        self.chain_exit_fallback_target_in(&enabled)
+        let chain_id = self
+            .settings
+            .current_node_id
+            .as_deref()
+            .and_then(crate::domain::chain_id_from_virtual_node_id);
+        match chain_id {
+            Some(chain_id) => self.chain_exit_fallback_target_in_excluding_chain(&enabled, chain_id),
+            None => self.chain_exit_fallback_target_in(&enabled),
+        }
     }
 
     /// E (链毕业批): the current exit is a chain virtual id and one of its
@@ -1752,8 +1795,10 @@ impl AppStore {
     /// chains are never touched here — they keep the H3 "已失效" badge only.
     pub fn auto_deactivate_dead_chain_exit(&mut self) -> Option<ChainExitDeath> {
         let death = self.active_chain_exit_death()?;
-        let enabled = self.enabled_nodes();
-        self.settings.current_node_id = self.chain_exit_fallback_target_in(&enabled);
+        // 返修③: route through the single-source fallback — with the dead
+        // chain still the current exit, its hops are excluded from the
+        // candidates so the fallback can never land back on a hop.
+        self.settings.current_node_id = self.chain_exit_fallback_target();
         self.remember_current_node();
         Some(death)
     }
@@ -5680,6 +5725,17 @@ mod tests {
     #[test]
     fn auto_deactivate_dead_chain_exit_when_hop_subscription_disabled() {
         let (mut store, chain_id, entry_id, exit_id, sub_b) = chain_exit_death_store();
+        // 返修③: entry_id is a chain hop and is now excluded from the
+        // fallback candidates — add a non-hop spare to sub A so the shared
+        // priority still has a legal landing node.
+        let spare = sample_hy2("spare-1", "备用");
+        let spare_id = spare.id.clone();
+        store.nodes.push(StoredNode {
+            subscription_id: "id-alpha".into(),
+            node: spare,
+            latency_method: None,
+            latency_error: None,
+        });
         // Sanity: alive chain — no death, selection untouched.
         assert!(store.active_chain_exit_death().is_none());
         assert_eq!(
@@ -5702,7 +5758,10 @@ mod tests {
             .expect("disabled exit-hop subscription must auto-deactivate");
         assert_eq!(death.chain_id, chain_id);
         assert!(death.reason.contains("第 2 跳"), "reason: {}", death.reason);
-        assert_eq!(store.settings.current_node_id.as_deref(), Some(entry_id.as_str()));
+        // 返修③: entry_id is a chain hop → excluded; the fallback lands on
+        // the non-hop spare instead of looping back onto the chain.
+        assert_ne!(store.settings.current_node_id.as_deref(), Some(entry_id.as_str()));
+        assert_eq!(store.settings.current_node_id.as_deref(), Some(spare_id.as_str()));
         // The remembered-node slot was re-pointed at the fallback, not left
         // on the virtual id.
         assert!(!store
@@ -5710,6 +5769,52 @@ mod tests {
             .values()
             .any(|id| id.starts_with("chain:")));
         assert!(store.find_node(&exit_id).is_some(), "node itself stays stored");
+    }
+
+    #[test]
+    /// 返修③: the deactivate fallback must never land on a hop of the
+    /// deactivated chain — even when a hop is the source subscription's
+    /// remembered node (the top-priority fallback candidate). With the chain
+    /// still the current exit, the shared fallback excludes every hop from
+    /// the candidate universe, so the single non-hop node wins instead of
+    /// the remembered hop.
+    fn chain_deactivate_fallback_never_lands_on_a_chain_hop() {
+        let (mut store, chain_id, entry_id, exit_id, sub_b) = chain_exit_death_store();
+        // Add a non-hop spare node to sub A so the exclusion still has a
+        // legal landing node.
+        let spare = sample_hy2("spare-1", "备用");
+        let spare_id = spare.id.clone();
+        store.nodes.push(StoredNode {
+            subscription_id: "id-alpha".into(),
+            node: spare,
+            latency_method: None,
+            latency_error: None,
+        });
+        // Point the remembered slot of the still-enabled sub B at the exit
+        // hop itself — the pathological "remembered node is a chain hop"
+        // shape that used to let the fallback land back on the chain.
+        store
+            .selected_nodes_by_subscription
+            .insert(sub_b.clone(), exit_id.clone());
+
+        // Direct helper check: hops are excluded from the candidate universe.
+        let enabled = store.enabled_nodes();
+        let target = store
+            .chain_exit_fallback_target_in_excluding_chain(&enabled, &chain_id)
+            .expect("non-hop spare must survive the exclusion");
+        assert_ne!(target, entry_id, "entry hop excluded");
+        assert_ne!(target, exit_id, "remembered exit hop still excluded");
+        assert_eq!(target, spare_id, "only the non-hop spare remains");
+
+        // End-to-end: deactivate with the chain still the current exit — the
+        // remembered exit hop must NOT win; the spare must.
+        store.settings.current_node_id =
+            Some(crate::domain::chain_virtual_node_id(&chain_id));
+        let fallback = store
+            .chain_exit_fallback_target()
+            .expect("fallback must resolve");
+        assert_eq!(fallback, spare_id);
+        assert!(store.find_node(&fallback).is_some(), "plain node, not virtual");
     }
 
     #[test]

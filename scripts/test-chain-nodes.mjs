@@ -1335,8 +1335,24 @@ test("E 回落单一来源：ensure_current_node_valid 与自动/手动停用共
     /pub fn auto_deactivate_dead_chain_exit\(&mut self\) -> Option<ChainExitDeath> \{[\s\S]*?\n    \}/,
   )?.[0];
   assert.ok(auto, "auto_deactivate_dead_chain_exit 缺失");
-  assert.match(auto, /self\.chain_exit_fallback_target_in\(&enabled\)/);
+  // 返修③: 自动停用走单源包装 chain_exit_fallback_target()（链出口时排除
+  // 该链全部跳），不再绕过包装直调 _in。
+  assert.match(auto, /self\.chain_exit_fallback_target\(\)/);
   assert.match(auto, /self\.remember_current_node\(\)/);
+  // 返修③: 排除逻辑单源在 chain_exit_fallback_target_in_excluding_chain，
+  // 收集被停链全部 ChainHop::Node 的 node_id 后从候选宇宙剔除。
+  const excl = store.match(
+    /pub fn chain_exit_fallback_target_in_excluding_chain\([\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(excl, "chain_exit_fallback_target_in_excluding_chain 缺失");
+  assert.match(excl, /ChainHop::Node \{ node_id \} => Some\(node_id\.as_str\(\)\)/);
+  assert.match(excl, /!excluded\.contains\(node\.id\.as_str\(\)\)/);
+  // 单源包装：当前出口是链时走排除版，否则走原版——手动/自动停用共用。
+  const wrapper = store.match(
+    /pub fn chain_exit_fallback_target\(&self\)[\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(wrapper, "chain_exit_fallback_target 缺失");
+  assert.match(wrapper, /chain_exit_fallback_target_in_excluding_chain\(&enabled, chain_id\)/);
   // 手动停用命令走 state 侧包装 + 标准选点热路径（select_current_node_serialized），
   // 非链出口返回 None 幂等。
   const manual = state.match(
