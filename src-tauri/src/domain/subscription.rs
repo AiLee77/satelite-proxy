@@ -405,6 +405,11 @@ pub struct SubscriptionDetail {
     /// Custom User-Agent for URL fetches (empty = built-in default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    /// 该订阅最后一次选中的节点 id（`selected_nodes_by_subscription` 的读取面，
+    /// 链「停用」回落用它对齐后端 `ensure_current_node_valid` 的同款优先级）。
+    /// Additive 字段：serde default + 不选中不序列化，旧客户端零感知。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_node_id: Option<String>,
 }
 
 impl Subscription {
@@ -475,6 +480,7 @@ impl Subscription {
             auto_update_interval_min: self.auto_update_interval_min.max(1),
             traffic: self.traffic.clone(),
             user_agent: self.user_agent.clone(),
+            current_node_id: None,
         };
         match &self.source {
             SubscriptionSource::Url { url } => SubscriptionDetail {

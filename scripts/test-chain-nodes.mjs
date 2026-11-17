@@ -538,3 +538,83 @@ test("G5 Rust 契约锚：builder 原生 arm、store 动态成员表、三入口
     assert.equal(hits, 2, `i18n key ${key} must appear exactly twice (en + zh)`);
   }
 });
+
+// ── H 批：链停用 / 出口探测 / 失效标记 ─────────────────────────────────
+
+test("H链停用：回落优先级镜像 ensure_current_node_valid，与启用同款重启/生成时序", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  // 停用按钮与「使用中」徽标并置（isActive 分支、同位同风格）。
+  assert.match(page, /function deactivateChainExit\(/);
+  assert.match(page, /className="chain-exit-btn chain-exit-stop"/);
+  assert.match(css, /\.chain-exit-btn\.chain-exit-stop \{/);
+  // 回落优先级：启用订阅的记忆节点（detail.current_node_id）→ 启用宇宙首节点
+  // → 空宇宙明确报错不动作。
+  assert.match(page, /if \(!s\.enabled\) continue;/);
+  assert.match(page, /getSubscription\(s\.id\)\.catch\(\(\) => null\)/);
+  assert.match(page, /detail\?\.current_node_id/);
+  assert.match(page, /enabledUniverse\(nodes\)/);
+  assert.match(page, /universe\.find\(\(n\) => remembered\.has\(n\.id\)\)/);
+  assert.match(page, /universe\[0\] \?\? null/);
+  assert.match(page, /chain\.stopNoNode/);
+  // 停用体与启用同款「写 → 等待重启 / 预生成配置」序（setCurrentNode +
+  // waitForCoreRestart + generateSingboxConfig 均在停用闭包内）。
+  const body = page.match(
+    /async function deactivateChainExit\(chainId: string\) \{[\s\S]*?\n  \}/,
+  )?.[0];
+  assert.ok(body, "deactivateChainExit 闭包缺失");
+  assert.match(body, /setCurrentNode\(target\.id\)/);
+  assert.match(body, /waitForCoreRestart\(\)/);
+  assert.match(body, /generateSingboxConfig\(\)/);
+  // i18n 双语。
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.stopExit", "Deactivate");
+  has("chain.stopNoNode", "No real node available to fall back to.");
+  has("chain.stopExit", "停用");
+  has("chain.stopNoNode", "没有可回落的普通节点（启用订阅的节点宇宙为空）。");
+  // 负断言：绝不引入 H1 前置系 API（封存分支的禁区）。
+  assert.doesNotMatch(page, /setNodeFront|listNodeFronts|front_node_id|frontNode/);
+});
+
+test("H链停用后端读取面：SubscriptionDetail.current_node_id 为 additive 字段", () => {
+  const domain = readFileSync(
+    new URL("../src-tauri/src/domain/subscription.rs", import.meta.url),
+    "utf8",
+  );
+  const commands = readFileSync(
+    new URL("../src-tauri/src/commands/subscription.rs", import.meta.url),
+    "utf8",
+  );
+  const types = readFileSync(
+    new URL("../src/types.ts", import.meta.url),
+    "utf8",
+  );
+  // serde default + 不选中不序列化——旧客户端零感知（additive 唯一后端改动）。
+  assert.match(
+    domain,
+    /#\[serde\(default, skip_serializing_if = "Option::is_none"\)\]\s*\n\s*pub current_node_id: Option<String>,/,
+  );
+  // to_detail 基座初始化为 None，记忆只在 get_subscription 按需填充。
+  assert.match(domain, /current_node_id: None,/);
+  assert.match(
+    commands,
+    /detail\.current_node_id = store\.selected_nodes_by_subscription\.get\(&id\)\.cloned\(\);/,
+  );
+  // TS 侧同字段（可选、旧后端响应允许缺省）。
+  assert.match(types, /current_node_id\?: string \| null;/);
+});

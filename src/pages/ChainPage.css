@@ -391,6 +391,11 @@
   pointer-events: none;
 }
 
+/* 停用：与启用同款 pill，与「使用中」徽标并置（同位同风格）。 */
+.chain-exit-btn.chain-exit-stop {
+  margin-left: 0.4rem;
+}
+
 .chain-exit-btn.unavailable {
   opacity: 0.55;
   cursor: default;

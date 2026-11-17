@@ -30,6 +30,7 @@ import {
   generateSingboxConfig,
   getProxyStatus,
   getSettings,
+  getSubscription,
   listChainNodes,
   listChains,
   listSubscriptions,
@@ -2115,6 +2116,45 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  /** 停用当前链出口：回落到普通节点。回落目标按后端
+   *  `ensure_current_node_valid` 的同款优先级取——启用订阅记住的节点 →
+   *  启用宇宙里的第一个真实节点；一个都没有（空宇宙）就明确报错不动作。
+   *  与「启用」同款「写 → 等待重启 / 预生成配置」序。 */
+  async function deactivateChainExit(chainId: string) {
+    if (activating) return;
+    setActivating(chainId);
+    setError(null);
+    try {
+      const subs = await listSubscriptions();
+      // `selected_nodes_by_subscription` 不在视图里——逐个拉 detail 拿记忆。
+      const remembered = new Set<string>();
+      for (const s of subs) {
+        if (!s.enabled) continue;
+        const detail = await getSubscription(s.id).catch(() => null);
+        if (detail?.current_node_id) remembered.add(detail.current_node_id);
+      }
+      const universe = enabledUniverse(nodes);
+      const target = universe.find((n) => remembered.has(n.id)) ?? universe[0] ?? null;
+      if (!target) {
+        throw new Error(t("chain.stopNoNode"));
+      }
+      await setCurrentNode(target.id);
+      if (active.running) {
+        const result = await waitForCoreRestart();
+        if (result !== "ready") {
+          throw new Error(t("settings.coreSwitchWaitFailed"));
+        }
+      } else {
+        await generateSingboxConfig();
+      }
+      setActive((a) => ({ ...a, currentNodeId: target.id }));
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setActivating(null);
+    }
+  }
+
   /** New chains have no id until saved — "Save & activate" resolves the
    *  freshly created chain by name from the reloaded list. */
   async function activateChainByName(name: string) {
@@ -2213,9 +2253,22 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                         {t("chain.hopsCount", { n: c.hops.length })}
                       </span>
                       {isActive ? (
-                        <span className="chain-exit-btn current" aria-disabled="true">
-                          {t("chain.inUse")}
-                        </span>
+                        <>
+                          <span className="chain-exit-btn current" aria-disabled="true">
+                            {t("chain.inUse")}
+                          </span>
+                          <button
+                            type="button"
+                            className="chain-exit-btn chain-exit-stop"
+                            disabled={isBusy}
+                            title={t("chain.stopExit")}
+                            onClick={() => void deactivateChainExit(c.id)}
+                          >
+                            {activating === c.id
+                              ? t("chain.activating")
+                              : t("chain.stopExit")}
+                          </button>
+                        </>
                       ) : singbox ? (
                         <button
                           type="button"

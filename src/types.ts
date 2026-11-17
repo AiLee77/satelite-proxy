@@ -176,6 +176,11 @@ export interface SubscriptionDetail {
   traffic?: SubscriptionTraffic | null;
   /** Custom User-Agent for URL fetches. Empty/absent = built-in default. */
   user_agent?: string | null;
+  /** Last selected real node id for this subscription (backend
+   *  `selected_nodes_by_subscription` read surface) — chain “deactivate”
+   *  uses it to mirror `ensure_current_node_valid`’s fallback priority.
+   *  Absent in older backend responses. */
+  current_node_id?: string | null;
 }
 
 export interface SubscriptionUrlEntry {
