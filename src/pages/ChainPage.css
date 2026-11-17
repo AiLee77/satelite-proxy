@@ -1050,6 +1050,10 @@
 .chain-pool-expand {
   flex: none;
   width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -1086,11 +1090,6 @@
 .chain-candidate-pool-row .chain-candidate-item.pool-drag {
   padding: 0.24rem 0.45rem;
   font-size: 0.78rem;
-}
-
-.chain-pool-expand {
-  width: 20px;
-  font-size: 9px;
 }
 
 .chain-pool-members {

@@ -1184,6 +1184,15 @@ test("B：候选行分隔与 hover 语义（hairline 行界 + 主色淡底 + 圆
 });
 
 test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // 钉住真实渲染组件：池行右侧展开/收起按钮用 .chain-pool-expand 类、
+  // ▴/▾ 箭头、由 expandedPoolId 控制——避免再次改错控件。
+  const render = page.match(/className="chain-pool-expand"[\s\S]{0,480}?\{expanded \? "▴" : "▾"\}/)?.[0] ?? "";
+  assert.ok(render, "chain-pool-expand 渲染缺失");
+  assert.match(render, /setExpandedPoolId\(expanded \? null : p\.id\)/);
   const css = readFileSync(
     new URL("../src/pages/ChainPage.css", import.meta.url),
     "utf8",
@@ -1193,6 +1202,10 @@ test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
   assert.match(rule, /border: none;/);
   assert.match(rule, /background: transparent;/);
   assert.match(rule, /width: 24px;/);
+  // icon-btn 口径补齐：高度 24px + 居中布局，且不再存在尾部覆写块。
+  assert.match(rule, /height: 24px;/);
+  assert.match(rule, /display: inline-flex;/);
+  assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*width: 20px;/);
   // hover：主色淡底（既有 --primary token）。
   assert.match(
     css,
