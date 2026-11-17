@@ -1101,6 +1101,10 @@ impl AppStore {
             .map(|entry| entry.node.id.clone())
             .collect();
         self.nodes.splice(insertion..insertion, replacement);
+        // 追加2：刷新替换旧节点后同步清扫显式池名单（必须在新节点 splice
+        // 之后——否则合法成员被误清）；也同时覆盖 persist_import_replacing
+        // 的替换删除（其 retain 之后再走本方法）。
+        self.sweep_explicit_pool_members();
         // Reset only this profile to subscription order; preserve other
         // profiles' relative custom order and keep manual nodes at the end.
         let mut order = Vec::new();
@@ -1314,6 +1318,8 @@ impl AppStore {
             return Err(AppError::NotFound(id.to_string()));
         }
         self.nodes.retain(|n| n.subscription_id != id);
+        // 追加2：订阅删除即同步清扫显式池名单。
+        self.sweep_explicit_pool_members();
         self.clear_node_customizations_for_subscription(id);
         if self.settings.runtime_source().singbox_id() == Some(id) {
             self.settings
@@ -1920,6 +1926,28 @@ impl AppStore {
         Ok(edited)
     }
 
+    /// 追加2（显式池悬空引用源头清理）：节点从存储消失后，同步把被删
+    /// id 从所有显式池成员名单中清除。单一收口 helper，全部节点消失路径
+    /// （delete_node/delete_nodes 循环、remove_subscription、upsert_subscription
+    /// 刷新替换——同时覆盖 persist_import_replacing 的替换删除）在各自删除
+    /// 之后调用；幂等（只清不在存储里的 id）。返回本次清除的条目数。
+    fn sweep_explicit_pool_members(&mut self) -> usize {
+        let live: std::collections::HashSet<&str> = self
+            .nodes
+            .iter()
+            .map(|stored| stored.node.id.as_str())
+            .collect();
+        let mut swept = 0;
+        for pool in &mut self.pools {
+            if let crate::domain::PoolMode::Explicit { node_ids } = &mut pool.mode {
+                let before = node_ids.len();
+                node_ids.retain(|id| live.contains(id.as_str()));
+                swept += before - node_ids.len();
+            }
+        }
+        swept
+    }
+
     pub fn delete_node(&mut self, id: &str) -> AppResult<ProxyNode> {
         let index = self
             .nodes
@@ -1941,6 +1969,8 @@ impl AppStore {
             subscription.node_count = subscription.node_count.saturating_sub(1);
         }
         self.ensure_current_node_valid();
+        // 追加2：删除即同步清扫显式池名单（delete_nodes 循环复用本路径）。
+        self.sweep_explicit_pool_members();
         Ok(stored.node)
     }
 
@@ -5885,6 +5915,67 @@ mod tests {
         assert_eq!(pruned, 2);
         assert!(matches!(&emptied.mode, PoolMode::Explicit { node_ids } if node_ids.is_empty()));
         assert!(store.pools.iter().any(|p| p.id == pool.id), "pool itself kept");
+    }
+
+    #[test]
+    /// 追加2：delete_node 同步清扫引用该节点的显式池名单（delete_nodes
+    /// 循环复用同一路径）。
+    fn delete_node_sweeps_explicit_pool_membership() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("alpha");
+        let a = sample_hy2("entry-1", "A");
+        let b = sample_hy2("entry-2", "B");
+        let (a_id, b_id) = (a.id.clone(), b.id.clone());
+        store.upsert_subscription(sub, vec![a, b]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![a_id.clone(), b_id.clone()],
+            },
+        );
+        store.pools.push(pool);
+        store.delete_node(&a_id).expect("delete");
+        let pool = &store.pools[0];
+        assert!(matches!(&pool.mode, PoolMode::Explicit { node_ids } if node_ids == &[b_id]));
+    }
+
+    #[test]
+    /// 追加2：remove_subscription 与订阅刷新替换（persist_import_replacing
+    /// 的存储层形态）同样清扫显式池名单。
+    fn removal_and_refresh_sweep_explicit_pool_membership() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub_a = sample_url_sub("alpha");
+        let sub_b = sample_url_sub("beta");
+        let a = sample_hy2("entry-1", "A");
+        let a_id = a.id.clone();
+        let b = sample_hy2("entry-2", "B");
+        let b_id = b.id.clone();
+        store.upsert_subscription(sub_a, vec![a]).unwrap();
+        store.upsert_subscription(sub_b, vec![b.clone()]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![a_id.clone(), b_id.clone()],
+            },
+        );
+        store.pools.push(pool.clone());
+
+        // 订阅删除：其节点从显式池名单同步清除。
+        store.remove_subscription("id-alpha").expect("remove");
+        assert!(matches!(&store.pools[0].mode, PoolMode::Explicit { node_ids } if node_ids == &[b_id.clone()]));
+
+        // 刷新替换：sub B 换内容后 entry-2 消失 → 名单再清扫（persist_import
+        // 的替换路径走的就是这条 upsert_subscription 路径）。换 server 才算
+        // 真实消失——同 server 同凭据的节点会被 identity 匹配收养并保留旧 id。
+        let mut fresh = sample_hy2("entry-9", "新");
+        fresh.server = "203.10.98.199".into();
+        let sub_b2 = sample_url_sub("beta");
+        store
+            .upsert_subscription(sub_b2, vec![fresh])
+            .expect("refresh replaces");
+        assert!(matches!(&store.pools[0].mode, PoolMode::Explicit { node_ids } if node_ids.is_empty()));
     }
 
     #[test]

@@ -1487,3 +1487,39 @@ test("追加1：前端提示通道——onSaved 携带 pruned，链页全局 not
   assert.match(messages, /"chain\.poolPruned": "「\{name\}」保存时已剔除 \{n\} 个失效节点",/);
 });
 
+// —— 追加件2：显式池悬空引用源头清理 ——
+test("追加2：sweep_explicit_pool_members 单一收口 + 三挂点（删除/订阅删除/刷新替换）", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  const sub = readFileSync(
+    new URL("../src-tauri/src/commands/subscription.rs", import.meta.url),
+    "utf8",
+  );
+  // 收口 helper 只清显式名单（keyword/subscription 模式不碰）。
+  assert.match(store, /fn sweep_explicit_pool_members\(&mut self\) -> usize \{/);
+  assert.match(store, /node_ids\.retain\(\|id\| live\.contains\(id\.as_str\(\)\)\);/);
+  // 挂点1：delete_node（delete_nodes 循环复用同一路径）。
+  assert.match(store, /self\.sweep_explicit_pool_members\(\);\s*\n\s*Ok\(stored\.node\)/);
+  // 挂点2：remove_subscription。
+  assert.match(store, /self\.nodes\.retain\(\|n\| n\.subscription_id != id\);\s*\n\s*\/\/ 追加2：订阅删除即同步清扫显式池名单。/);
+  // 挂点3：upsert_subscription 刷新替换——必须在新节点 splice 之后（否则合法
+  // 成员被误清）；persist_import_replacing 的替换删除由该挂点顺带覆盖。
+  assert.match(
+    store,
+    /self\.nodes\.splice\(insertion\.\.insertion, replacement\);\s*\n\s*\/\/ 追加2：刷新替换旧节点后同步清扫显式池名单/,
+  );
+  // persist_import_replacing 不直接清扫——依赖 upsert 挂点，零双份漂移。
+  assert.doesNotMatch(sub, /sweep_explicit_pool_members/);
+});
+
+test("追加2：Rust 新测试在位——自愈保存/删除清扫/订阅删除+刷新替换", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  assert.match(store, /fn update_pool_heals_dangling_explicit_members\(\)/);
+  assert.match(store, /fn delete_node_sweeps_explicit_pool_membership\(\)/);
+  assert.match(store, /fn removal_and_refresh_sweep_explicit_pool_membership\(\)/);
+});
