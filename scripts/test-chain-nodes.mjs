@@ -1151,6 +1151,40 @@ test("A：候选行圆点两态常驻（●/○），切换状态时行内零横
   assert.match(css, /\.chain-candidate-item\.on-canvas \{/);
 });
 
+test("B：候选行分隔与 hover 语义（hairline 行界 + 主色淡底 + 圆点点亮）", () => {
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const re = (src) => new RegExp(src);
+  // 分隔：候选节点行与池成员行都用 --border hairline，last-child 免责。
+  assert.match(
+    css,
+    re(
+      "\\.chain-candidate-item:not\\(:last-child\\),\\s*" +
+        "\\.chain-pool-member:not\\(:last-child\\) \\{\\s*border-bottom: 1px solid var\\(--border\\);",
+    ),
+  );
+  // hover：主色淡底（既有 --primary token，零新造色），两类行同口径。
+  assert.match(
+    css,
+    re(
+      "\\.chain-candidate-item:hover,\\s*\\.chain-pool-member:hover \\{\\s*" +
+        "background: color-mix\\(in srgb, var\\(--primary\\) 12%, transparent\\);",
+    ),
+  );
+  // hover 点亮常驻圆点：与 A 两态联动（空心 → 实心预演目标态）。
+  assert.match(
+    css,
+    re(
+      "\\.chain-candidate-item:hover > \\.chain-candidate-mark,\\s*" +
+        "\\.chain-pool-member:hover > \\.chain-candidate-mark \\{\\s*color: var\\(--primary\\);",
+    ),
+  );
+  // 负断言：旧的 accent-blue hover 已替换。
+  assert.doesNotMatch(css, /\.chain-candidate-item:hover \{[^}]*--accent-blue/);
+});
+
 // ===== E（链毕业批）：使用中链出口的存活破坏 → 自动停用回落 =====
 
 test("E 杀跳路径挂钩一览：九处入口都复检存活，delete_chain 靠既有守卫", () => {

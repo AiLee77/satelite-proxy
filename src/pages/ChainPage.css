@@ -978,7 +978,7 @@
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 0.4rem 0.5rem;
   font-size: 0.82rem;
   color: var(--text);
@@ -994,8 +994,22 @@
   cursor: grabbing;
 }
 
-.chain-candidate-item:hover {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+/* B 候选行分隔与 hover：hairline 分隔线显式行界（同 chain-pool-node-item
+   的 --border 口径、/last-child 免责）；hover 语义改主色淡底并配合 A 的
+   常驻圆点把空心 ○ 点亮成实心 ●——hover 即预演 on-canvas 目标态。 */
+.chain-candidate-item:not(:last-child),
+.chain-pool-member:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.chain-candidate-item:hover,
+.chain-pool-member:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.chain-candidate-item:hover > .chain-candidate-mark,
+.chain-pool-member:hover > .chain-candidate-mark {
+  color: var(--primary);
 }
 
 /* Pool candidates: the whole pool stays draggable, with an inline expander
