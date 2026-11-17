@@ -996,3 +996,53 @@ test("I8：启用链成功后自动测一次出口（仅内存结果区）", () 
   assert.match(probe, /await checkExitIp\(\)/);
   assert.match(probe, /setExitProbe\(\{ chainId, info, busy: false \}\)/);
 });
+test("I9：跳序规则——左→右即 1..N、新节点接尾、删中间跳自动重编号、连线对齐上游", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // (c) 删中间跳桥接：有效路径上删除选中跳后按路径序重连前驱→后继，
+  // 序号经 graphOrder 自动补位；图无效时退回原过滤行为。
+  const block = page.slice(page.indexOf("function removeSelected"));
+  assert.ok(block, "removeSelected 缺失");
+  assert.match(page, /function removeSelected\(\) \{/);
+  assert.match(
+    block,
+    /graphOrder && graphOrder\.length === flowNodes\.length && removed\.length > 0/,
+  );
+  assert.match(
+    block,
+    /setEdges\(keptIds\.slice\(1\)\.map\(\(id, i\) => hopEdge\(keptIds\[i\], id\)\)\)/,
+  );
+  assert.match(block, /setEdges\(\(cur\) => cur\.filter\(\(e\) => !e\.selected\)\)/);
+  // (a)/(b) 序号与追加语义锚：路径序即保存序，布局按序左→右，追加接尾。
+  assert.match(page, /position = \{ x: anchor\.position\.x \+ 320, y: anchor\.position\.y \};/);
+  assert.match(page, /position: \{ x: 40 \+ i \* 320, y: 60 \}/);
+  assert.match(page, /const ordered = hopsFromGraph\(flowNodes, edges\);/);
+  // (d) 连线校验与上游逐字一致（自环/平行/重复出边入边/闭环拒绝）。
+  assert.match(
+    page,
+    /if \(edges\.some\(\(e\) => e\.source === source && e\.target !== target\)\) return false;/,
+  );
+  assert.match(
+    page,
+    /if \(edges\.some\(\(e\) => e\.target === target && e\.source !== source\)\) return false;/,
+  );
+  // 上游仓库仅本机存在（/tmp/satelite-upstream-ref，只读）——不在时跳过对齐复核。
+  let upstream = "";
+  try {
+    upstream = readFileSync(
+      "/tmp/satelite-upstream-ref/src/pages/ChainPage.tsx",
+      "utf8",
+    );
+  } catch {
+    upstream = "";
+  }
+  if (upstream) {
+    assert.match(
+      upstream,
+      /if \(edges\.some\(\(e\) => e\.source === source && e\.target !== target\)\) return false;/,
+      "上游连线校验文本变化，需复核对齐",
+    );
+  }
+});

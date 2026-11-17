@@ -1412,8 +1412,25 @@ function ChainFlowEditor({
     });
   }
 
+  /** I9：删除选中跳时自动桥接——删中间跳把前驱直接连到后继，链保持
+   *  单线路径，序号从路径重派即自动补位（1..N 连续）；删首尾跳只移除
+   *  邻边。当前图无效（分支/环/断开）时退回原行为：只过滤选中节点/边，
+   *  修复留给用户自己接线（保持既有“需单线路径”校验语义）。序号口径不
+   *  变：路径序（hopsFromGraph）即保存序，画布布局自始按路径序左→右
+   *  排（load/append/tidy），故左→右即 1..N。 */
   function removeSelected() {
+    const removed = flowNodes.filter((n) => n.selected);
+    const removedIds = new Set(removed.map((n) => n.id));
     setFlowNodes((cur) => cur.filter((n) => !n.selected));
+    if (graphOrder && graphOrder.length === flowNodes.length && removed.length > 0) {
+      const keptIds = graphOrder
+        .map((o) => o.id)
+        .filter((id) => !removedIds.has(id));
+      // Reconnect the remaining hops in path order — always a simple path:
+      // in/out degrees stay <= 1 and the cycle check below can't loop.
+      setEdges(keptIds.slice(1).map((id, i) => hopEdge(keptIds[i], id)));
+      return;
+    }
     setEdges((cur) => cur.filter((e) => !e.selected));
   }
 
