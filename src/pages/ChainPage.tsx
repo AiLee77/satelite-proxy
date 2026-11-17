@@ -2273,6 +2273,26 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     return disabled.map(nameOf);
   }
 
+  /** I7: 复制链：后端新建链路（新 id）+ 名字加后缀，撞名时自动顺延
+   *  序号；跳引用原样拷贝（node/pool id 引用，不复制成员实体）；名字
+   *  标记为手动（不再跟随自动改名）。走现有 createChain 路径，不重启。 */
+  async function copyChain(chain: ProxyChain) {
+    const suffix = t("chain.copySuffix");
+    const trimmed = chain.name.trim();
+    const taken = new Set(chains.map((c) => c.name.toLowerCase()));
+    let name = `${trimmed}${suffix}`;
+    let i = 2;
+    while (taken.has(name.toLowerCase())) {
+      name = `${trimmed}${suffix}${i}`;
+      i += 1;
+    }
+    // 后端限 64 字，加后缀可能超长——只裁名字本体，不动后缀。
+    const base = Array.from(name).slice(0, 64).join("");
+    const created = await createChain(base, chain.hops.map((h) => ({ ...h })), true);
+    showNotice(t("chain.copiedNotice", { name: created.name }));
+    await reload();
+  }
+
   /** G1: select `chain:<id>` as the exit through the E2 channel — liveness
    *  checks and error text live in the backend (`select_chain_exit`), and
    *  chain outbounds only exist after a rebuild, so a running core always
@@ -2580,6 +2600,11 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                             key: "edit",
                             label: t("common.edit"),
                             onClick: () => setChainEditor({ chain: c }),
+                          },
+                          {
+                            key: "copy",
+                            label: t("chain.copyChain"),
+                            onClick: () => void copyChain(c),
                           },
                           {
                             key: "delete",

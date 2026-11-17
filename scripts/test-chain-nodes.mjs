@@ -942,3 +942,36 @@ test("I6：链卡每跳名字旁显示该节点最近延迟（纯显示）", () 
   assert.match(rule, /margin-left: 0\.3rem;/);
   assert.match(rule, /color: var\(--muted\);/);
 });
+test("I7：链卡菜单「复制」——新 id、名字加后缀、走现有新建链路径", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // 走 createChain（后端新 id），不走 update；名字加后缀、撞名顺延、
+  // 超 64 裁长度；name_manual: true 让复制件不跟随自动改名。
+  const block = page.slice(page.indexOf("async function copyChain"));
+  assert.ok(block, "copyChain 缺失");
+  assert.match(page, /async function copyChain\(chain: ProxyChain\)/);
+  assert.match(block, /t\("chain\.copySuffix"\)/);
+  assert.match(block, /while \(taken\.has\(name\.toLowerCase\(\)\)\)/);
+  assert.match(block, /Array\.from\(name\)\.slice\(0, 64\)\.join\(""\)/);
+  assert.match(block, /createChain\(base, chain\.hops\.map\(\(h\) => \(\{ \.\.\.h \}\)\), true\)/);
+  assert.match(block, /"chain\.copiedNotice", \{ name: created\.name \}/);
+  // 菜单项接在编辑与删除之间。
+  const menu = page.slice(page.indexOf('id={`chain-${c.id}`}'));
+  assert.match(menu, /key: "copy",\s*\n\s*label: t\("chain\.copyChain"\)/);
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  for (const key of ["chain.copyChain", "chain.copySuffix", "chain.copiedNotice"]) {
+    assert.ok(messages.includes(`"${key}"`), `missing i18n key: ${key}`);
+  }
+  // 后端 create_chain 语义未动（新 id + 重复名拒绝 + 64 字上限）。
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  assert.match(store, /eq_ignore_ascii_case\(name\)/);
+  assert.match(store, /name\.chars\(\)\.count\(\) > 64/);
+});
