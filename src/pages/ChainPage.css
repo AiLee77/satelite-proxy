@@ -396,6 +396,14 @@
   margin-left: 0.4rem;
 }
 
+/* 已失效：引用的节点/池已删除——红 pill 非交互，「使用」禁用，仅编辑可救。 */
+.chain-exit-btn.chain-exit-dead {
+  color: var(--danger);
+  border-color: var(--danger);
+  cursor: default;
+  pointer-events: none;
+}
+
 /* 出口探测：同款 pill 并置；结果行在卡头下方，失败红字。 */
 .chain-exit-btn.chain-exit-probe {
   margin-left: 0.4rem;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  chainHasDeadHop,
   chainPoolPreviewMembers,
   enabledUniverse,
   parseKeywords,
@@ -669,4 +670,91 @@ test("H出口探测：仅使用中可点，复用 checkExitIp 既有通道，结
   has("chain.probeIp", "出口 IP");
   has("chain.probeDirect", "（直连，未走代理）");
   has("chain.probeStoppedHint", "先启动代理：停核时检测走直连，不经过链出口。");
+});
+
+test("H已失效判定（纯函数）：任一跳引用已删除节点/池即失效；实体存在不算", () => {
+  const chain = (hops) => ({ hops });
+  const nodeIds = new Set(["n1", "n2"]);
+  const poolIds = new Set(["p1", "p2"]);
+  // 全部存在 → 不失效。
+  assert.equal(
+    chainHasDeadHop(
+      chain([{ kind: "node", node_id: "n1" }, { kind: "pool", pool_id: "p1" }]),
+      nodeIds,
+      poolIds,
+    ),
+    false,
+  );
+  // 节点跳引用已删除节点 → 失效。
+  assert.equal(
+    chainHasDeadHop(
+      chain([{ kind: "node", node_id: "n1" }, { kind: "node", node_id: "gone" }]),
+      nodeIds,
+      poolIds,
+    ),
+    true,
+  );
+  // 池跳引用已删除池 → 失效（与 stepper 逐跳 stale 同口径）。
+  assert.equal(
+    chainHasDeadHop(
+      chain([{ kind: "pool", pool_id: "p1" }, { kind: "pool", pool_id: "gone" }]),
+      nodeIds,
+      poolIds,
+    ),
+    true,
+  );
+  // 池存在（哪怕成员为空）→ 不失效：空池/订阅禁用等存活性问题交给后端点击报错。
+  assert.equal(
+    chainHasDeadHop(chain([{ kind: "pool", pool_id: "p2" }]), nodeIds, poolIds),
+    false,
+  );
+  // 空链无跳 → 不失效（后端「至少两跳」校验另管）。
+  assert.equal(chainHasDeadHop(chain([]), nodeIds, poolIds), false);
+});
+
+test("H已失效上卡：红 pill + 禁用「使用」，全量列表本地比对零新 IPC", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  // 本地比对：页面已加载的链详情 + 全量节点/池列表（list_chain_nodes 返回
+  // 全部存储节点，含禁用订阅成员——id 集绝不能取 enabledUniverse 子集）。
+  assert.match(page, /const dead = chainHasDeadHop\(c, nodeIdSet, poolIdSet\)/);
+  assert.match(page, /new Set\(nodes\.map\(\(n\) => n\.id\)\)/);
+  assert.match(page, /new Set\(pools\.map\(\(p\) => p\.id\)\)/);
+  // 卡上红 pill 徽标 + 「使用」按钮禁用（非 sing-box 的说明性徽标不变）。
+  assert.match(page, /className="chain-exit-btn chain-exit-dead"/);
+  assert.match(page, /title=\{t\("chain\.deadHint"\)\}/);
+  assert.match(page, /disabled=\{isBusy \|\| dead\}/);
+  // 「停用」不受失效影响——回落不依赖链有效性，救生通道保持可用。
+  const stopBtn =
+    page.match(/chain-exit-stop[\s\S]{0,900}?(?=chain-exit-probe)/s)?.[0] ?? "";
+  assert.match(stopBtn, /disabled=\{isBusy\}/);
+  // CSS：红 pill 非交互。
+  const dead = css.match(/\.chain-exit-btn\.chain-exit-dead \{[^}]*\}/s)?.[0] ?? "";
+  assert.ok(dead, "chain-exit-dead 规则缺失");
+  assert.match(dead, /color: var\(--danger\);/);
+  assert.match(dead, /pointer-events: none;/);
+  // i18n 双语。
+  const has = (key, value) => {
+    assert.ok(
+      messages.includes(`"${key}": "${value}"`),
+      `missing i18n: ${key}`,
+    );
+  };
+  has("chain.dead", "Invalid");
+  has(
+    "chain.deadHint",
+    "A hop references a node or pool that no longer exists — edit the chain to fix its hops.",
+  );
+  has("chain.dead", "已失效");
+  has("chain.deadHint", "链中引用的节点或节点池已不存在，请编辑修复各跳。");
 });

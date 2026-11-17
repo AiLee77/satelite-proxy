@@ -1,4 +1,4 @@
-import type { NodePool, PoolMode, ProxyNode } from "./types";
+import type { NodePool, PoolMode, ProxyChain, ProxyNode } from "./types";
 
 /** "Subscription currently enabled" mirror for the chain/pool editors.
  *
@@ -17,6 +17,23 @@ export function nodeEnabledInBuild(node: ProxyNode): boolean {
  * pool. */
 export function enabledUniverse(nodes: ProxyNode[]): ProxyNode[] {
   return nodes.filter(nodeEnabledInBuild);
+}
+
+/** Dead-reference check for a whole chain (card-level 「已失效」 badge): true
+ *  when any hop references an entity that no longer exists in the loaded
+ *  lists — a deleted node (node hop) or a deleted pool (pool hop).
+ *  Display-only mirror; the backend re-checks liveness at selection/build
+ *  time. Empty-but-existing pools and disabled-subscription nodes are NOT
+ *  dead — the referenced entities still exist (activation surfaces those
+ *  as backend errors instead). */
+export function chainHasDeadHop(
+  chain: Pick<ProxyChain, "hops">,
+  nodeIds: ReadonlySet<string>,
+  poolIds: ReadonlySet<string>,
+): boolean {
+  return chain.hops.some((hop) =>
+    hop.kind === "node" ? !nodeIds.has(hop.node_id) : !poolIds.has(hop.pool_id),
+  );
 }
 
 /** Whitespace-separated keyword list → trimmed non-empty tokens. */

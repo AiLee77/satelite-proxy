@@ -52,6 +52,7 @@ import { GlassSwitch } from "../components/GlassSwitch";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
 import {
+  chainHasDeadHop,
   chainPoolPreviewMembers,
   enabledUniverse,
   parseKeywords,
@@ -2043,6 +2044,10 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const poolById = useMemo(() => new Map(pools.map((p) => [p.id, p])), [pools]);
+  /** H③: id sets for the dead-reference check — memoized once per reload so
+   *  each card's check stays O(hops), never O(nodes) per card. */
+  const nodeIdSet = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
+  const poolIdSet = useMemo(() => new Set(pools.map((p) => p.id)), [pools]);
   /** Enabled-subscription universe — every keyword-style preview on this
    *  page (pool row counts, editor preimages, hop-card dot grids) mirrors
    *  the runtime's enabled-only keywords; explicit pools and chains keep
@@ -2285,6 +2290,11 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
               const isActive = active.currentNodeId === virtualId;
               const isBusy = activating != null;
               const singbox = active.coreType === "singbox";
+              // H③: any hop references a deleted node/pool — local check
+              // against the loaded lists, no extra IPC. Empty-but-existing
+              // pools are not dead (entities exist); liveness beyond
+              // existence still errors on click from the backend.
+              const dead = chainHasDeadHop(c, nodeIdSet, poolIdSet);
               // H②: reading for THIS card only — active chain, finished
               // probe, and not superseded by another chain's probe.
               const probeReading = (() => {
@@ -2320,6 +2330,15 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                       <span className="chain-row-meta">
                         {t("chain.hopsCount", { n: c.hops.length })}
                       </span>
+                      {dead && (
+                        <span
+                          className="chain-exit-btn chain-exit-dead"
+                          aria-disabled="true"
+                          title={t("chain.deadHint")}
+                        >
+                          {t("chain.dead")}
+                        </span>
+                      )}
                       {isActive ? (
                         <>
                           <span className="chain-exit-btn current" aria-disabled="true">
@@ -2360,7 +2379,8 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                         <button
                           type="button"
                           className="chain-exit-btn"
-                          disabled={isBusy}
+                          disabled={isBusy || dead}
+                          title={dead ? t("chain.deadHint") : undefined}
                           onClick={() => void activateChainById(c.id)}
                         >
                           {activating === c.id
