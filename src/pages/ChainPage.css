@@ -953,17 +953,24 @@
   opacity: 0.45;
 }
 
-/* Explicit in-chain marker for on-canvas rows: leading filled dot, same
-   size and semantic color as the nodes-list current-node dot
-   (node-select-dot: ● in --primary at 0.9rem). The sidebar rows stay
-   append-semantics (click = append hop, still draggable) — the mark only
-   says "this node is already a hop of the current chain". */
+/* In-chain state marker, always rendered (A 两态常驻): on-canvas rows lead
+   with a filled dot (same size/semantic color as the nodes-list current-node
+   dot: ● in --primary at 0.9rem), off-canvas rows keep a hollow ○ in --muted.
+   The mark is persistent in both states so names never shift horizontally
+   when a row's on-canvas status flips. Sidebar rows stay append-semantics
+   (click = append hop, still draggable) — the mark only says "already a
+   hop of the current chain" (filled) vs "not yet placed" (hollow). */
 .chain-candidate-item > .chain-candidate-mark,
 .chain-pool-member > .chain-candidate-mark {
   flex: none;
   padding-right: 0.25rem;
   font-size: 0.9rem;
   line-height: 1;
+  color: var(--muted);
+}
+
+.chain-candidate-item.on-canvas > .chain-candidate-mark,
+.chain-pool-member.on-canvas > .chain-candidate-mark {
   color: var(--primary);
 }
 

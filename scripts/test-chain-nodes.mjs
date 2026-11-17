@@ -1109,7 +1109,7 @@ test("K1：live 复现剧本（真 sing-box，CI --ignored）与单测双锚", (
   );
 });
 
-test("K2：链编辑器候选行 on-canvas 明确选中标记（行首圆点，与节点列表当前节点同口径）", () => {
+test("A：候选行圆点两态常驻（●/○），切换状态时行内零横移", () => {
   const page = readFileSync(
     new URL("../src/pages/ChainPage.tsx", import.meta.url),
     "utf8",
@@ -1118,23 +1118,36 @@ test("K2：链编辑器候选行 on-canvas 明确选中标记（行首圆点，�
     new URL("../src/pages/ChainPage.css", import.meta.url),
     "utf8",
   );
-  // 节点候选行 + 池成员行两处渲染都带 chain-candidate-mark（行首圆点 ●，
-  // aria-hidden —— 语义由既有 title 承载，不新增 i18n 键）。
+  // 节点候选行 + 池成员行两处渲染都带 chain-candidate-mark（两态恒渲染：
+  // on-canvas ● / off-canvas ○，aria-hidden —— 语义由既有 title 承载，
+  // 不新增 i18n 键）。A 常驻：标记不再受 onCanvas 门控。
   const occurrences = page.match(/chain-candidate-mark/g) ?? [];
   assert.ok(occurrences.length === 2, "候选行/池成员行标记渲染缺失");
-  assert.match(page, /\{onCanvas && \(\s*<span className="chain-candidate-mark"/);
-  const dots = page.match(/chain-candidate-mark[^●]{0,80}●/g) ?? [];
-  assert.ok(dots.length === 2, "两处标记都必须是实心圆点 ●");
-  // 样式：两处行类型共用，尺寸/语义色复用节点列表当前节点圆点
-  // （node-select-dot：● · --primary · 0.9rem）——同形态不新造语义。
+  assert.doesNotMatch(
+    page,
+    /\{onCanvas && \(\s*<span className="chain-candidate-mark"/,
+    "标记不得只在 on-canvas 态渲染",
+  );
+  const twoState = page.match(/\{onCanvas \? "●" : "○"\}/g) ?? [];
+  assert.ok(twoState.length === 2, "两处标记都必须是两态三元 ●/○");
+  // 样式：两处行类型共用，尺寸复用节点列表当前节点圆点
+  // （node-select-dot：0.9rem）；颜色两态——默认 ○ 用 --muted（既有 token，
+  // 零新造色），on-canvas 覆写为 --primary。
   assert.match(css, /\.chain-candidate-item > \.chain-candidate-mark,/);
   assert.match(css, /\.chain-pool-member > \.chain-candidate-mark \{/);
   const markRule =
     css.match(/\.chain-pool-member > \.chain-candidate-mark \{[^}]*\}/s)?.[0] ??
     "";
   assert.match(markRule, /font-size: 0\.9rem;/);
-  assert.match(markRule, /color: var\(--primary\);/);
-  // on-canvas 淡化保留，标记是补足而非替代。
+  assert.match(markRule, /color: var\(--muted\);/);
+  assert.match(
+    css,
+    new RegExp(
+      "\\.chain-candidate-item\\.on-canvas > \\.chain-candidate-mark,\\s*" +
+        "\\.chain-pool-member\\.on-canvas > \\.chain-candidate-mark \\{[^}]*var\\(--primary\\);",
+    ),
+  );
+  // on-canvas 整行淡化保留，标记是补足而非替代。
   assert.match(css, /\.chain-candidate-item\.on-canvas \{/);
 });
 
