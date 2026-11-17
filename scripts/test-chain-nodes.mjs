@@ -1082,6 +1082,18 @@ test("K1：live 复现剧本（真 sing-box，CI --ignored）与单测双锚", (
   assert.match(live, /select_current_node_serialized\("node-b", true, true\)/);
   assert.match(live, /chain_virtual_node_id\(&chain\.id\)/);
   assert.match(live, /chain_hop_outbound_tag\(&chain, 1\)/);
+  // 端口去写死：fixture 显式钉隔离临时端口（不占用、不依赖应用默认
+  // 2080/19090），并用「按配置端口新开的独立客户端」旁证补 PUT 打到的
+  // 是配置里的控制地址——非默认端口下剧本仍须全过。
+  assert.match(state, /fn reserve_loopback_port\(\) -> u16/);
+  assert.match(live, /store\.settings\.mixed_port = isolated_mixed_port;/);
+  assert.match(live, /store\.settings\.api_port = isolated_api_port;/);
+  assert.match(live, /fresh_selector_now = \|state: &AppState\|[\s\S]*?ClashApi::new\("127\.0\.0\.1", port, &secret\)/);
+  const freshAsserts = live.match(/fresh_selector_now\(&state\)/g) ?? [];
+  assert.ok(
+    freshAsserts.length >= 3,
+    "三次启动后都要用独立客户端旁证 selector 选择",
+  );
   // 纯函数双测：链选择产 PUT（末跳 tag）+ 失效/删除/kernel/xray 全跳过。
   assert.match(state, /fn chain_selector_sync_plan_targets_exit_hop_tag/);
   assert.match(

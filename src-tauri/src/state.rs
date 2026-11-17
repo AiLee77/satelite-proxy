@@ -737,7 +737,7 @@ mod kernel_selection_poll_tests {
         store
             .upsert_subscription(sub, vec![node("node-a"), node("node-b")])
             .expect("seed subscription");
-        let chain = crate::domain::ProxyChain {
+        let chain = ProxyChain {
             id: "chain-ab12".to_string(),
             name: "链".to_string(),
             hops: vec![
@@ -802,6 +802,17 @@ mod kernel_selection_poll_tests {
         assert!(generated_singbox_selector_sync_plan(&store, Some(api.clone())).is_none());
     }
 
+    /// Reserve an ephemeral loopback port by briefly binding it. The tiny
+    /// release→rebind race is covered by `ensure_listen_port_available`
+    /// pre-flight in start_proxy, which fails deterministically if the port
+    /// got grabbed in between.
+    fn reserve_loopback_port() -> u16 {
+        std::net::TcpListener::bind(("127.0.0.1", 0))
+            .and_then(|listener| listener.local_addr())
+            .map(|addr| addr.port())
+            .expect("reserve ephemeral loopback port")
+    }
+
     /// Repro of the chain-exit cache-override bug, against the real sing-box
     /// binary (CI-only, `--ignored`). sing-box's `cache_file` persists every
     /// live selector PUT and restores it on the next start whenever the
@@ -810,6 +821,13 @@ mod kernel_selection_poll_tests {
     /// [`generated_singbox_selector_sync_plan`]), a chain enabled through the
     /// restart path never becomes the runtime selection: the kernel keeps the
     /// previously hot-switched node and the exit IP shows the first hop.
+    ///
+    /// Ports: mixed/Clash API are explicitly pinned to reserved ephemeral
+    /// ports — never the app defaults (2080/19090) — so a busy default port
+    /// on the host cannot flake the scenario, and every selector assertion
+    /// below doubles as proof that the selector re-PUT targets the
+    /// *configured* control address: had it gone to the default API port,
+    /// the cache-restored tag would still be showing.
     #[test]
     #[ignore = "needs the bundled dev sing-box binary"]
     fn live_chain_selector_reselects_after_cache_restore() {
@@ -828,6 +846,8 @@ mod kernel_selection_poll_tests {
         let state = AppState::load(test_dir.clone(), None).expect("load test state");
         let (seed_store, chain) = chain_sync_plan_store();
         let chain_virtual = crate::domain::chain_virtual_node_id(&chain.id);
+        let isolated_mixed_port = reserve_loopback_port();
+        let isolated_api_port = reserve_loopback_port();
         state
             .with_store_mut(|store| {
                 store.settings = seed_store.settings.clone();
@@ -835,6 +855,8 @@ mod kernel_selection_poll_tests {
                 store.subscriptions.clone_from(&seed_store.subscriptions);
                 store.nodes = seed_store.nodes.clone();
                 store.settings.current_node_id = Some("node-a".into());
+                store.settings.mixed_port = isolated_mixed_port;
+                store.settings.api_port = isolated_api_port;
                 Ok(())
             })
             .expect("seed live store");
@@ -856,12 +878,38 @@ mod kernel_selection_poll_tests {
             api.proxy_group_now_with_timeout(MAIN_PROXY_GROUP, Duration::from_secs(5))
                 .expect("read selector now")
         };
+        // Independent witness: a *fresh* Clash API client built from the
+        // store's configured api_port/secret (nothing reused from the
+        // runtime). If the selector re-PUT were aimed anywhere else, these
+        // reads would still show the cache-restored stale tag.
+        let fresh_selector_now = |state: &AppState| {
+            let (port, secret) = state
+                .with_store(|store| {
+                    Ok((
+                        store.settings.api_port,
+                        store
+                            .settings
+                            .clash_api_secret
+                            .clone()
+                            .expect("api secret persisted after start"),
+                    ))
+                })
+                .expect("read api coordinates");
+            let api = crate::api::ClashApi::new("127.0.0.1", port, &secret);
+            api.proxy_group_now_with_timeout(MAIN_PROXY_GROUP, Duration::from_secs(5))
+                .expect("fresh client must reach the configured API port")
+        };
 
         // Start 1: default = node-a (config default, no cache yet).
         state.start_proxy(None, false).expect("start #1");
         assert_eq!(
             selector_now(&state).as_deref(),
             Some(node_tag("node-a").as_str())
+        );
+        assert_eq!(
+            fresh_selector_now(&state).as_deref(),
+            Some(node_tag("node-a").as_str()),
+            "fresh client at the configured API port must agree"
         );
 
         // Hot-switch to node-b: the live PUT lands in cache.db.
@@ -891,6 +939,11 @@ mod kernel_selection_poll_tests {
         state.start_proxy(None, false).expect("start #2");
         let exit_tag = crate::config::chain_hop_outbound_tag(&chain, 1);
         assert_eq!(selector_now(&state).as_deref(), Some(exit_tag.as_str()));
+        assert_eq!(
+            fresh_selector_now(&state).as_deref(),
+            Some(exit_tag.as_str()),
+            "chain re-PUT must land on the configured API port"
+        );
 
         // Deactivate-fallback: stop, fall back to a plain node (restart-
         // applied), start. cache.db now remembers the chain exit tag — it
@@ -907,6 +960,11 @@ mod kernel_selection_poll_tests {
         assert_eq!(
             selector_now(&state).as_deref(),
             Some(node_tag("node-a").as_str())
+        );
+        assert_eq!(
+            fresh_selector_now(&state).as_deref(),
+            Some(node_tag("node-a").as_str()),
+            "fallback re-PUT must land on the configured API port"
         );
 
         state.stop_proxy().expect("cleanup stop");
