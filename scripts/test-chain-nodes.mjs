@@ -850,3 +850,37 @@ test("链名自动跟随：name_manual additive 标记贯穿前后端，仅自�
   assert.match(page, /updateChain\(chain\.id, trimmed, hops, nameManual\)/);
   assert.match(page, /createChain\(trimmed, hops, nameManual\)/);
 });
+
+test("I4：启用链前自动补齐所需订阅（B/I 回归）", () => {
+  // 链出口要能生成，链的每一跳都得在启用宇宙里——启用链前先把所需订阅
+  // 逐跳收集并自动启用（复用 activateSubscription 现有路径，含 MIX
+  // toggle-on）；失败即中止本次链启用，成功以 notice 列出被启用的订阅名。
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  // 逐跳收集：node hop → 归属订阅；explicit 池 → 成员归属订阅；subscription
+  // 池 → 该订阅本身（成员列表为空也算需要）；keyword 池匹配启用宇宙，收集不到。
+  assert.match(page, /function requiredSubscriptionIds\(/);
+  assert.match(page, /nodeById\.get\(hop\.node_id\)\?\.subscription_id/);
+  assert.match(page, /required\.add\(pool\.mode\.subscription_id\)/);
+  assert.match(page, /keyword 池只匹配启用宇宙/);
+  // 启用链入口先补订阅，成功后列出被自动启用的订阅名。
+  assert.match(page, /await ensureChainSubscriptions\(chainId\)/);
+  assert.match(page, /"chain\.autoEnabledSubs", \{ names: autoEnabled\.join\("、"\) \}/);
+  // 非 Mix 互斥语义：链跨订阅时明确报错提示开 Mix，不静默禁用另一半。
+  assert.match(page, /peekSettings\(\)\?\.mix_mode \?\? false/);
+  assert.match(page, /"chain\.autoEnableNeedsMix"/);
+  // 启用后复查：仍有缺即中止报错（MIX 下“最后一个启用订阅”保护等回落）。
+  assert.match(page, /"chain\.autoEnableFailed"/);
+  // 停用链出口回落普通节点，不在补订阅路径上（deactivate 不禁用订阅）。
+  assert.ok(!/deactivateChainExit[\s\S]{0,200}?activateSubscription/.test(page));
+  // 双语键与后端无关（纯前端编排，select_chain_exit 语义未动）。
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  for (const key of ["chain.autoEnabledSubs", "chain.autoEnableNeedsMix", "chain.autoEnableFailed"]) {
+    assert.ok(messages.includes(`"${key}"`), `missing i18n key: ${key}`);
+  }
+});

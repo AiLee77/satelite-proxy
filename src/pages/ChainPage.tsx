@@ -27,6 +27,7 @@ import {
   deletePool,
   diagnoseChain,
   exportChainMihomoYaml,
+  activateSubscription,
   exportChainText,
   generateSingboxConfig,
   getProxyStatus,
@@ -99,6 +100,41 @@ function chainAutoLabel(
     .map((h) => hopLabel(h, nodeById, poolById).text)
     .join(" → ")
     .slice(0, 64);
+}
+
+/** I4: the subscriptions a chain's hops resolve to — activating a chain
+ *  auto-enables any of them that are still disabled through the existing
+ *  subscription activation path (MIX toggle-on included). Dead references
+ *  are skipped here: the backend liveness check in `select_chain_exit` is
+ *  the authority for hop errors. Keyword pools match the enabled-only
+ *  universe by design, so they can never *require* a disabled subscription;
+ *  subscription pools pin their target subscription even when its member
+ *  list is currently empty. */
+function requiredSubscriptionIds(
+  chain: ProxyChain,
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): Set<string> {
+  const required = new Set<string>();
+  for (const hop of chain.hops) {
+    if (hop.kind === "node") {
+      const sub = nodeById.get(hop.node_id)?.subscription_id;
+      if (sub) required.add(sub);
+    } else {
+      const pool = poolById.get(hop.pool_id);
+      if (!pool) continue;
+      if (pool.mode.mode === "subscription") {
+        required.add(pool.mode.subscription_id);
+      } else if (pool.mode.mode === "explicit") {
+        for (const id of pool.mode.node_ids) {
+          const sub = nodeById.get(id)?.subscription_id;
+          if (sub) required.add(sub);
+        }
+      }
+      // keyword 池只匹配启用宇宙——收集不到任何“被禁用却被需要”的订阅。
+    }
+  }
+  return required;
 }
 
 /** Mount-time name-follow sync: auto-named chains (name_manual === false,
@@ -2196,6 +2232,47 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     };
   }, []);
 
+  /** I4: 逐跳收集链所需订阅并自动启用仍在禁用态的那些；返回被自动启用
+   *  的订阅名（无需补齐时为空）。任一启用失败抛错中止。停用链出口不在此
+   *  处理——回落普通节点，不禁用任何订阅。 */
+  async function ensureChainSubscriptions(chainId: string): Promise<string[]> {
+    const chain = chains.find((c) => c.id === chainId);
+    if (!chain) return [];
+    const required = requiredSubscriptionIds(chain, nodeById, poolById);
+    if (required.size === 0) return [];
+    const subs = await listSubscriptions();
+    const nameOf = (id: string) => subs.find((s) => s.id === id)?.name ?? id;
+    const disabled = [...required].filter(
+      (id) => subs.find((s) => s.id === id)?.enabled === false,
+    );
+    if (disabled.length === 0) return [];
+    // 非 Mix 下 activateSubscription 是互斥路径（启用一个禁用其余）——链
+    // 跨订阅时绝不静默牺牲另一半，明确报错并提示开启 Mix。
+    const mix = peekSettings()?.mix_mode ?? false;
+    if (!mix && required.size > 1) {
+      throw new Error(
+        t("chain.autoEnableNeedsMix", {
+          names: [...required].map(nameOf).join("、"),
+        }),
+      );
+    }
+    for (const id of disabled) {
+      await activateSubscription(id);
+    }
+    // 启用路径可能因并发状态回落（如 MIX 下“最后一个启用订阅”保护），
+    // 复查一遍：仍有缺即中止，报错点名。
+    const after = await listSubscriptions();
+    const stuck = disabled.filter(
+      (id) => after.find((s) => s.id === id)?.enabled === false,
+    );
+    if (stuck.length > 0) {
+      throw new Error(
+        t("chain.autoEnableFailed", { names: stuck.map(nameOf).join("、") }),
+      );
+    }
+    return disabled.map(nameOf);
+  }
+
   /** G1: select `chain:<id>` as the exit through the E2 channel — liveness
    *  checks and error text live in the backend (`select_chain_exit`), and
    *  chain outbounds only exist after a rebuild, so a running core always
@@ -2207,6 +2284,15 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     setActivating(chainId);
     setError(null);
     try {
+      // I4: 先逐跳补齐链所需的订阅——没有它们链根本生成不出出口，后端
+      // 只会报「节点不存在」的死引用。缺的订阅走既有 activateSubscription
+      // 路径自动启用（Mix = toggle-on；非 Mix 会互斥地只留一个——链跨订阅时
+      // 提示开 Mix，不静默把另一半禁掉）。任一订阅启用失败即中止本次链
+      // 启用，报错点名；全部补齐后以成功 notice 列出被自动启用的订阅名。
+      const autoEnabled = await ensureChainSubscriptions(chainId);
+      if (autoEnabled.length > 0) {
+        showNotice(t("chain.autoEnabledSubs", { names: autoEnabled.join("、") }));
+      }
       await setCurrentNode(chainVirtualNodeId(chainId));
       if (active.running) {
         const result = await waitForCoreRestart();
