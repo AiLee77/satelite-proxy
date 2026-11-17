@@ -704,7 +704,9 @@ function PoolEditorModal({
    *  (raw config, contributes_nodes() == false) are filtered out. */
   subscriptions: SubscriptionView[];
   onClose: () => void;
-  onSaved: () => void;
+  /** 追加1：pruned = 后端保存时自动剔除的失效成员数（显式池悬空引用
+   *  自愈），0 = 无剔除；调用方据此提示「已剔除 N 个」。 */
+  onSaved: (pruned: number) => void;
 }) {
   const { t } = useI18n();
   const [name, setName] = useState(pool?.name ?? "");
@@ -788,11 +790,12 @@ function PoolEditorModal({
     setError(null);
     try {
       if (pool) {
-        await updatePool(pool.id, trimmed, poolMode);
+        const result = await updatePool(pool.id, trimmed, poolMode);
+        onSaved(result.pruned);
       } else {
         await createPool(trimmed, poolMode);
+        onSaved(0);
       }
-      onSaved();
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
@@ -2714,7 +2717,17 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
           keywordNodes={enabledNodes}
           subscriptions={subscriptions}
           onClose={() => setPoolEditor(null)}
-          onSaved={() => {
+          onSaved={(pruned) => {
+            // 追加1：悬空引用自愈提示——剔除计数随保存结果返回。
+            if (pruned > 0) {
+              showNotice(
+                t("chain.poolPruned", {
+                  name: poolEditor.pool?.name ?? poolEditor.pool?.id ?? "",
+                  n: pruned,
+                }),
+                3200,
+              );
+            }
             setPoolEditor(null);
             void reload();
           }}

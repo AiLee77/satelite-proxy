@@ -2468,7 +2468,7 @@ impl AppStore {
         id: &str,
         name: &str,
         mode: crate::domain::PoolMode,
-    ) -> AppResult<crate::domain::NodePool> {
+    ) -> AppResult<(crate::domain::NodePool, usize)> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::Config("节点池名称不能为空".into()));
@@ -2483,7 +2483,17 @@ impl AppStore {
         {
             return Err(AppError::Config(format!("已存在同名节点池「{name}」")));
         }
-        Self::validate_pool_mode(&mode, &self.nodes)?;
+        // 追加1：编辑保存不再整单拒绝——失效成员 id（存储里已不存在的）
+        // 自动剔除后正常保存，剔光则存为空池、不擅自删池。add（create_pool）
+        // 维持原校验不放松。Keyword / Subscription 模式语义不动（仍走
+        // validate_pool_mode）。
+        let (mode, pruned) = self.heal_explicit_pool_mode(mode);
+        // Keyword / Subscription 模式语义不动（仍走 validate_pool_mode）；
+        // healed 后的 Explicit 名单按构造已合法（空池在此合法），跳过校验。
+        match &mode {
+            crate::domain::PoolMode::Explicit { .. } => {}
+            _ => Self::validate_pool_mode(&mode, &self.nodes)?,
+        }
         let pool = self
             .pools
             .iter_mut()
@@ -2491,7 +2501,26 @@ impl AppStore {
             .ok_or_else(|| AppError::NotFound(id.to_string()))?;
         pool.name = name.to_string();
         pool.mode = mode;
-        Ok(pool.clone())
+        Ok((pool.clone(), pruned))
+    }
+
+    /// 追加1：显式池模式自愈——剔除成员名单里已不在存储中的失效 id；
+    /// 剔光得到合法空池（空池在生成层被跳过、链规则回落 direct，语义既有）。
+    /// 其他模式原样返回（pruned = 0）。
+    fn heal_explicit_pool_mode(
+        &self,
+        mode: crate::domain::PoolMode,
+    ) -> (crate::domain::PoolMode, usize) {
+        match mode {
+            crate::domain::PoolMode::Explicit { node_ids } => {
+                let (kept, pruned): (Vec<String>, Vec<String>) =
+                    node_ids.into_iter().partition(|id| {
+                        self.nodes.iter().any(|stored| stored.node.id == *id)
+                    });
+                (crate::domain::PoolMode::Explicit { node_ids: kept }, pruned.len())
+            }
+            other => (other, 0),
+        }
     }
 
     pub fn delete_pool(&mut self, id: &str) -> AppResult<()> {
@@ -5815,6 +5844,47 @@ mod tests {
             .expect("fallback must resolve");
         assert_eq!(fallback, spare_id);
         assert!(store.find_node(&fallback).is_some(), "plain node, not virtual");
+    }
+
+    #[test]
+    /// 追加1：显式池编辑保存自愈——失效成员 id 自动剔除后正常保存，不再
+    /// 整单报错；剔光存为合法空池；pruned 计数随结果返回。add 不放松。
+    fn update_pool_heals_dangling_explicit_members() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("alpha");
+        let node = sample_hy2("entry-1", "入口");
+        let node_id = node.id.clone();
+        store.upsert_subscription(sub, vec![node]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![node_id.clone(), "gone-1".into()],
+            },
+        );
+        store.pools.push(pool.clone());
+        let (saved, pruned) = store
+            .update_pool(&pool.id, "池", pool.mode.clone())
+            .expect("healed save must succeed");
+        assert_eq!(pruned, 1, "one dangling id pruned");
+        assert!(matches!(&saved.mode, PoolMode::Explicit { node_ids } if node_ids == &[node_id.clone()]));
+        // add（create_pool）维持原校验：失效 id 仍然拒绝。
+        assert!(store
+            .create_pool("新池", PoolMode::Explicit { node_ids: vec!["gone-1".into()] })
+            .is_err());
+        // 剔光 → 合法空池，不擅自删池。
+        let (emptied, pruned) = store
+            .update_pool(
+                &pool.id,
+                "池",
+                PoolMode::Explicit {
+                    node_ids: vec!["gone-1".into(), "gone-2".into()],
+                },
+            )
+            .expect("all-dangling save must land as empty pool");
+        assert_eq!(pruned, 2);
+        assert!(matches!(&emptied.mode, PoolMode::Explicit { node_ids } if node_ids.is_empty()));
+        assert!(store.pools.iter().any(|p| p.id == pool.id), "pool itself kept");
     }
 
     #[test]

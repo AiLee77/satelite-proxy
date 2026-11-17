@@ -949,6 +949,13 @@ export interface NodePool {
   mode: PoolMode;
 }
 
+/** update_pool 的返回：pool 为保存后的池，pruned = 保存时自动剔除的
+ *  失效成员数（显式池悬空引用自愈，0 = 无剔除/其他模式）。 */
+export interface UpdatePoolResult {
+  pool: NodePool;
+  pruned: number;
+}
+
 export type ChainHop =
   | { kind: "node"; node_id: string }
   | { kind: "pool"; pool_id: string };

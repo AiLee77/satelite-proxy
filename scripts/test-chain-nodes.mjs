@@ -1435,3 +1435,55 @@ test("E 双向新测试在位：活动链回落 / 非活动链不动 / live 计�
     /state::kernel_selection_poll_tests::live_deactivate_chain_exit_timing -- --ignored/,
   );
 });
+
+// —— 追加件1：显式池悬空引用编辑自愈 ——
+test("追加1：update_pool 自愈——失效成员剔除后保存，pruned 计数返回，add 不放松", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  const cmd = readFileSync(
+    new URL("../src-tauri/src/commands/chain.rs", import.meta.url),
+    "utf8",
+  );
+  // 存储层：heal 在 validate 之前，Explicit healed 结果跳过整单拒绝。
+  assert.match(store, /fn heal_explicit_pool_mode\(/);
+  assert.match(store, /let \(mode, pruned\) = self\.heal_explicit_pool_mode\(mode\);/);
+  assert.match(store, /crate::domain::PoolMode::Explicit \{ \.\. \} => \{\}/);
+  // update 返回 (pool, pruned)；create_pool（add）仍走 validate_pool_mode。
+  assert.match(store, /\) -> AppResult<\(crate::domain::NodePool, usize\)> \{/);
+  assert.match(
+    store,
+    /pub fn create_pool[\s\S]*?Self::validate_pool_mode\(&mode, &self\.nodes\)\?;/,
+  );
+  // 命令层：camelCase wire 返回结构。
+  assert.match(cmd, /pub struct UpdatePoolResult \{/);
+  assert.match(cmd, /pool: NodePool,/);
+  assert.match(cmd, /pruned: usize,/);
+  assert.match(cmd, /Ok\(UpdatePoolResult \{ pool, pruned \}\)/);
+});
+
+test("追加1：前端提示通道——onSaved 携带 pruned，链页全局 notice 展示，双语键在位", () => {
+  const page = readFileSync(root, "utf8");
+  const api = readFileSync(
+    new URL("../src/api.ts", import.meta.url),
+    "utf8",
+  );
+  const types = readFileSync(
+    new URL("../src/types.ts", import.meta.url),
+    "utf8",
+  );
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(page, /onSaved: \(pruned: number\) => void/);
+  assert.match(page, /const result = await updatePool\(pool\.id, trimmed, poolMode\);/);
+  assert.match(page, /onSaved\(result\.pruned\);/);
+  assert.match(page, /showNotice\(\s*t\("chain\.poolPruned", \{/);
+  assert.match(api, /invoke<UpdatePoolResult>\("update_pool"/);
+  assert.match(types, /export interface UpdatePoolResult \{/);
+  assert.match(messages, /"chain\.poolPruned": "\{name\}: pruned \{n\} missing node\(s\) on save",/);
+  assert.match(messages, /"chain\.poolPruned": "「\{name\}」保存时已剔除 \{n\} 个失效节点",/);
+});
+

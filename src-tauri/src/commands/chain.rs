@@ -97,6 +97,15 @@ pub fn create_pool(
         .map_err(|e| e.to_string())
 }
 
+/// 追加1：池编辑保存结果——`pruned` = 保存时自动剔除的失效成员数
+/// （悬空引用自愈），前端据此提示「已剔除 N 个失效节点」。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePoolResult {
+    pool: NodePool,
+    pruned: usize,
+}
+
 #[tauri::command(async)]
 pub fn update_pool(
     app: AppHandle,
@@ -104,8 +113,8 @@ pub fn update_pool(
     id: String,
     name: String,
     mode: PoolMode,
-) -> Result<NodePool, String> {
-    let pool = state
+) -> Result<UpdatePoolResult, String> {
+    let (pool, pruned) = state
         .with_store_mut(|store| store.update_pool(&id, &name, mode))
         .map_err(|e| e.to_string())?;
     // E (链毕业批)：清空/改写使用中链某跳引用的池同样算存活破坏。
@@ -113,7 +122,7 @@ pub fn update_pool(
     // A pool's membership feeds every chain/rule that references it —
     // always worth a restart, same as editing a rule set's keyword filter.
     apply_running(&app);
-    Ok(pool)
+    Ok(UpdatePoolResult { pool, pruned })
 }
 
 #[tauri::command(async)]

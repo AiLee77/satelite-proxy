@@ -34,6 +34,7 @@ import type {
   NodePool,
   PoolMode,
   ProxyChain,
+  UpdatePoolResult,
 } from "./types";
 import { trackCoreBusy } from "./coreBusy";
 
@@ -1014,7 +1015,7 @@ export function createPool(name: string, mode: PoolMode) {
 }
 
 export function updatePool(id: string, name: string, mode: PoolMode) {
-  return invoke<NodePool>("update_pool", { id, name, mode });
+  return invoke<UpdatePoolResult>("update_pool", { id, name, mode });
 }
 
 export function deletePool(id: string) {
