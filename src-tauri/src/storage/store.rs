@@ -1432,8 +1432,7 @@ impl AppStore {
         // Owned set: `&str` borrows of `out` would collide with the
         // `out.push` below (E0502 on CI run #6 — rustc held the immutable
         // borrows alive across the push).
-        let present: std::collections::HashSet<String> =
-            out.iter().map(|n| n.id.clone()).collect();
+        let present: std::collections::HashSet<String> = out.iter().map(|n| n.id.clone()).collect();
         for stored in &self.nodes {
             let id = stored.node.id.as_str();
             if !present.contains(id) && refs.contains(id) {
@@ -1655,18 +1654,14 @@ impl AppStore {
                         .any(|entry| &entry.subscription_id == sub_id && &entry.node.id == node_id)
             });
         let enabled = self.enabled_nodes();
-        let valid = self
-            .settings
-            .current_node_id
-            .as_ref()
-            .is_some_and(|id| {
-                match crate::domain::chain_id_from_virtual_node_id(id) {
-                    // A virtual chain entry stays valid while the chain
-                    // exists — subscription refreshes can never wash it away.
-                    Some(chain_id) => self.chains.iter().any(|chain| chain.id == chain_id),
-                    None => enabled.iter().any(|node| &node.id == id),
-                }
-            });
+        let valid = self.settings.current_node_id.as_ref().is_some_and(|id| {
+            match crate::domain::chain_id_from_virtual_node_id(id) {
+                // A virtual chain entry stays valid while the chain
+                // exists — subscription refreshes can never wash it away.
+                Some(chain_id) => self.chains.iter().any(|chain| chain.id == chain_id),
+                None => enabled.iter().any(|node| &node.id == id),
+            }
+        });
         if !valid {
             self.settings.current_node_id = self
                 .subscriptions
@@ -2440,6 +2435,7 @@ impl AppStore {
         &mut self,
         name: &str,
         hops: Vec<crate::domain::ChainHop>,
+        name_manual: Option<bool>,
     ) -> AppResult<crate::domain::ProxyChain> {
         let name = name.trim();
         if name.is_empty() {
@@ -2456,7 +2452,8 @@ impl AppStore {
             return Err(AppError::Config(format!("已存在同名链路「{name}」")));
         }
         self.validate_chain_hops(&hops)?;
-        let chain = crate::domain::ProxyChain::new(name, hops);
+        let mut chain = crate::domain::ProxyChain::new(name, hops);
+        chain.name_manual = name_manual;
         self.chains.push(chain.clone());
         Ok(chain)
     }
@@ -2466,6 +2463,7 @@ impl AppStore {
         id: &str,
         name: &str,
         hops: Vec<crate::domain::ChainHop>,
+        name_manual: Option<bool>,
     ) -> AppResult<crate::domain::ProxyChain> {
         let name = name.trim();
         if name.is_empty() {
@@ -2489,7 +2487,45 @@ impl AppStore {
             .ok_or_else(|| AppError::NotFound(id.to_string()))?;
         chain.name = name.to_string();
         chain.hops = hops;
+        if let Some(v) = name_manual {
+            chain.name_manual = Some(v);
+        }
         Ok(chain.clone())
+    }
+
+    /// Auto-follow rename (see `commands::rename_chain_auto`): ONLY auto-
+    /// named chains (`name_manual == Some(false)`) may move, and only to a
+    /// non-empty, ≤64-char name that doesn't collide with another chain.
+    /// Everything else — manual names, no-op renames, duplicates — returns
+    /// `Ok(None)` and leaves the store untouched. No restart: generated
+    /// configs reference chains by id, never by name.
+    pub fn rename_chain_auto(
+        &mut self,
+        id: &str,
+        name: &str,
+    ) -> AppResult<Option<crate::domain::ProxyChain>> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Ok(None);
+        }
+        let chain = self
+            .chains
+            .iter()
+            .find(|chain| chain.id == id)
+            .ok_or_else(|| AppError::NotFound(id.to_string()))?;
+        if !chain.is_name_auto() || chain.name == name {
+            return Ok(None);
+        }
+        if self
+            .chains
+            .iter()
+            .any(|chain| chain.id != id && chain.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(None);
+        }
+        let chain = self.chains.iter_mut().find(|chain| chain.id == id).unwrap();
+        chain.name = name.to_string();
+        Ok(Some(chain.clone()))
     }
 
     /// Chain ids this rule set effectively pins in the generated config —
@@ -5381,19 +5417,17 @@ mod tests {
                 exclude: vec![],
             },
         ));
-        store
-            .chains
-            .push(ProxyChain::new(
-                "Chain",
-                vec![
-                    ChainHop::Node {
-                        node_id: hop_a.id.clone(),
-                    },
-                    ChainHop::Node {
-                        node_id: exit_b.id.clone(),
-                    },
-                ],
-            ));
+        store.chains.push(ProxyChain::new(
+            "Chain",
+            vec![
+                ChainHop::Node {
+                    node_id: hop_a.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit_b.id.clone(),
+                },
+            ],
+        ));
 
         // Referenced-collection: chain node hops + explicit pool members,
         // nothing else (keyword pools and unreferenced nodes excluded).
@@ -5497,7 +5531,9 @@ mod tests {
         assert!(err.to_string().contains("当前出口"), "{err}");
         // …but after switching away to a real node it deletes cleanly.
         store.settings.current_node_id = Some(exit.id.clone());
-        store.delete_chain(&chain.id).expect("unselected chain deletes");
+        store
+            .delete_chain(&chain.id)
+            .expect("unselected chain deletes");
         assert!(store.chains.is_empty());
     }
 
@@ -6808,14 +6844,12 @@ mod tests {
         assert!(!map.contains_key("sub-deleted"));
         // Subscription pools must not widen chain-referenced ids (that
         // closure stays explicit-only by design).
-        store
-            .pools
-            .push(crate::domain::NodePool::new(
-                "订阅池",
-                crate::domain::PoolMode::Subscription {
-                    subscription_id: "sub-a".into(),
-                },
-            ));
+        store.pools.push(crate::domain::NodePool::new(
+            "订阅池",
+            crate::domain::PoolMode::Subscription {
+                subscription_id: "sub-a".into(),
+            },
+        ));
         assert!(store.chain_referenced_node_ids().is_empty());
     }
 
@@ -6848,6 +6882,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let err = store.delete_pool(&pool.id).unwrap_err();
@@ -6873,6 +6908,7 @@ mod tests {
                 vec![ChainHop::Node {
                     node_id: "n1".into(),
                 }],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("至少需要 2 跳"));
@@ -6894,6 +6930,7 @@ mod tests {
                         node_id: "does-not-exist".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点"));
@@ -6909,6 +6946,7 @@ mod tests {
                         pool_id: "pool-nope".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点池"));
@@ -6931,6 +6969,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         // The set must hold at least one effective rule: an empty set emits
@@ -6975,6 +7014,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
 
@@ -7036,6 +7076,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let chain_rule = |name: &str| {
@@ -7110,6 +7151,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let err = store
@@ -7124,10 +7166,75 @@ mod tests {
                         node_id: "gone".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点"));
         // Original hops must survive a rejected update.
         assert_eq!(store.chains[0].hops.len(), 2);
+    }
+
+    #[test]
+    fn rename_chain_auto_only_touches_auto_named_chains() {
+        use crate::domain::ChainHop;
+        let mut store = AppStore::default();
+        store.nodes.push(mk_stored_node("n1", "香港"));
+        store.nodes.push(mk_stored_node("n2", "日本"));
+        let hops = vec![
+            ChainHop::Node {
+                node_id: "n1".into(),
+            },
+            ChainHop::Node {
+                node_id: "n2".into(),
+            },
+        ];
+        let auto = store
+            .create_chain("香港 → 日本", hops.clone(), Some(false))
+            .unwrap();
+        let manual = store
+            .create_chain("我的链", hops.clone(), Some(true))
+            .unwrap();
+        let legacy = store.create_chain("旧链", hops, None).unwrap();
+
+        // Auto-named chains follow the fresh label.
+        let renamed = store
+            .rename_chain_auto(&auto.id, "新香港 → 新日本")
+            .unwrap()
+            .expect("auto chain should be renamed");
+        assert_eq!(renamed.name, "新香港 → 新日本");
+        assert_eq!(store.chains[0].name, "新香港 → 新日本");
+        // The marker survives (still follows on the next sync).
+        assert_eq!(store.chains[0].name_manual, Some(false));
+
+        // Manual and legacy (flag absent) names never move.
+        assert!(store
+            .rename_chain_auto(&manual.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .rename_chain_auto(&legacy.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+        assert_eq!(store.chains[1].name, "我的链");
+        assert_eq!(store.chains[2].name, "旧链");
+
+        // A would-be duplicate is a no-op, as are empty / over-long names.
+        assert!(store
+            .rename_chain_auto(&auto.id, "我的链")
+            .unwrap()
+            .is_none());
+        assert!(store.rename_chain_auto(&auto.id, "   ").unwrap().is_none());
+        let long: String = "名".repeat(65);
+        assert!(store.rename_chain_auto(&auto.id, &long).unwrap().is_none());
+        assert_eq!(store.chains[0].name, "新香港 → 新日本");
+
+        // No-op rename (same name) stays None — nothing to write.
+        assert!(store
+            .rename_chain_auto(&auto.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+
+        // Unknown chain id is an error, not a silent pass.
+        assert!(store.rename_chain_auto("chain-不存在", "x").is_err());
     }
 }

@@ -1029,12 +1029,36 @@ export function listChainUsage() {
   return invoke<Record<string, string[]>>("list_chain_usage");
 }
 
-export function createChain(name: string, hops: ChainHop[]) {
-  return invoke<ProxyChain>("create_chain", { name, hops });
+export function createChain(
+  name: string,
+  hops: ChainHop[],
+  nameManual?: boolean | null,
+) {
+  return invoke<ProxyChain>("create_chain", {
+    name,
+    hops,
+    nameManual: nameManual ?? null,
+  });
 }
 
-export function updateChain(id: string, name: string, hops: ChainHop[]) {
-  return invoke<ProxyChain>("update_chain", { id, name, hops });
+export function updateChain(
+  id: string,
+  name: string,
+  hops: ChainHop[],
+  nameManual?: boolean | null,
+) {
+  return invoke<ProxyChain>("update_chain", {
+    id,
+    name,
+    hops,
+    nameManual: nameManual ?? null,
+  });
+}
+
+/** 自动命名链的跟随改名：仅 name_manual=false 的链会改名；手动名/撞名/
+ *  空名一律不动（返回 null）。后端不重启——生成配置按 id 引用链。 */
+export function renameChainAuto(id: string, name: string) {
+  return invoke<ProxyChain | null>("rename_chain_auto", { id, name });
 }
 
 export function deleteChain(id: string) {

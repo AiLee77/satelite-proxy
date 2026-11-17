@@ -758,3 +758,69 @@ test("H已失效上卡：红 pill + 禁用「使用」，全量列表本地比�
   has("chain.dead", "已失效");
   has("chain.deadHint", "链中引用的节点或节点池已不存在，请编辑修复各跳。");
 });
+
+test("链名自动跟随：name_manual additive 标记贯穿前后端，仅自动名跟随、手动名永不覆盖", () => {
+  const page = readFileSync(
+    new URL("../src/pages/ChainPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const types = readFileSync(
+    new URL("../src/types.ts", import.meta.url),
+    "utf8",
+  );
+  const api = readFileSync(
+    new URL("../src/api.ts", import.meta.url),
+    "utf8",
+  );
+  const lib = readFileSync(
+    new URL("../src-tauri/src/lib.rs", import.meta.url),
+    "utf8",
+  );
+  const domain = readFileSync(
+    new URL("../src-tauri/src/domain/chain.rs", import.meta.url),
+    "utf8",
+  );
+  const commands = readFileSync(
+    new URL("../src-tauri/src/commands/chain.rs", import.meta.url),
+    "utf8",
+  );
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  // Rust：additive 可选字段（宽容读取 + None 不落盘），缺省视作手动名。
+  assert.match(
+    domain,
+    /#\[serde\(default, skip_serializing_if = "Option::is_none"\)\]\s*\n\s*pub name_manual: Option<bool>/,
+  );
+  assert.match(
+    domain,
+    /fn is_name_auto\(&self\) -> bool \{\s*self\.name_manual == Some\(false\)\s*\}/,
+  );
+  // store：仅自动名跟随；手动名/撞名/空名/超长一律 Ok(None) 不动库。
+  assert.match(store, /fn rename_chain_auto\(/);
+  assert.match(store, /if !chain\.is_name_auto\(\) \|\| chain\.name == name \{\s*return Ok\(None\);/);
+  assert.match(store, /chain\.id != id && chain\.name\.eq_ignore_ascii_case\(name\)/);
+  // 命令注册 + 实现 + create/update 携带来源标记。
+  assert.match(lib, /commands::rename_chain_auto,/);
+  assert.match(commands, /pub fn rename_chain_auto\(/);
+  assert.match(commands, /store\.rename_chain_auto\(&id, &name\)/);
+  assert.match(commands, /store\.create_chain\(&name, hops, name_manual\)/);
+  assert.match(commands, /store\.update_chain\(&id, &name, hops, name_manual\)/);
+  // 前端类型与桥。
+  assert.match(types, /name_manual\?: boolean \| null;/);
+  assert.match(api, /invoke<ProxyChain \| null>\("rename_chain_auto"/);
+  assert.match(api, /nameManual: nameManual \?\? null/);
+  // ChainPage：加载时同步，同一套 chainAutoLabel 口径（card/editor/store 一致）。
+  assert.match(page, /function chainAutoLabel\(/);
+  assert.match(page, /syncAutoChainNames\(c, nodeMap, poolMap\)/);
+  assert.match(page, /await renameChainAuto\(chain\.id, label\)/);
+  // 仅 name_manual === false 跟随；含失效跳的链保持原名（避免回退成 id 标签）。
+  assert.match(page, /if \(chain\.name_manual !== false\) continue;/);
+  assert.match(page, /hopLabel\(h, nodeById, poolById\)\.stale\)\) continue;/);
+  // 编辑器：脏标记从 name_manual 初始化，保存时持久化，自动名链在编辑器内继续跟随。
+  assert.match(page, /chain\.name_manual !== false : false/);
+  assert.match(page, /chain\.name_manual === false/);
+  assert.match(page, /updateChain\(chain\.id, trimmed, hops, nameManual\)/);
+  assert.match(page, /createChain\(trimmed, hops, nameManual\)/);
+});

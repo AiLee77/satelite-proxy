@@ -120,6 +120,24 @@ pub struct ProxyChain {
     /// single-hop chain is just a node/pool pin and should use `RuleTarget::Node`
     /// / `RuleTarget::Pool` directly instead.
     pub hops: Vec<ChainHop>,
+    /// Name-origin marker for the auto-follow sync: `Some(false)` = the
+    /// editor generated the name from the hops ("A → B") and the user never
+    /// typed into the field, so the UI keeps such names in sync when a hop
+    /// node/pool gets renamed (`rename_chain_auto`). `Some(true)` = hand-
+    /// edited, never rewritten. `None` = absent = chains created before the
+    /// flag existed — treated as manual so old names are never silently
+    /// changed. Pure metadata: generated configs reference chains by id,
+    /// so a rename never needs a core restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_manual: Option<bool>,
+}
+
+impl ProxyChain {
+    /// Auto-named chain: born from the graph's "A → B" label and never
+    /// hand-edited — the only kind the auto-follow sync is allowed to touch.
+    pub fn is_name_auto(&self) -> bool {
+        self.name_manual == Some(false)
+    }
 }
 
 impl ProxyChain {
@@ -129,6 +147,8 @@ impl ProxyChain {
             id,
             name: name.trim().to_string(),
             hops,
+            // Absent = legacy/manual default — see the field doc above.
+            name_manual: None,
         }
     }
 
@@ -172,7 +192,9 @@ mod tests {
         assert_eq!(wire["mode"], "subscription");
         assert_eq!(wire["subscription_id"], "sub-abc");
         let back: PoolMode = serde_json::from_value(wire).expect("deserialize");
-        assert!(matches!(back, PoolMode::Subscription { subscription_id } if subscription_id == "sub-abc"));
+        assert!(
+            matches!(back, PoolMode::Subscription { subscription_id } if subscription_id == "sub-abc")
+        );
     }
 
     #[test]

@@ -38,6 +38,7 @@ import {
   listPools,
   onProxySnapshot,
   peekSettings,
+  renameChainAuto,
   setCurrentNode,
   updateChain,
   updatePool,
@@ -82,6 +83,55 @@ function hopLabel(
   }
   const p = poolById.get(hop.pool_id);
   return p ? { text: p.name, stale: false } : { text: hop.pool_id, stale: true };
+}
+
+/** Auto-name label for a whole chain ("A → B → C") — the SAME derivation
+ *  the editor's live auto-name uses (hop labels in hop order joined with
+ *  " → "), so an auto-named chain stays spelt identically on the card, in
+ *  the editor field, and after the mount-time rename sync. Truncated to
+ *  the 64-char backend limit here; the backend re-checks either way. */
+function chainAutoLabel(
+  hops: ChainHop[],
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): string {
+  return hops
+    .map((h) => hopLabel(h, nodeById, poolById).text)
+    .join(" → ")
+    .slice(0, 64);
+}
+
+/** Mount-time name-follow sync: auto-named chains (name_manual === false,
+ *  never hand-edited) get their "A → B" label re-derived from the hops'
+ *  CURRENT node/pool names — a hop renamed in the NodesPage shows up on the
+ *  chain card without reopening the editor. All rewrites go through the
+ *  backend's rename_chain_auto (manual names, would-be duplicates and
+ *  empty results are no-ops there); chains with a stale hop keep their last
+ *  good name — regressing to a raw-id label would read worse. Best-effort:
+ *  any failure leaves the old name in place. */
+async function syncAutoChainNames(
+  list: ProxyChain[],
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): Promise<ProxyChain[]> {
+  let next: ProxyChain[] | null = null;
+  for (let i = 0; i < list.length; i++) {
+    const chain = list[i];
+    if (chain.name_manual !== false) continue;
+    if (chain.hops.some((h) => hopLabel(h, nodeById, poolById).stale)) continue;
+    const label = chainAutoLabel(chain.hops, nodeById, poolById);
+    if (!label || label === chain.name) continue;
+    try {
+      const updated = await renameChainAuto(chain.id, label);
+      if (updated) {
+        if (!next) next = [...list];
+        next[i] = updated;
+      }
+    } catch {
+      /* rename is best-effort — keep the old name on any failure */
+    }
+  }
+  return next ?? list;
 }
 
 /** Country code → localized region name — same recipe as the dashboard's
@@ -1826,10 +1876,15 @@ function ChainEditorModal({
   // error modal, so the user can just type the name and hit save again.
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [nameMissing, setNameMissing] = useState(false);
-  // New chains auto-name from the graph ("A → B → C") until the user edits
-  // the field; clearing it entirely resumes auto-generation. Existing chains
-  // never get their name touched.
-  const nameDirtyRef = useRef(chain != null);
+  // Name-origin tracking for the auto-follow sync: chains whose name was
+  // generated from the graph ("A → B → C", name_manual === false) keep
+  // auto-naming in the editor AND get re-derived on page load when a hop's
+  // node/pool was renamed elsewhere; typing into the field once pins the
+  // name (name_manual = true — never auto-rewritten again). Chains saved
+  // before the flag existed (name_manual undefined) count as manual so old
+  // names are never silently changed. Clearing the field resumes
+  // auto-generation.
+  const nameDirtyRef = useRef(chain != null ? chain.name_manual !== false : false);
   const handleAutoName = useCallback((label: string) => {
     if (nameDirtyRef.current) return;
     setName(label.slice(0, 64));
@@ -1862,10 +1917,17 @@ function ChainEditorModal({
     setError(null);
     try {
       const hops = ordered.map((o) => o.hop);
+      // Persist the name-origin marker for the mount-time rename sync:
+      // hand-edited → true (pinned), untouched generated name → false
+      // (keeps following node/pool renames; see syncAutoChainNames).
+      const nameManual =
+        chain != null
+          ? nameDirtyRef.current || chain.name_manual !== false
+          : nameDirtyRef.current;
       if (chain) {
-        await updateChain(chain.id, trimmed, hops);
+        await updateChain(chain.id, trimmed, hops, nameManual);
       } else {
-        await createChain(trimmed, hops);
+        await createChain(trimmed, hops, nameManual);
       }
       onSaved(trimmed);
     } catch (err) {
@@ -1912,7 +1974,16 @@ function ChainEditorModal({
             onSubmit={onSubmit}
             busy={busy}
             onClose={onClose}
-            autoName={chain ? undefined : handleAutoName}
+            autoName={
+              // Live-follow only while the name is still generated:
+              // untouched auto chains (name_manual === false) keep syncing in
+              // the field too; manual/legacy names and chains with a stale
+              // hop (whose label would regress to raw ids) never move.
+              (chain == null || chain.name_manual === false) &&
+              !chain?.hops.some((h) => hopLabel(h, nodeById, poolById).stale)
+                ? handleAutoName
+                : undefined
+            }
             onSaveActivate={onSaveActivate}
             onShareText={onShareText}
             onShareYaml={onShareYaml}
@@ -2073,8 +2144,14 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         listChainNodes(),
         listSubscriptions(),
       ]);
+      // 链名跟随：进入/刷新链页时，未手改过的链按当前节点/池现名重算
+      // 「A → B」——与编辑器内自动命名同一套 chainAutoLabel 口径，改库不
+      // 重启（生成配置按 id 引用链）。
+      const nodeMap = new Map(n.map((x) => [x.id, x]));
+      const poolMap = new Map(p.map((x) => [x.id, x]));
+      const synced = await syncAutoChainNames(c, nodeMap, poolMap);
       setPools(p);
-      setChains(c);
+      setChains(synced);
       setNodes(n);
       setSubscriptions(subs);
     } catch (err) {

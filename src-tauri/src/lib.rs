@@ -516,6 +516,7 @@ pub fn run() {
             commands::list_chain_usage,
             commands::create_chain,
             commands::update_chain,
+            commands::rename_chain_auto,
             commands::delete_chain,
             commands::export_chain_mihomo_yaml,
             commands::export_chain_text,

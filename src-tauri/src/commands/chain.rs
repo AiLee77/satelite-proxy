@@ -147,9 +147,10 @@ pub fn create_chain(
     state: State<'_, AppState>,
     name: String,
     hops: Vec<ChainHop>,
+    name_manual: Option<bool>,
 ) -> Result<ProxyChain, String> {
     state
-        .with_store_mut(|store| store.create_chain(&name, hops))
+        .with_store_mut(|store| store.create_chain(&name, hops, name_manual))
         .map_err(|e| e.to_string())
 }
 
@@ -160,12 +161,31 @@ pub fn update_chain(
     id: String,
     name: String,
     hops: Vec<ChainHop>,
+    name_manual: Option<bool>,
 ) -> Result<ProxyChain, String> {
     let chain = state
-        .with_store_mut(|store| store.update_chain(&id, &name, hops))
+        .with_store_mut(|store| store.update_chain(&id, &name, hops, name_manual))
         .map_err(|e| e.to_string())?;
     apply_running(&app);
     Ok(chain)
+}
+
+/// Auto-follow rename for editor-generated chain names ("A → B"): the UI
+/// recomputes the label from the hops' CURRENT node/pool names and pushes it
+/// here whenever a hop got renamed elsewhere. Only auto-named chains
+/// (`name_manual == Some(false)`) move — manual names, no-ops, invalid
+/// lengths and would-be duplicates are `Ok(None)` and leave the store
+/// untouched (the caller treats that as "keep the old name"). Deliberately
+/// NO restart: generated configs reference chains by id, not by name.
+#[tauri::command(async)]
+pub fn rename_chain_auto(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<Option<ProxyChain>, String> {
+    state
+        .with_store_mut(|store| store.rename_chain_auto(&id, &name))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -186,10 +206,7 @@ pub fn delete_chain(app: AppHandle, state: State<'_, AppState>, id: String) -> R
 /// exports — keyword pools are unrelated here (export rejects pool hops
 /// outright, see `build_mihomo_chain_export`).
 #[tauri::command(async)]
-pub fn export_chain_mihomo_yaml(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<String, String> {
+pub fn export_chain_mihomo_yaml(state: State<'_, AppState>, id: String) -> Result<String, String> {
     state
         .with_store(|store| {
             let chain = store

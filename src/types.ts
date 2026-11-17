@@ -962,6 +962,10 @@ export interface ProxyChain {
   id: string;
   name: string;
   hops: ChainHop[];
+  /** 名称来源标记（additive，旧后端可缺省）：false = 编辑器按跳生成的
+   *  「A → B」自动名且从未手改——UI 会随节点改名同步重算；true/缺省 =
+   *  手动命名，永不自动改写。纯元数据，生成配置按 id 引用链。 */
+  name_manual?: boolean | null;
 }
 
 export interface ChainHopDiag {

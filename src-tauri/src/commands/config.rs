@@ -61,10 +61,7 @@ pub(crate) fn wire_node(mut node: ProxyNode) -> ProxyNode {
 /// core is sing-box AND the runtime source is generated — chains have no
 /// semantics under Xray/mihomo or custom configs. `query` (lowercased)
 /// matches the chain name only.
-fn chain_virtual_listed_nodes(
-    store: &crate::storage::AppStore,
-    query: &str,
-) -> Vec<ListedNode> {
+fn chain_virtual_listed_nodes(store: &crate::storage::AppStore, query: &str) -> Vec<ListedNode> {
     if crate::core::CoreKind::parse(store.settings.core_type.as_str())
         != crate::core::CoreKind::SingBox
         || store.settings.runtime_source().is_custom()
@@ -875,9 +872,9 @@ fn sort_listed_nodes(nodes: &mut [ListedNode], sort_mode: Option<&str>) {
     // nodes) the pre-existing per-mode order is preserved.
     let is_chain = |n: &ListedNode| n.chain_hops.is_some();
     match sort_mode {
-        Some("name") => nodes.sort_by_cached_key(|n| {
-            (!is_chain(n) as u8, n.node.name.to_lowercase())
-        }),
+        Some("name") => {
+            nodes.sort_by_cached_key(|n| (!is_chain(n) as u8, n.node.name.to_lowercase()))
+        }
         Some("latency") => nodes.sort_by(|a, b| {
             let score = |n: &ListedNode| match n.node.latency_ms {
                 Some(ms) => (0u8, ms as u64),
@@ -1159,19 +1156,18 @@ pub async fn generate_singbox_config(
             // disabled subscriptions alive; the mihomo/Xray branches below
             // share this tuple but have no chain-pool emission, so they keep
             // the plain enabled list and never see disabled nodes.
-            let (nodes, keyword_count) =
-                if crate::core::CoreKind::parse(&store.settings.core_type)
-                    == crate::core::CoreKind::SingBox
-                {
-                    (
-                        store.enabled_nodes_with_chain_refs(),
-                        store.enabled_nodes().len(),
-                    )
-                } else {
-                    let n = store.enabled_nodes();
-                    let count = n.len();
-                    (n, count)
-                };
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
                 nodes,
                 keyword_count,
@@ -1336,19 +1332,18 @@ pub async fn preview_singbox_config(
             // Same node-source split as `generate_singbox_config`: sing-box
             // carries chain-referenced nodes from disabled subscriptions,
             // mihomo/Xray keep the plain enabled list.
-            let (nodes, keyword_count) =
-                if crate::core::CoreKind::parse(&store.settings.core_type)
-                    == crate::core::CoreKind::SingBox
-                {
-                    (
-                        store.enabled_nodes_with_chain_refs(),
-                        store.enabled_nodes().len(),
-                    )
-                } else {
-                    let n = store.enabled_nodes();
-                    let count = n.len();
-                    (n, count)
-                };
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
                 nodes,
                 keyword_count,
@@ -1693,6 +1688,7 @@ mod tests {
                     node_id: "n2".to_string(),
                 },
             ],
+            name_manual: None,
         });
         // Default store = sing-box + generated: one virtual entry.
         let listed = chain_virtual_listed_nodes(&store, "");
@@ -1759,6 +1755,7 @@ mod tests {
                     node_id: "n2".to_string(),
                 },
             ],
+            name_manual: None,
         });
         let chain = chain_virtual_listed_nodes(&store, "").remove(0);
         // Fast real node first, chain entry last: latency mode must still
