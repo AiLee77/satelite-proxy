@@ -971,6 +971,125 @@ mod kernel_selection_poll_tests {
         let _ = std::fs::remove_dir_all(test_dir);
     }
 
+    /// F (链毕业批): segment timing of the two deactivation machinery
+    /// paths against the real sing-box binary (CI-only, `--ignored`) —
+    /// the data the 慢诊断 mandate asked for before any conclusion:
+    ///
+    /// * chain ENABLE while running = rebuild + restart (inherent cost,
+    ///   same machinery as every rule edit);
+    /// * chain DEACTIVATE while running = live selector PUT through the
+    ///   standard node-selection path — no restart — while the old H1
+    ///   frontend waited 30s for a "config-apply-status" event this hot
+    ///   path never emits and then reported a bogus failure;
+    /// * plain node hot-switch = the baseline for the deactivate PUT.
+    #[test]
+    #[ignore = "needs the bundled dev sing-box binary"]
+    fn live_deactivate_chain_exit_timing() {
+        use crate::core::CoreKind;
+        use std::time::Instant;
+
+        crate::core::find_bundled_core(None, CoreKind::SingBox)
+            .expect("bundled sing-box binary — run the fetch-bundled-core script");
+        let test_dir = std::env::temp_dir().join(format!(
+            "satelite-chain-deactivate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let state = AppState::load(test_dir.clone(), None).expect("load test state");
+        let (seed_store, chain) = chain_sync_plan_store();
+        let chain_virtual = crate::domain::chain_virtual_node_id(&chain.id);
+        let isolated_mixed_port = reserve_loopback_port();
+        let isolated_api_port = reserve_loopback_port();
+        state
+            .with_store_mut(|store| {
+                store.settings = seed_store.settings.clone();
+                store.chains = seed_store.chains.clone();
+                store.subscriptions.clone_from(&seed_store.subscriptions);
+                store.nodes = seed_store.nodes.clone();
+                store.settings.current_node_id = Some("node-a".into());
+                store.settings.mixed_port = isolated_mixed_port;
+                store.settings.api_port = isolated_api_port;
+                Ok(())
+            })
+            .expect("seed live store");
+        state.start_proxy(None, false).expect("start");
+
+        let selector_now = |state: &AppState| {
+            let api = state
+                .lock_runtime()
+                .clash_api_clone()
+                .expect("clash api must be up");
+            api.proxy_group_now_with_timeout(MAIN_PROXY_GROUP, Duration::from_secs(5))
+                .expect("read selector now")
+        };
+        let node_tag = |id: &str| {
+            state
+                .with_store(|store| {
+                    Ok(crate::config::outbound_tag(
+                        store.find_node(id).expect("seed node"),
+                    ))
+                })
+                .expect("node tag")
+        };
+
+        // Segment 1 — baseline: plain-node hot switch (single PUT).
+        let t = Instant::now();
+        let (_, restart_needed, selected_live) = state
+            .select_current_node_serialized("node-b", true, true)
+            .expect("baseline node switch");
+        let baseline_switch_ms = t.elapsed().as_millis();
+        assert!(!restart_needed);
+        assert!(selected_live, "baseline must hot-switch");
+        assert_eq!(selector_now(&state).as_deref(), Some(node_tag("node-b").as_str()));
+
+        // Segment 2 — chain enable while running: rebuild + restart (the
+        // enable side keeps its restart-applied semantics by design).
+        let t = Instant::now();
+        let (_, restart_needed, selected_live) = state
+            .select_current_node_serialized(&chain_virtual, true, true)
+            .expect("enable chain while running");
+        let enable_select_ms = t.elapsed().as_millis();
+        assert!(!selected_live, "chain selection is restart-applied");
+        assert!(restart_needed);
+        state.restart_proxy(None).expect("restart for chain enable");
+        let enable_total_ms = t.elapsed().as_millis();
+        let exit_tag = crate::config::chain_hop_outbound_tag(&chain, 1);
+        assert_eq!(selector_now(&state).as_deref(), Some(exit_tag.as_str()));
+
+        // Segment 3 — deactivate while running: hot PUT through the shared
+        // fallback priority, NO restart.
+        let t = Instant::now();
+        let outcome = state
+            .deactivate_chain_exit_serialized()
+            .expect("deactivate chain exit");
+        let deactivate_ms = t.elapsed().as_millis();
+        let (fallback_id, restart_needed) =
+            outcome.expect("chain was active; must deactivate");
+        // The baseline switch to node-b re-pointed the subscription's
+        // remembered slot, so the fallback target is node-b — exactly the
+        // shared priority (remembered beats first-node).
+        assert_eq!(fallback_id, "node-b", "remembered node wins the fallback");
+        assert!(!restart_needed, "hot path must not request a restart");
+        assert_eq!(selector_now(&state).as_deref(), Some(node_tag("node-b").as_str()));
+        // Idempotence: no chain exit anymore → no-op.
+        assert!(state
+            .deactivate_chain_exit_serialized()
+            .expect("second deactivate")
+            .is_none());
+
+        println!(
+            "deactivate-chain timing: baseline_node_switch={baseline_switch_ms}ms \
+             chain_enable_select={enable_select_ms}ms chain_enable_total(rebuild+restart)={enable_total_ms}ms \
+             deactivate_hot={deactivate_ms}ms"
+        );
+
+        state.stop_proxy().expect("cleanup stop");
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
     #[test]
     fn kernel_auto_manual_select_skips_live_put_and_flips_mode() {
         let test_dir = std::env::temp_dir().join(format!(
@@ -2088,6 +2207,10 @@ impl AppState {
         let source_changed = self.with_store_mut(|store| {
             prepare_profile_activation(&self.app_data_dir, resource_dir, store, id, was_running)
         })?;
+        // E (链毕业批): exclusive activation may disable the subscription
+        // that fed the current chain exit's hops — before the restart below
+        // rebuilds, so the rebuild already targets the fallback node.
+        auto_deactivate_dead_chain_exit(self);
         if source_changed && was_running {
             self.restart_proxy_inner(resource_dir)?;
         }
@@ -2792,6 +2915,43 @@ impl AppState {
         Ok((settings, restart_needed, selected_live))
     }
 
+    /// Manual chain-exit deactivation (H1 停用 button, F root-cause fix).
+    /// No-op unless the current exit really is a chain virtual id. Resolves
+    /// the fallback target with the single shared priority
+    /// (`chain_exit_fallback_target`) and applies it through the standard
+    /// node-selection path — live selector PUT while a sing-box/mihomo core
+    /// runs (NO restart, the old H1 frontend waited 30s for a
+    /// "config-apply-status" event this hot path never emits and then
+    /// reported a bogus failure), restart only for the no-live-API shapes
+    /// (kernel-auto group / Xray handover) the generic machinery flags.
+    /// Returns `None` when the current exit wasn't a chain, else the
+    /// (fallback node id, restart_needed) pair.
+    pub fn deactivate_chain_exit_serialized(
+        &self,
+    ) -> AppResult<Option<(String, bool)>> {
+        let is_chain = self.with_store(|store| {
+            Ok(store
+                .settings
+                .current_node_id
+                .as_deref()
+                .and_then(crate::domain::chain_id_from_virtual_node_id)
+                .is_some())
+        })?;
+        if !is_chain {
+            return Ok(None);
+        }
+        let target = self
+            .with_store(|store| Ok(store.chain_exit_fallback_target()))?
+            .ok_or_else(|| {
+                crate::error::AppError::Config(
+                    "启用订阅里没有可用节点，无法停用链出口".into(),
+                )
+            })?;
+        let (_, restart_needed, _) =
+            self.select_current_node_serialized(&target, true, true)?;
+        Ok(Some((target, restart_needed)))
+    }
+
     /// Select a virtual chain entry (`chain:<id>`) as the current exit. The
     /// chain's exit tag only joins the proxy selector after a config rebuild,
     /// so there is no live selector PUT — the standard restart path applies
@@ -3373,6 +3533,51 @@ pub fn emit_node_latency_changes(changes: &[NodeLatencyChange]) {
     if let Some(app) = APP_HANDLE.get() {
         use tauri::Emitter;
         let _ = app.emit(NODE_LATENCY_EVENT, changes.to_vec());
+    }
+}
+
+/// E (链毕业批): frontend payload for the "current chain exit was
+/// auto-deactivated" notice.
+pub const CHAIN_AUTO_DEACTIVATED_EVENT: &str = "chain-auto-deactivated";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainAutoDeactivatedEvent {
+    pub chain_id: String,
+    pub chain_name: String,
+    pub reason: String,
+}
+
+/// E (链毕业批): run after ANY mutation that can kill an active chain
+/// exit's hops — subscription disable (exclusive activation / mix-mode
+/// off), node delete, pool delete, subscription refresh. Re-checks every
+/// hop against the ENABLED universe (mirroring `ensure_chain_selectable`)
+/// and, on death, auto-deactivates through the existing fallback priority
+/// plus a user-visible notice. Callers already queue their own rebuild when
+/// running, so no restart is forced here — see AGENTS.md E 招板口径.
+pub fn auto_deactivate_dead_chain_exit(state: &AppState) {
+    let death = state
+        .with_store_mut(|store| Ok(store.auto_deactivate_dead_chain_exit()))
+        .ok()
+        .flatten();
+    let Some(death) = death else { return; };
+    app_log::info(
+        "chain",
+        format!(
+            "{}: 当前链出口已自动停用（{}）",
+            death.chain_name, death.reason
+        ),
+    );
+    if let Some(app) = APP_HANDLE.get() {
+        use tauri::Emitter;
+        let _ = app.emit(
+            CHAIN_AUTO_DEACTIVATED_EVENT,
+            ChainAutoDeactivatedEvent {
+                chain_id: death.chain_id.clone(),
+                chain_name: death.chain_name.clone(),
+                reason: death.reason.clone(),
+            },
+        );
     }
 }
 

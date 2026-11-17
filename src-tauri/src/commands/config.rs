@@ -723,6 +723,10 @@ pub fn delete_node(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
             Ok((node, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): deleting a hop node breaks the current chain exit —
+    // before the restart decisions below so any queued rebuild already
+    // targets the fallback node.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",
@@ -777,6 +781,9 @@ pub fn delete_nodes(
             Ok((deleted, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): batch delete can hit a hop node of the current chain
+    // exit — same hook as the single delete above.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",

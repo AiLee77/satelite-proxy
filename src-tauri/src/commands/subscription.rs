@@ -762,6 +762,9 @@ pub fn remove_subscription(
         .map_err(|e| e.to_string())?;
     crate::config::remove_custom_config(&state.app_data_dir, &id);
     crate::config::remove_raw_subscription(&state.app_data_dir, &id);
+    // E (链毕业批)：整订阅删除会带走其全部节点——若正被选中的链出口
+    // 某跳引用了这些节点，先自动停用回落再排重建。
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     queue_rebuild_if_enabled_set_changed(&app, &state, &before, "remove");
     Ok(())
 }
@@ -971,6 +974,10 @@ fn persist_import_replacing(
             Ok(result)
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): a refresh can wash away (or re-key) a hop node; the
+    // queued rebuild below regenerates with the fallback node when the
+    // auto-deactivation fired.
+    crate::state::auto_deactivate_dead_chain_exit(state);
     if let Some(body) = raw_body {
         if let Err(error) =
             crate::config::write_raw_subscription(&state.app_data_dir, &raw_id, &body)
@@ -1130,6 +1137,9 @@ pub fn set_mix_mode(
             Ok(store.settings.clone())
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): turning Mix off disables subscriptions that may feed the
+    // current chain exit's hops.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     queue_rebuild_if_enabled_set_changed(&app, &state, &before, "mix-mode");
     Ok(settings)
 }

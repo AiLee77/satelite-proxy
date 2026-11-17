@@ -568,7 +568,7 @@ test("G5 Rust 契约锚：builder 原生 arm、store 动态成员表、三入口
 
 // ── H 批：链停用 / 出口探测 / 失效标记 ─────────────────────────────────
 
-test("H链停用：回落优先级镜像 ensure_current_node_valid，与启用同款重启/生成时序", () => {
+test("F链停用：后端单源接管，热切不重启不串行拉 detail，停核同序预写配置", () => {
   const page = readFileSync(
     new URL("../src/pages/ChainPage.tsx", import.meta.url),
     "utf8",
@@ -585,25 +585,24 @@ test("H链停用：回落优先级镜像 ensure_current_node_valid，与启用�
   assert.match(page, /function deactivateChainExit\(/);
   assert.match(page, /className="chain-exit-btn chain-exit-stop"/);
   assert.match(css, /\.chain-exit-btn\.chain-exit-stop \{/);
-  // 回落优先级：启用订阅的记忆节点（detail.current_node_id）→ 启用宇宙首节点
-  // → 空宇宙明确报错不动作。
-  assert.match(page, /if \(!s\.enabled\) continue;/);
-  assert.match(page, /getSubscription\(s\.id\)\.catch\(\(\) => null\)/);
-  assert.match(page, /detail\?\.current_node_id/);
-  assert.match(page, /enabledUniverse\(nodes\)/);
-  assert.match(page, /universe\.find\(\(n\) => remembered\.has\(n\.id\)\)/);
-  assert.match(page, /universe\[0\] \?\? null/);
-  assert.match(page, /chain\.stopNoNode/);
-  // 停用体与启用同款「写 → 等待重启 / 预生成配置」序（setCurrentNode +
-  // waitForCoreRestart + generateSingboxConfig 均在停用闭包内）。
+  // F 根因修复：前端只调后端命令，不再镜像回落优先级——旧实现的串行
+  // 逐订阅 detail 拉取与 30s 死等（热路径永不发的重启事件）全部删掉。
   const body = page.match(
     /async function deactivateChainExit\(chainId: string\) \{[\s\S]*?\n  \}/,
   )?.[0];
   assert.ok(body, "deactivateChainExit 闭包缺失");
-  assert.match(body, /setCurrentNode\(target\.id\)/);
-  assert.match(body, /waitForCoreRestart\(\)/);
-  assert.match(body, /generateSingboxConfig\(\)/);
-  // i18n 双语。
+  assert.match(body, /deactivateChainExitCmd\(\)/);
+  assert.doesNotMatch(body, /listSubscriptions\(\)/);
+  assert.doesNotMatch(body, /getSubscription\(/);
+  assert.doesNotMatch(body, /setCurrentNode\(\)/);
+  // 热路径不重启：waitForCoreRestart 只在 restartNeeded 分支内，停核时
+  // 与标准选点流同序预写配置。
+  assert.match(body, /else if \(outcome\.restartNeeded\) \{/);
+  const restartMatch = body.match(/if \(outcome\.restartNeeded\) \{[\s\S]{0,200}waitForCoreRestart\(\)/);
+  assert.ok(restartMatch, "waitForCoreRestart 必须仅在 restartNeeded 分支");
+  assert.match(body, /if \(!active\.running\) \{[\s\S]{0,120}generateSingboxConfig\(\)/);
+  assert.match(body, /setActive\(\(a\) => \(\{ \.\.\.a, currentNodeId: outcome\.nodeId \}\)\)/);
+  // i18n 双语；stopNoNode 已成孤儿键随旧实现删除（负断言）。
   const has = (key, value) => {
     assert.ok(
       messages.includes(`"${key}": "${value}"`),
@@ -611,9 +610,8 @@ test("H链停用：回落优先级镜像 ensure_current_node_valid，与启用�
     );
   };
   has("chain.stopExit", "Deactivate");
-  has("chain.stopNoNode", "No real node available to fall back to.");
   has("chain.stopExit", "停用");
-  has("chain.stopNoNode", "没有可回落的普通节点（启用订阅的节点宇宙为空）。");
+  assert.ok(!messages.includes("chain.stopNoNode"), "stopNoNode 必须已删");
   // 负断言：绝不引入 H1 前置系 API（封存分支的禁区）。
   assert.doesNotMatch(page, /setNodeFront|listNodeFronts|front_node_id|frontNode/);
 });
@@ -1138,4 +1136,182 @@ test("K2：链编辑器候选行 on-canvas 明确选中标记（行首圆点，�
   assert.match(markRule, /color: var\(--primary\);/);
   // on-canvas 淡化保留，标记是补足而非替代。
   assert.match(css, /\.chain-candidate-item\.on-canvas \{/);
+});
+
+// ===== E（链毕业批）：使用中链出口的存活破坏 → 自动停用回落 =====
+
+test("E 杀跳路径挂钩一览：九处入口都复检存活，delete_chain 靠既有守卫", () => {
+  const hookRe =
+    /auto_deactivate_dead_chain_exit\(&?state\)|auto_deactivate_dead_chain_exit\(self\)/g;
+  const chain = readFileSync(
+    new URL("../src-tauri/src/commands/chain.rs", import.meta.url),
+    "utf8",
+  );
+  const config = readFileSync(
+    new URL("../src-tauri/src/commands/config.rs", import.meta.url),
+    "utf8",
+  );
+  const subscription = readFileSync(
+    new URL("../src-tauri/src/commands/subscription.rs", import.meta.url),
+    "utf8",
+  );
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  // 删池 ×1、编辑链 ×1、编辑池 ×1 —— 池/链编辑面同样能破坏存活。
+  assert.equal((chain.match(hookRe) ?? []).length, 3, "chain.rs 三处挂点");
+  // 删单节点 ×1、批量删 ×1。
+  assert.equal((config.match(hookRe) ?? []).length, 2, "config.rs 两处挂点");
+  // 互斥激活外的三条订阅路径：Mix 关闭、刷新/换源持久化、整订阅删除。
+  assert.equal(
+    (subscription.match(hookRe) ?? []).length, 3,
+    "subscription.rs 三处挂点",
+  );
+  // activate_subscription（互斥激活/停用）在 AppState 内部直呼 self。
+  assert.equal((state.match(hookRe) ?? []).length, 1, "state.rs 一处挂点");
+  // delete_chain 不挂：正被选中的链本就拒绝删除（既有守卫，见下方测试锚）。
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  assert.match(store, /当前出口/);
+});
+
+test("E 检测口径：enabled 宇宙上镜像 ensure_chain_selectable，门控与同步计划一致", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  const death = store.match(
+    /pub fn active_chain_exit_death\(\&self\) -> Option<ChainExitDeath> \{[\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(death, "active_chain_exit_death 缺失");
+  // 门控三件套镜像 generated_singbox_selector_sync_plan：sing-box 主核、
+  // 非 custom 来源、非 kernel 自动模式。
+  assert.match(death, /CoreKind::parse\(&self\.settings\.core_type\) != crate::core::CoreKind::SingBox/);
+  assert.match(death, /runtime_source\(\)\.is_custom\(\)/);
+  assert.match(death, /auto_select\.is_kernel\(\)/);
+  // 复检跑在 enabled 宇宙（比 build 宇宙更严：禁用源订阅即杀其跳），
+  // 且组域参数与 builder 语义同构。
+  assert.match(death, /let nodes = self\.enabled_nodes\(\);/);
+  assert.match(death, /let subscription_members = self\.enabled_subscription_member_ids\(\);/);
+  assert.match(death, /compute_sidecar_plan\(&self\.settings, &self\.chains, &nodes\)/);
+  assert.match(death, /ensure_chain_selectable\(/);
+});
+
+test("E 回落单一来源：ensure_current_node_valid 与自动/手动停用共用同一 helper", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  const chainCmd = readFileSync(
+    new URL("../src-tauri/src/commands/chain.rs", import.meta.url),
+    "utf8",
+  );
+  // 回落优先级只存在于 chain_exit_fallback_target_in 一处：记忆节点（启用
+  // 宇宙内）→ 首个启用节点；三处消费方全部走它，禁止第二套优先级。
+  const helper = store.match(
+    /pub fn chain_exit_fallback_target_in\([\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(helper, "chain_exit_fallback_target_in 缺失");
+  assert.match(helper, /filter\(\|sub\| sub\.enabled && sub\.source\.contributes_nodes\(\)\)/);
+  assert.match(helper, /\.find\(\|id\| enabled\.iter\(\)\.any\(\|node\| &node\.id == \*id\)\)/);
+  assert.match(helper, /or_else\(\|\| enabled\.first\(\)\.map\(\|node\| node\.id\.clone\(\)\)\)/);
+  const ensure = store.match(
+    /pub fn ensure_current_node_valid\(&mut self\) \{[\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(ensure, "ensure_current_node_valid 缺失");
+  assert.match(ensure, /self\.chain_exit_fallback_target_in\(&enabled\)/);
+  const auto = store.match(
+    /pub fn auto_deactivate_dead_chain_exit\(&mut self\) -> Option<ChainExitDeath> \{[\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(auto, "auto_deactivate_dead_chain_exit 缺失");
+  assert.match(auto, /self\.chain_exit_fallback_target_in\(&enabled\)/);
+  assert.match(auto, /self\.remember_current_node\(\)/);
+  // 手动停用命令走 state 侧包装 + 标准选点热路径（select_current_node_serialized），
+  // 非链出口返回 None 幂等。
+  const manual = state.match(
+    /pub fn deactivate_chain_exit_serialized\([\s\S]*?\n    \}/,
+  )?.[0];
+  assert.ok(manual, "deactivate_chain_exit_serialized 缺失");
+  assert.match(manual, /chain_exit_fallback_target\(\)/);
+  assert.match(manual, /select_current_node_serialized\(&target, true, true\)/);
+  assert.match(manual, /return Ok\(None\)/);
+  assert.match(chainCmd, /pub async fn deactivate_chain_exit|pub fn deactivate_chain_exit/);
+});
+
+test("E 用户提示：事件、全局通知与双语文案三段接线", () => {
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  const api = readFileSync(
+    new URL("../src/api.ts", import.meta.url),
+    "utf8",
+  );
+  const app = readFileSync(
+    new URL("../src/App.tsx", import.meta.url),
+    "utf8",
+  );
+  const appCss = readFileSync(
+    new URL("../src/App.css", import.meta.url),
+    "utf8",
+  );
+  const messages = readFileSync(
+    new URL("../src/i18n/messages.ts", import.meta.url),
+    "utf8",
+  );
+  // 后端：camelCase 事件载荷 + APP_HANDLE 发射 + 应用日志。
+  assert.match(state, /CHAIN_AUTO_DEACTIVATED_EVENT: &str = "chain-auto-deactivated"/);
+  assert.match(state, /#\[serde\(rename_all = "camelCase"\)\]\s*\n?pub struct ChainAutoDeactivatedEvent/);
+  assert.match(state, /pub fn auto_deactivate_dead_chain_exit\(state: &AppState\) \{[\s\S]{0,400}app_log::info\(/);
+  assert.match(state, /pub fn auto_deactivate_dead_chain_exit\(state: &AppState\) \{[\s\S]{0,700}emit\(\s*CHAIN_AUTO_DEACTIVATED_EVENT/);
+  // 前端桥：事件订阅 + 手动停用命令封装（F 根因修复的入口）。
+  assert.match(api, /export function onChainAutoDeactivated\(/);
+  assert.match(api, /listen<ChainAutoDeactivated>\("chain-auto-deactivated"/);
+  assert.match(api, /"deactivate_chain_exit"/);
+  // 全局通知挂在 AppShell（任何页面都可能触发，不只链页）。
+  assert.match(app, /onChainAutoDeactivated\(\(\{ chainName, reason \}\) =>/);
+  assert.match(app, /t\("chain\.autoDeactivated", \{ name: chainName, reason \}\)/);
+  assert.match(app, /className="chain-auto-toast"/);
+  assert.match(appCss, /\.chain-auto-toast \{/);
+  assert.match(appCss, /border-left: 3px solid var\(--danger\)/);
+  // 双语。
+  assert.match(
+    messages,
+    /"chain\.autoDeactivated": "Chain exit \\"{name}\\" was deactivated automatically: \{reason\}"/,
+  );
+  assert.match(
+    messages,
+    /"chain\.autoDeactivated": "代理链「\{name\}」已自动停用：\{reason\}"/,
+  );
+});
+
+test("E 双向新测试在位：活动链回落 / 非活动链不动 / live 计时剧本挂 ignored 清单", () => {
+  const store = readFileSync(
+    new URL("../src-tauri/src/storage/store.rs", import.meta.url),
+    "utf8",
+  );
+  const state = readFileSync(
+    new URL("../src-tauri/src/state.rs", import.meta.url),
+    "utf8",
+  );
+  const wf = readFileSync(
+    new URL("../.github/workflows/build-windows.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(store, /fn auto_deactivate_dead_chain_exit_when_hop_subscription_disabled\(\)/);
+  assert.match(store, /fn auto_deactivate_dead_chain_exit_ignores_inactive_chains\(\)/);
+  assert.match(store, /fn auto_deactivate_dead_chain_exit_covers_pool_and_empty_universe\(\)/);
+  // F live 计时剧本：真 sing-box 下分段测量（启用=重建+重启 vs 停用=热 PUT）。
+  assert.match(state, /fn live_deactivate_chain_exit_timing\(\)/);
+  assert.match(
+    wf,
+    /state::kernel_selection_poll_tests::live_deactivate_chain_exit_timing -- --ignored/,
+  );
 });

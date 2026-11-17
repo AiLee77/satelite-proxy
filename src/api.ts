@@ -1065,6 +1065,48 @@ export function deleteChain(id: string) {
   return invoke<void>("delete_chain", { id });
 }
 
+/** 手动停用当前链出口（F 根因修复）：回落优先级在后端单源维护
+ *  （与 ensure_current_node_valid 同源），运行中是热 PUT 不重启。返回
+ *  `{ nodeId, restartNeeded }`，或 null 表示当前出口本就不是链。 */
+export function deactivateChainExit() {
+  return invoke<{ nodeId: string; restartNeeded: boolean } | null>(
+    "deactivate_chain_exit",
+  );
+}
+
+/** E：后端自动停用了当前链出口（某跳存活条件被破坏）时的事件载荷。
+ *  reason 为后端中文文案（如「第 2 跳的节点不可用…」）。 */
+export interface ChainAutoDeactivated {
+  chainId: string;
+  chainName: string;
+  reason: string;
+}
+
+type ChainAutoDeactivatedListener = (payload: ChainAutoDeactivated) => void;
+const chainAutoDeactivatedListeners = new Set<ChainAutoDeactivatedListener>();
+let chainAutoDeactivatedListening = false;
+
+function ensureChainAutoDeactivatedListener(): void {
+  if (chainAutoDeactivatedListening) return;
+  chainAutoDeactivatedListening = true;
+  void listen<ChainAutoDeactivated>("chain-auto-deactivated", (event) => {
+    const payload = event.payload;
+    if (!payload) return;
+    for (const listener of chainAutoDeactivatedListeners) listener(payload);
+  });
+}
+
+/** 订阅链出口被自动停用事件；返回退订函数（同 onNodeLatencyChanged 模式）。 */
+export function onChainAutoDeactivated(
+  listener: ChainAutoDeactivatedListener,
+): () => void {
+  ensureChainAutoDeactivatedListener();
+  chainAutoDeactivatedListeners.add(listener);
+  return () => {
+    chainAutoDeactivatedListeners.delete(listener);
+  };
+}
+
 /** 导出单条链的独立 mihomo 配置：hop[i≥1].`dialer-proxy` = hop[i-1]，
  * 复现本应用 detour 接线的另一客户端可运行 YAML。池跳/失效引用/单跳/
  * mihomo 不支持协议在后端硬报错，不静默降级。 */

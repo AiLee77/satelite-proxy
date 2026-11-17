@@ -106,6 +106,15 @@ pub struct AppStore {
     retained_chains: Vec<Value>,
 }
 
+/// E (链毕业批): the current chain exit broke — emitted by
+/// [`AppStore::auto_deactivate_dead_chain_exit`] so the caller can notify.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChainExitDeath {
+    pub chain_id: String,
+    pub chain_name: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredNode {
     pub subscription_id: String,
@@ -1663,16 +1672,90 @@ impl AppStore {
             }
         });
         if !valid {
-            self.settings.current_node_id = self
-                .subscriptions
-                .iter()
-                .filter(|sub| sub.enabled && sub.source.contributes_nodes())
-                .filter_map(|sub| self.selected_nodes_by_subscription.get(&sub.id))
-                .find(|id| enabled.iter().any(|node| &node.id == *id))
-                .cloned()
-                .or_else(|| enabled.first().map(|node| node.id.clone()));
+            self.settings.current_node_id = self.chain_exit_fallback_target_in(&enabled);
         }
         self.remember_current_node();
+    }
+
+    /// Fallback target for leaving a chain exit (or any invalidated current
+    /// node): the enabled subscriptions' remembered node if it still lives in
+    /// the enabled universe, else the first enabled node. `None` = empty
+    /// universe. Single source shared by `ensure_current_node_valid`, the E
+    /// auto-deactivation and the manual deactivate command so no second
+    /// fallback priority can drift into existence.
+    pub fn chain_exit_fallback_target_in(
+        &self,
+        enabled: &[ProxyNode],
+    ) -> Option<String> {
+        self.subscriptions
+            .iter()
+            .filter(|sub| sub.enabled && sub.source.contributes_nodes())
+            .filter_map(|sub| self.selected_nodes_by_subscription.get(&sub.id))
+            .find(|id| enabled.iter().any(|node| &node.id == *id))
+            .cloned()
+            .or_else(|| enabled.first().map(|node| node.id.clone()))
+    }
+
+    /// Convenience wrapper resolving the enabled universe first — the exact
+    /// priority the H1 deactivate button and the E auto-deactivation use.
+    pub fn chain_exit_fallback_target(&self) -> Option<String> {
+        let enabled = self.enabled_nodes();
+        self.chain_exit_fallback_target_in(&enabled)
+    }
+
+    /// E (链毕业批): the current exit is a chain virtual id and one of its
+    /// hops' liveness broke. Liveness mirrors `ensure_chain_selectable` but
+    /// runs over the ENABLED universe — deliberately stricter than the
+    /// build universe: a disabled source subscription kills its hops too.
+    pub fn active_chain_exit_death(&self) -> Option<ChainExitDeath> {
+        // Gates mirror `generated_singbox_selector_sync_plan`: chains only
+        // exist under a sing-box generated profile, and kernel-auto owns the
+        // selection (the urltest group ignores current_node_id).
+        if crate::core::CoreKind::parse(&self.settings.core_type) != crate::core::CoreKind::SingBox
+            || self.settings.runtime_source().is_custom()
+            || self.settings.auto_select.is_kernel()
+        {
+            return None;
+        }
+        let chain_id = self
+            .settings
+            .current_node_id
+            .as_deref()
+            .and_then(crate::domain::chain_id_from_virtual_node_id)?;
+        let chain = self.chains.iter().find(|chain| chain.id == chain_id)?;
+        let nodes = self.enabled_nodes();
+        let keyword_eligible_count = nodes.len();
+        let subscription_members = self.enabled_subscription_member_ids();
+        let sidecar =
+            crate::runtime::compute_sidecar_plan(&self.settings, &self.chains, &nodes);
+        crate::config::ensure_chain_selectable(
+            chain,
+            &self.pools,
+            &nodes,
+            keyword_eligible_count,
+            &subscription_members,
+            sidecar.as_ref(),
+        )
+        .err()
+        .map(|error| ChainExitDeath {
+            chain_id: chain.id.clone(),
+            chain_name: chain.name.clone(),
+            reason: error.to_string(),
+        })
+    }
+
+    /// E (链毕业批): auto-deactivate the current chain exit when a hop's
+    /// liveness broke (source subscription disabled / hop node deleted /
+    /// hop pool deleted / subscription refresh washed the node away).
+    /// Re-uses `ensure_current_node_valid`'s fallback priority verbatim and
+    /// returns the death record for the user-visible notice. Non-active
+    /// chains are never touched here — they keep the H3 "已失效" badge only.
+    pub fn auto_deactivate_dead_chain_exit(&mut self) -> Option<ChainExitDeath> {
+        let death = self.active_chain_exit_death()?;
+        let enabled = self.enabled_nodes();
+        self.settings.current_node_id = self.chain_exit_fallback_target_in(&enabled);
+        self.remember_current_node();
+        Some(death)
     }
 
     /// New subscription: enable only when no other is enabled (or none exist).
@@ -5552,6 +5635,146 @@ mod tests {
             store.settings.current_node_id.as_deref(),
             Some(node.id.as_str())
         );
+    }
+
+    /// E (链毕业批) shared fixture: sub A (jump/entry hop), sub B (exit
+    /// hop), two-hop chain across them, chain exit currently selected.
+    fn chain_exit_death_store() -> (AppStore, String, String, String, String) {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let mut store = AppStore::default();
+        let sub_a = sample_url_sub("alpha");
+        let sub_b = sample_url_sub("beta");
+        let entry = sample_hy2("entry-1", "入口");
+        let exit = sample_hy2("exit-1", "出口");
+        store
+            .upsert_subscription(sub_a, vec![entry.clone()])
+            .unwrap();
+        store
+            .upsert_subscription(sub_b, vec![exit.clone()])
+            .unwrap();
+        let chain = ProxyChain::new(
+            "跨链",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let chain_id = chain.id.clone();
+        store.chains.push(chain);
+        store.settings.current_node_id =
+            Some(chain_virtual_node_id(&chain_id));
+        (
+            store,
+            chain_id,
+            entry.id,
+            exit.id,
+            "id-beta".to_string(),
+        )
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_when_hop_subscription_disabled() {
+        let (mut store, chain_id, entry_id, exit_id, sub_b) = chain_exit_death_store();
+        // Sanity: alive chain — no death, selection untouched.
+        assert!(store.active_chain_exit_death().is_none());
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(crate::domain::chain_virtual_node_id(&chain_id).as_str())
+        );
+
+        // The E 口径: disabling the exit hop's source subscription kills the
+        // active chain exit → auto-deactivate with the shared fallback
+        // priority (sub A's remembered node wins) + a death record for the
+        // user-visible notice.
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == sub_b)
+            .unwrap()
+            .enabled = false;
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("disabled exit-hop subscription must auto-deactivate");
+        assert_eq!(death.chain_id, chain_id);
+        assert!(death.reason.contains("第 2 跳"), "reason: {}", death.reason);
+        assert_eq!(store.settings.current_node_id.as_deref(), Some(entry_id.as_str()));
+        // The remembered-node slot was re-pointed at the fallback, not left
+        // on the virtual id.
+        assert!(!store
+            .selected_nodes_by_subscription
+            .values()
+            .any(|id| id.starts_with("chain:")));
+        assert!(store.find_node(&exit_id).is_some(), "node itself stays stored");
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_ignores_inactive_chains() {
+        // Non-active chain with the SAME broken hop shape: current is a plain
+        // node — the helper must stay a no-op (existing H3 badge territory).
+        let (mut store, _chain_id, _entry_id, exit_id, sub_b) = chain_exit_death_store();
+        store.settings.current_node_id = Some(exit_id.clone());
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == sub_b)
+            .unwrap()
+            .enabled = false;
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
+        assert_eq!(store.settings.current_node_id.as_deref(), Some(exit_id.as_str()));
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_covers_pool_and_empty_universe() {
+        use crate::domain::{ChainHop, NodePool, PoolMode};
+
+        // Pool hop deleted → death.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        let pool = NodePool {
+            id: "pool-1".into(),
+            name: "池".into(),
+            mode: PoolMode::Explicit {
+                node_ids: vec!["exit-1".into()],
+            },
+        };
+        store.pools.push(pool);
+        store.chains[0].hops[1] = ChainHop::Pool {
+            pool_id: "pool-1".into(),
+        };
+        store.pools.clear();
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("deleted hop pool must auto-deactivate");
+        assert!(death.reason.contains("第 2 跳"), "reason: {}", death.reason);
+
+        // Empty enabled universe: fallback clears the selection instead of
+        // pointing at nothing.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.subscriptions.iter_mut().for_each(|sub| sub.enabled = false);
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("all-hop-subscriptions disabled must auto-deactivate");
+        assert!(store.settings.current_node_id.is_none());
+        assert!(!death.reason.is_empty());
+
+        // New-policy mirrors the select-time gates: kernel-auto owns the
+        // group and chains are sing-box generated-profile only.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.settings.auto_select = crate::domain::AutoSelectMode::Kernel;
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == _sub_b)
+            .unwrap()
+            .enabled = false;
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.settings.core_type = "xray".into();
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
     }
 
     #[test]

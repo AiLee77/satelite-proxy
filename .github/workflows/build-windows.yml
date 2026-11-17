@@ -106,6 +106,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib config::mihomo::tests::live_exported_chain_config_validates -- --ignored
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib state::kernel_selection_poll_tests::live_chain_selector_reselects_after_cache_restore -- --ignored
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib state::kernel_selection_poll_tests::live_deactivate_chain_exit_timing -- --ignored
 
       - name: 构建便携版
         shell: pwsh

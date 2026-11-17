@@ -32,7 +32,7 @@ import {
   generateSingboxConfig,
   getProxyStatus,
   getSettings,
-  getSubscription,
+  deactivateChainExit as deactivateChainExitCmd,
   listChainNodes,
   listChains,
   listSubscriptions,
@@ -2361,38 +2361,29 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  /** 停用当前链出口：回落到普通节点。回落目标按后端
-   *  `ensure_current_node_valid` 的同款优先级取——启用订阅记住的节点 →
-   *  启用宇宙里的第一个真实节点；一个都没有（空宇宙）就明确报错不动作。
-   *  与「启用」同款「写 → 等待重启 / 预生成配置」序。 */
+  /** 停用当前链出口：回落到普通节点（F 根因修复）。回落优先级、
+   *  记忆节点与持久化全部由后端单源接管（`deactivate_chain_exit` →
+   *  `select_current_node_serialized`）——运行中的 sing-box/mihomo 是
+   *  热切 PUT，根本不重启；旧实现串行逐订阅拉 detail 再死等 30s
+   *  重启事件（热路径永不发）是纯浪费。停核时与标准选点流同序预写
+   *  配置；返回 null 表示当前出口已不是链（他处已停用），仅刷新。 */
   async function deactivateChainExit(chainId: string) {
     if (activating) return;
     setActivating(chainId);
     setError(null);
     try {
-      const subs = await listSubscriptions();
-      // `selected_nodes_by_subscription` 不在视图里——逐个拉 detail 拿记忆。
-      const remembered = new Set<string>();
-      for (const s of subs) {
-        if (!s.enabled) continue;
-        const detail = await getSubscription(s.id).catch(() => null);
-        if (detail?.current_node_id) remembered.add(detail.current_node_id);
-      }
-      const universe = enabledUniverse(nodes);
-      const target = universe.find((n) => remembered.has(n.id)) ?? universe[0] ?? null;
-      if (!target) {
-        throw new Error(t("chain.stopNoNode"));
-      }
-      await setCurrentNode(target.id);
-      if (active.running) {
-        const result = await waitForCoreRestart();
-        if (result !== "ready") {
-          throw new Error(t("settings.coreSwitchWaitFailed"));
+      const outcome = await deactivateChainExitCmd();
+      if (outcome) {
+        if (!active.running) {
+          await generateSingboxConfig();
+        } else if (outcome.restartNeeded) {
+          const result = await waitForCoreRestart();
+          if (result !== "ready") {
+            throw new Error(t("settings.coreSwitchWaitFailed"));
+          }
         }
-      } else {
-        await generateSingboxConfig();
+        setActive((a) => ({ ...a, currentNodeId: outcome.nodeId }));
       }
-      setActive((a) => ({ ...a, currentNodeId: target.id }));
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {

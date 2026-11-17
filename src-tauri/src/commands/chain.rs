@@ -108,6 +108,8 @@ pub fn update_pool(
     let pool = state
         .with_store_mut(|store| store.update_pool(&id, &name, mode))
         .map_err(|e| e.to_string())?;
+    // E (链毕业批)：清空/改写使用中链某跳引用的池同样算存活破坏。
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     // A pool's membership feeds every chain/rule that references it —
     // always worth a restart, same as editing a rule set's keyword filter.
     apply_running(&app);
@@ -120,7 +122,37 @@ pub fn delete_pool(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
         .with_store_mut(|store| store.delete_pool(&id))
         .map_err(|e| e.to_string())?;
     apply_running(&app);
+    // E (链毕业批): a deleted hop pool breaks the current chain exit —
+    // the queued rebuild above will regenerate with the fallback node the
+    // auto-deactivation picked.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     Ok(())
+}
+
+/// F (链毕业批): manual chain-exit deactivation. Backend owns the fallback
+/// priority now (single shared source with `ensure_current_node_valid`),
+/// replacing the H1 frontend loop of serial per-subscription detail fetches
+/// plus the 30s dead `waitForCoreRestart` wait. Returns
+/// `{ nodeId, restartNeeded }` when a chain exit was actually active,
+/// `null` otherwise (caller refreshes its view either way).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeactivateChainExitResult {
+    node_id: String,
+    restart_needed: bool,
+}
+
+#[tauri::command(async)]
+pub fn deactivate_chain_exit(
+    state: State<'_, AppState>,
+) -> Result<Option<DeactivateChainExitResult>, String> {
+    let outcome = state
+        .deactivate_chain_exit_serialized()
+        .map_err(|e| e.to_string())?;
+    Ok(outcome.map(|(node_id, restart_needed)| DeactivateChainExitResult {
+        node_id,
+        restart_needed,
+    }))
 }
 
 #[tauri::command(async)]
@@ -166,6 +198,9 @@ pub fn update_chain(
     let chain = state
         .with_store_mut(|store| store.update_chain(&id, &name, hops, name_manual))
         .map_err(|e| e.to_string())?;
+    // E (链毕业批)：编辑使用中的链（换跳指向已删节点等）同样可能破坏存活
+    // ——保存后立即复检，停核时也保证配置不再指向死链。
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     apply_running(&app);
     Ok(chain)
 }
