@@ -1029,21 +1029,28 @@
   background: color-mix(in srgb, var(--surface) 55%, transparent);
 }
 
-.chain-pool-member {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
-  padding: 0.18rem 0.25rem;
-  border-radius: 6px;
+/* 池页签紧凑化（成员行可点）：整池行与成员行都收窄内距/字号，密度优先，
+   hover 仅以淡色底提示可点。成员行与候选节点同一手势——点击直接入链尾、
+   拖拽仍可定位投放（同一 .on-canvas 淡化口径）。 */
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  padding: 0.24rem 0.45rem;
   font-size: 0.78rem;
-  color: var(--text);
-  cursor: pointer;
-  user-select: none;
 }
 
-.chain-pool-member:hover {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+.chain-pool-expand {
+  width: 20px;
+  font-size: 9px;
+}
+
+.chain-pool-members {
+  gap: 1px;
+  padding: 0.2rem 0.3rem 0.28rem;
+}
+
+.chain-pool-member {
+  padding: 0.1rem 0.2rem;
+  font-size: 0.74rem;
+  touch-action: none;
 }
 
 .chain-pool-member > span {
@@ -1056,12 +1063,27 @@
   opacity: 0.6;
 }
 
-.chain-pool-members .chain-pool-add {
-  margin-top: 0.3rem;
-  font-size: 0.75rem;
-  padding: 0.3rem 0.4rem;
-  height: auto;
-  min-height: 0;
+/* 中段省略保尾：长名在行宽不足时只砍中段——订阅节点名的区分度几乎都
+   在后缀，尾部始终完整；宽裕时两段完整显示不省略。全名由行 title
+   提供（hover 可见），不在此重复。 */
+.chain-item-name {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chain-item-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-item-tail {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Cursor-following label shown while dragging a candidate onto the canvas

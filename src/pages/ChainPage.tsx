@@ -196,6 +196,24 @@ function DiagGlyph({ size = 12 }: { size?: number }) {
 
 const MAX_POOL_DOTS = 12;
 
+/** Middle-ellipsis node/pool names that keep the TAIL — subscription node
+ *  names differ mostly in their suffix ("…香港 IEPL 03"), so the tail is
+ *  what tells two rows apart; the middle is the only thing allowed to
+ *  give way. Long names split into head + tail spans: when the row has
+ *  room both spans render whole (no ellipsis), when squeezed only the
+ *  head ellipsizes and the tail stays pinned. The full text is meant for
+ *  the row's `title` (hover) — the caller owns it so it can append the
+ *  subscription/status hints there. */
+function EllipsisTail({ text }: { text: string }) {
+  if (text.length <= 24) return <span className="chain-item-name">{text}</span>;
+  return (
+    <span className="chain-item-name">
+      <span className="chain-item-head">{text.slice(0, text.length - 12)}</span>
+      <span className="chain-item-tail">{text.slice(-12)}</span>
+    </span>
+  );
+}
+
 /** Rich card payload for one hop, computed once when the hop is placed on
  *  the canvas (order badges are merged in live by the editor). Single nodes
  *  show protocol + last-known latency; pools show a member dot grid + count.
@@ -981,11 +999,10 @@ function ChainFlowEditor({
     edgesFromHops(chain?.hops ?? []),
   );
   const [candidateKind, setCandidateKind] = useState<"node" | "pool">("node");
-  // Pool-candidate expansion: members listed under one pool at a time,
-  // picked members can be appended as individual node hops. Per-pool
-  // ordered selections survive collapse/expand but reset once added.
+  // Pool-candidate expansion: members listed under one pool at a time;
+  // clicking a member row appends it straight to the chain tail (drag
+  // still positions it on the canvas). No staging/selection state anymore.
   const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
-  const [poolPicks, setPoolPicks] = useState<Record<string, string[]>>({});
   // Quick filter over the sidebar candidates — substring match on the name,
   // same convention as the pool editor's node picker.
   const [candidateQuery, setCandidateQuery] = useState("");
@@ -1208,8 +1225,7 @@ function ChainFlowEditor({
     appendHops([hop]);
   }
 
-  /** Append several hops in one state transition: pool members picked via
-   *  checkboxes land in pool order one after another. Calling `appendHop` in
+  /** Append several hops in one state transition. Calling `appendHop` in
    *  a loop would re-read the stale flowNodes/edges between set-state calls
    * and drop all but the first hop, so positioning folds over one copy. */
   function appendHops(hops: ChainHop[]) {
@@ -1431,14 +1447,15 @@ function ChainFlowEditor({
                                 className={`chain-candidate-item${onCanvas ? " on-canvas" : ""}`}
                                 data-disabled={n.enabled === false ? "" : undefined}
                                 title={
+                                  // 长名中段省略后，hover 全名 + 状态提示。
                                   n.enabled === false && n.subscription_name
-                                    ? `${n.subscription_name} · ${t("chain.subDisabled")}`
+                                    ? `${n.name} · ${n.subscription_name} · ${t("chain.subDisabled")}`
                                     : onCanvas
-                                      ? t("chain.alreadyOnCanvas")
-                                      : t("chain.dragHint")
+                                      ? `${n.name} · ${t("chain.alreadyOnCanvas")}`
+                                      : `${n.name} · ${t("chain.dragHint")}`
                                 }
                               >
-                                {n.name}
+                                <EllipsisTail text={n.name} />
                               </div>
                             );
                           })}
@@ -1454,8 +1471,6 @@ function ChainFlowEditor({
                     const preview = expanded ? chainPoolPreviewMembers(p, nodes) : [];
                     const liveMembers = preview.filter((m) => !m.stale);
                     const staleCount = preview.length - liveMembers.length;
-                    const picks = poolPicks[p.id] ?? [];
-                    const pickedSet = new Set(picks);
                     return (
                       <div key={p.id} className={`chain-candidate-pool${expanded ? " expanded" : ""}`}>
                         <div className="chain-candidate-pool-row">
@@ -1464,12 +1479,12 @@ function ChainFlowEditor({
                             onPointerDown={(e) =>
                               onCandidatePointerDown(e, { kind: "pool", pool_id: p.id }, p.name)
                             }
-                            title={t("chain.dragHint")}
+                            title={`${p.name} · ${t("chain.dragHint")}`}
                           >
                             <span className="chain-candidate-glyph" aria-hidden="true">
                               <PoolGlyph />
                             </span>
-                            {p.name}
+                            <EllipsisTail text={p.name} />
                           </div>
                           <button
                             type="button"
@@ -1491,36 +1506,39 @@ function ChainFlowEditor({
                                 {t("chain.noPoolMembers")}
                               </p>
                             )}
-                            {liveMembers.map(({ node }) => (
-                              <label
-                                key={node.id}
-                                className="chain-pool-member"
-                                data-disabled={node.enabled === false ? "" : undefined}
-                                title={
-                                  node.enabled === false && node.subscription_name
-                                    ? `${node.subscription_name} · ${t("chain.subDisabled")}`
-                                    : node.subscription_name || undefined
-                                }
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={pickedSet.has(node.id)}
-                                  onChange={() =>
-                                    setPoolPicks((cur) => {
-                                      const curPicks = cur[p.id] ?? [];
-                                      const next = curPicks.includes(node.id)
-                                        ? curPicks.filter((id) => id !== node.id)
-                                        : [...curPicks, node.id];
-                                      return { ...cur, [p.id]: next };
-                                    })
+                            {liveMembers.map(({ node }) => {
+                              const onCanvas = onCanvasNodeIds.has(node.id);
+                              return (
+                                <div
+                                  key={node.id}
+                                  // 点成员行 = 直接作为 node hop 追加到链尾（与
+                                  // 候选节点同一手势：拖拽仍可定位投放）。
+                                  onPointerDown={(e) =>
+                                    onCandidatePointerDown(
+                                      e,
+                                      { kind: "node", node_id: node.id },
+                                      node.name,
+                                    )
                                   }
-                                />
-                                <span>{node.name}</span>
-                                {node.subscription_name && (
-                                  <span className="chain-node-sub">{node.subscription_name}</span>
-                                )}
-                              </label>
-                            ))}
+                                  className={`chain-pool-member${onCanvas ? " on-canvas" : ""}`}
+                                  data-disabled={node.enabled === false ? "" : undefined}
+                                  title={
+                                    node.enabled === false && node.subscription_name
+                                      ? `${node.name} · ${node.subscription_name} · ${t("chain.subDisabled")}`
+                                      : onCanvas
+                                        ? `${node.name} · ${t("chain.alreadyOnCanvas")}`
+                                        : node.subscription_name
+                                          ? `${node.name} · ${node.subscription_name} · ${t("chain.dragHint")}`
+                                          : `${node.name} · ${t("chain.dragHint")}`
+                                  }
+                                >
+                                  <EllipsisTail text={node.name} />
+                                  {node.subscription_name && (
+                                    <span className="chain-node-sub">{node.subscription_name}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
                             {staleCount > 0 && (
                               <p
                                 className="muted"
@@ -1529,22 +1547,6 @@ function ChainFlowEditor({
                               >
                                 {t("chain.poolStaleHint", { n: staleCount })}
                               </p>
-                            )}
-                            {liveMembers.length > 0 && (
-                              <GlassButton
-                                className="chain-pool-add"
-                                disabled={picks.length === 0}
-                                onClick={() => {
-                                  appendHops(
-                                    picks.map(
-                                      (nodeId): ChainHop => ({ kind: "node", node_id: nodeId }),
-                                    ),
-                                  );
-                                  setPoolPicks((cur) => ({ ...cur, [p.id]: [] }));
-                                }}
-                              >
-                                {t("chain.addSelectedHops", { n: picks.length })}
-                              </GlassButton>
                             )}
                           </div>
                         )}

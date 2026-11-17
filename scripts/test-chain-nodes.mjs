@@ -92,25 +92,51 @@ test("后端命令与注册一览：list_chain_nodes 已接线", async () => {
   assert.match(api, /invoke<ProxyNode\[\]>\("list_chain_nodes"\)/);
 });
 
-test("池候选可展开勾选并逐个添加为节点跳（B 回归）", () => {
-  // 展开开关 + 成员预览 + 批量添加必须同时存在，防止后续改动把展开
-  // 砍成只读列表。成员预览必须走 chainPoolPreviewMembers（explicit 含
-  // 跨订阅成员、keyword 仅启用宇宙——与池卡片圆点同语义）。
+test("池候选可展开，点成员行直接入链尾（B 回归，勾选暂存已移除）", () => {
+  // 展开开关 + 成员预览必须同时存在，防止后续改动把展开砍成只读列表。
+  // 成员预览必须走 chainPoolPreviewMembers（explicit 含跨订阅成员、
+  // keyword 仅启用宇宙——与池卡片圆点同语义）。
   const page = readFileSync(
     new URL("../src/pages/ChainPage.tsx", import.meta.url),
     "utf8",
   );
   assert.match(page, /chain-pool-expand/);
   assert.match(page, /chainPoolPreviewMembers\(p, nodes\)/);
-  assert.match(page, /function appendHops\(/);
-  assert.match(page, /"chain\.addSelectedHops", \{ n: picks\.length \}\)/);
-  // 勾选成员只能以 individual node hop 形式上画布——不得再发明一种
-  // “部分池”shape：后端只认 ChainHop::Node / ChainHop::Pool。
-  assert.match(
-    page,
-    /picks\.map\(\s*\(nodeId\): ChainHop => \(\{ kind: "node", node_id: nodeId \}\),/,
+  // 点成员行 = individual node hop 直接追加到链尾：与候选节点同一手势
+  // （onCandidatePointerDown，<5px 位移即 click → appendHop），拖拽仍可
+  // 定位投放。不得再发明一种“部分池”shape：后端只认 ChainHop::Node /
+  // ChainHop::Pool。
+  const member =
+    page.match(
+      /onPointerDown=\{\(e\) =>\s*onCandidatePointerDown\(\s*e,\s*\{ kind: "node", node_id: node\.id \},\s*node\.name,\s*\)\s*\}[\s\S]{0,1500}?\{staleCount > 0/s,
+    )?.[0] ?? "";
+  assert.ok(member, "chain-pool-member 渲染块缺失");
+  // 成员行复用候选节点的 on-canvas 淡化口径，hover 提示带全名。
+  assert.match(member, /className=\{`chain-pool-member\$\{onCanvas \? " on-canvas" : ""\}`\}/);
+  assert.match(page, /const onCanvas = onCanvasNodeIds\.has\(node\.id\);/);
+  assert.match(member, /\$\{node\.name\} · \$\{t\("chain\.dragHint"\)\}/);
+  // 中段省略保尾：长名拆 head+tail，尾部钉死不弯折。
+  assert.match(page, /function EllipsisTail\(/);
+  assert.match(page, /chain-item-head/);
+  assert.match(page, /chain-item-tail/);
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
   );
-  // 失效成员（explicit 池指向已删节点）只提示，不勾选不上画布。
+  const headRule = css.match(/\.chain-item-head \{[^}]*\}/s)?.[0] ?? "";
+  assert.match(headRule, /text-overflow: ellipsis;/);
+  const tailRule = css.match(/\.chain-item-tail \{[^}]*\}/s)?.[0] ?? "";
+  assert.match(tailRule, /flex: none;/);
+  assert.match(tailRule, /white-space: nowrap;/);
+  // 紧凑化：池行/成员行内距与字号收紧。
+  assert.match(css, /\.chain-candidate-pool-row \.chain-candidate-item\.pool-drag \{[^}]*padding: 0\.24rem 0\.45rem;/s);
+  assert.match(css, /\.chain-pool-member \{[^}]*padding: 0\.1rem 0\.2rem;/s);
+  // 负断言：勾选暂存与「添加选中」按钮已彻底移除（含死样式）。
+  assert.ok(!page.includes("poolPicks"));
+  assert.ok(!page.includes("chain-pool-add"));
+  assert.ok(!page.includes("addSelectedHops"));
+  assert.ok(!css.includes("chain-pool-add"));
+  // 失效成员（explicit 池指向已删节点）只提示，不上画布。
   assert.match(page, /preview\.length - liveMembers\.length/);
 });
 
@@ -127,15 +153,15 @@ test("池展开双语文案与源码同步（B 回归）", () => {
   };
   has("chain.expandPoolMembers", "Show/hide pool members");
   has("chain.noPoolMembers", "(no members right now)");
-  has("chain.addSelectedHops", "Add selected ({n})");
   has("chain.expandPoolMembers", "展开/收起池成员");
   has("chain.noPoolMembers", "（当前没有成员）");
-  has("chain.addSelectedHops", "添加选中（{n}）");
   assert.match(
     messages,
     /"chain\.poolStaleHint": "\{n\} referenced node\(s\) no longer exist and can't be picked"/,
   );
-  assert.match(messages, /"chain\.poolStaleHint": "\{n\} 个成员节点已不存在，无法勾选"/);
+  assert.match(messages, /"chain\.poolStaleHint": "\{n\} 个成员节点已不存在，无法选择"/);
+  // 「添加选中」键已随勾选暂存一起移除。
+  assert.ok(!messages.includes("addSelectedHops"));
 });
 
 test("链导出双入口已全链路接线：mihomo YAML 与链文本（D 回归）", async () => {
