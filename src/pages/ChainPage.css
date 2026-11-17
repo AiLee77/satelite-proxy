@@ -1043,23 +1043,31 @@
   white-space: nowrap;
 }
 
+/* G 池展开按钮：向全局 icon-btn 设计语言收拢——border:none、背景透明、
+   最小方形形态（不抢池名视觉权）；hover 用主色淡底（与 B 候选行一处
+   语义），展开态图标收进链页既有主语义 --accent-purple（与 Handle/边
+   同系，不再叠边框）。 */
 .chain-pool-expand {
   flex: none;
   width: 24px;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 6px;
-  background: var(--surface);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
   padding: 0;
+  transition: background 0.15s ease;
 }
 
-.chain-pool-expand:hover,
-.chain-candidate-pool.expanded .chain-pool-expand {
+.chain-pool-expand:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
   color: var(--text);
-  border-color: var(--accent-purple);
+}
+
+.chain-candidate-pool.expanded .chain-pool-expand {
+  color: var(--accent-purple);
 }
 
 .chain-pool-members {

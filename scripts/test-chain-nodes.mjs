@@ -1185,6 +1185,37 @@ test("B：候选行分隔与 hover 语义（hairline 行界 + 主色淡底 + 圆
   assert.doesNotMatch(css, /\.chain-candidate-item:hover \{[^}]*--accent-blue/);
 });
 
+test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  // 形态：border:none + 背景透明 + 最小方形（icon-btn 口径），不再带框。
+  const rule = css.match(/\.chain-pool-expand \{[^}]*\}/s)?.[0] ?? "";
+  assert.match(rule, /border: none;/);
+  assert.match(rule, /background: transparent;/);
+  assert.match(rule, /width: 24px;/);
+  // hover：主色淡底（既有 --primary token）。
+  assert.match(
+    css,
+    new RegExp(
+      "\\.chain-pool-expand:hover \\{\\s*background: color-mix\\(in srgb, var\\(--primary\\) 12%, transparent\\);",
+    ),
+  );
+  // 展开态：图标收进链页既有主语义 --accent-purple，不再叠边框。
+  assert.match(
+    css,
+    new RegExp(
+      "\\.chain-candidate-pool\\.expanded \\.chain-pool-expand \\{\\s*color: var\\(--accent-purple\\);",
+    ),
+  );
+  assert.doesNotMatch(
+    css,
+    /\.chain-candidate-pool\.expanded \.chain-pool-expand \{[^}]*border-color/,
+  );
+  assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*border: 1px solid/);
+});
+
 // ===== E（链毕业批）：使用中链出口的存活破坏 → 自动停用回落 =====
 
 test("E 杀跳路径挂钩一览：九处入口都复检存活，delete_chain 靠既有守卫", () => {
