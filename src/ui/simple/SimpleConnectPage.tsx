@@ -15,7 +15,6 @@ import {
 import { GlassSeg } from "../../components/GlassSeg";
 import { ErrorModal } from "../../components/ErrorModal";
 import { HeroVisual } from "../../components/HeroVisual";
-import { SystemProxyRestartNotice } from "../../components/SystemProxyRestartNotice";
 import { isChainEntry, isChainVirtualId } from "../../chainVirtualNode";
 import { useCaptureModeSwitch } from "../../hooks/useCaptureModeSwitch";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
@@ -64,7 +63,6 @@ export function SimpleConnectPage({ onGoServers, onGoTraffic }: Props) {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSystemRestartNotice, setShowSystemRestartNotice] = useState(false);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
 
   const reloadStatus = useCallback(async () => {
@@ -146,14 +144,9 @@ export function SimpleConnectPage({ onGoServers, onGoTraffic }: Props) {
     setError(msg);
   }, []);
 
-  const onCaptureApplied = useCallback(
-    (mode: "off" | "system" | "tun", prevMode: "off" | "system" | "tun") => {
-      if (mode === "system" && prevMode !== "system") {
-        setShowSystemRestartNotice(true);
-      }
-    },
-    [],
-  );
+  // 开系统代理不再弹「重启应用以完成代理切换」提示——切挽留在后台按既有
+  // 时序完成，页面状态经既有轮询自行刷新。
+  const onCaptureApplied = useCallback(() => {}, []);
 
   const { captureMode, captureBusy, requestCaptureMode } = useCaptureModeSwitch(
     proxy,
@@ -394,10 +387,7 @@ export function SimpleConnectPage({ onGoServers, onGoTraffic }: Props) {
           </div>
         )}
       </section>
-      <SystemProxyRestartNotice
-        open={showSystemRestartNotice}
-        onClose={() => setShowSystemRestartNotice(false)}
-      />
+
     </div>
   );
 }

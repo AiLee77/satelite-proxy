@@ -39,7 +39,6 @@ import { DashboardRateCard } from "../components/DashboardRateCard";
 import { HeroVisual } from "../components/HeroVisual";
 import { IpInfoPanel } from "../components/IpInfoPanel";
 import { ServiceStatusCard } from "../components/ServiceStatusCard";
-import { SystemProxyRestartNotice } from "../components/SystemProxyRestartNotice";
 import { TrafficStatsCard } from "../components/TrafficStatsCard";
 import { SimpleTrafficSpark } from "../ui/simple/SimpleTrafficSpark";
 import { applyLatencyResult, applyNodeLatencyChange } from "../nodeLatencyState";
@@ -223,7 +222,6 @@ export function DashboardPage({
   const autoProbeKeyRef = useRef<string | null>(null);
   const [envCopied, setEnvCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [showSystemRestartNotice, setShowSystemRestartNotice] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [configMenuOpen, setConfigMenuOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -374,11 +372,10 @@ function coreDisplayName(kind: string | null | undefined): string {
     );
   }, [t]);
 
-  const onCaptureApplied = useCallback((mode: "off" | "system" | "tun", prevMode: "off" | "system" | "tun") => {
+  // 开系统代理不再弹「重启应用以完成代理切换」提示——切挽留在后台按既有
+  // 时序完成，页面状态经 reload()/onProxySnapshot 自行刷新。
+  const onCaptureApplied = useCallback(() => {
     void reload();
-    if (mode === "system" && prevMode !== "system") {
-      setShowSystemRestartNotice(true);
-    }
   }, [reload]);
 
   const { captureMode, captureBusy, requestCaptureMode } = useCaptureModeSwitch(
@@ -1789,10 +1786,7 @@ function coreDisplayName(kind: string | null | undefined): string {
           </div>
         </div>
       )}
-      <SystemProxyRestartNotice
-        open={showSystemRestartNotice}
-        onClose={() => setShowSystemRestartNotice(false)}
-      />
+
     </div>
   );
 }
