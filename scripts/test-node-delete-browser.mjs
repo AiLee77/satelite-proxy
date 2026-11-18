@@ -56,7 +56,7 @@ try {
       const cards = [...grid.querySelectorAll(".node-card")];
       const cols = getComputedStyle(grid).gridTemplateColumns.split(" ").length;
       const overlap = (a, b) => a.left < b.right - .5 && a.right > b.left + .5 && a.top < b.bottom - .5 && a.bottom > b.top + .5;
-      if (!document.querySelector(".pro-shell > .side-nav")) issues.push("未加载真实侧栏");
+      if (!document.querySelector(".app-shell > .topnav-wrap")) issues.push("未加载真实顶部导航");
       for (const card of cards) {
         const box = card.getBoundingClientRect();
         if (box.width / zoom < Math.min(240, gridBox.width / zoom) - 1) issues.push("卡片小于容器允许的最小宽度");
@@ -158,9 +158,12 @@ try {
       await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
-      // 在列表底部改变侧栏宽度，核对重新分行及占位高度。
-      await page.locator(".side-nav-toggle").click();
+      // 在列表底部改变实际容器宽度，核对重新分行及占位高度。
+      await page.setViewportSize({ width: Math.max(720, width - 180), height: 900 });
+      await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
+      await page.setViewportSize({ width, height: 900 });
       await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
@@ -201,14 +204,14 @@ try {
       await page.waitForFunction(() => window.nodeFixture.reordered.length === 1);
       assert.deepEqual((await page.evaluate(() => window.nodeFixture.reordered[0])).slice(0, 3), ["b", "a", "c"], "拖拽排序保留");
       const before = await layout(false);
-      await page.locator(".side-nav-toggle").click();
+      await page.setViewportSize({ width: 720, height: 900 });
       const after = await layout(false);
-      assert.ok(Math.abs(after.width - before.width) > 50, "实测侧栏折叠改变容器宽度");
-      assert.notEqual(after.cols, before.cols, "侧栏变化同步更新列数");
+      assert.ok(Math.abs(after.width - before.width) > 50, "实测视口变化改变容器宽度");
+      assert.notEqual(after.cols, before.cols, "容器宽度变化同步更新列数");
       await page.evaluate(() => { document.documentElement.style.zoom = "1.5"; });
       await layout(false);
       await page.evaluate(() => { document.documentElement.style.zoom = "1"; });
-      await page.locator(".side-nav-toggle").click();
+      await page.setViewportSize({ width, height: 900 });
       await layout(false);
     }
     if (!large && zoom === 1 && ((width === 960 && theme === "day") || (width === 1600 && theme === "aerospace"))) {
@@ -218,7 +221,7 @@ try {
     cases++;
   }
   assert.equal(cases, 24);
-  console.log("节点页浏览器回归通过：Delete 保护/确认/单删/批删，24 组卡片布局（960/1280/1600、明暗主题、中英、zoom 1/1.5、普通/603 节点虚拟网格），选择/菜单/测速/拖拽、侧栏变化与滚动；两张代表截图。");
+  console.log("节点页浏览器回归通过：Delete 保护/确认/单删/批删，24 组卡片布局（960/1280/1600、明暗主题、中英、zoom 1/1.5、普通/603 节点虚拟网格），选择/菜单/测速/拖拽、视口变化与滚动；两张代表截图。");
 } catch (error) {
   console.error("节点页失败场景", currentCase);
   if (page && !page.isClosed()) await page.screenshot({ path: "test-results/nodes-failure.png" }).catch(() => {});

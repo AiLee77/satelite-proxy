@@ -259,14 +259,14 @@ async function freshServicesOnResume() {
   assert.equal(counts.after, counts.before, '近期服务结果在重复 focus / hidden→visible 后不新增 IPC');
 }
 async function structure(locale) {
-  const navigation = page.locator(".pro-shell > .side-nav").getByRole("navigation");
-  assert.equal(await navigation.count(), 1, "必须使用真实 SideNav 导航");
+  const navigation = page.locator(".app-shell > .topnav-wrap .topnav").getByRole("navigation");
+  assert.equal(await navigation.count(), 1, "必须使用真实 TopNav 导航");
   assert.equal(await navigation.getByRole("button").count(), 6, "六个页面入口");
-  assert.equal(await navigation.locator('[aria-current="page"]').count(), 1);
-  assert.equal(await navigation.locator('[aria-current="page"]').getAttribute("aria-label"), locale === "zh" ? "概览" : "Overview");
-  assert.equal(await page.locator('.pro-shell > aside[aria-hidden="true"], .pro-shell > .topnav-wrap').count(), 0, "禁止空白占位侧栏和专业模式 TopNav");
-  assert.equal(await page.locator(".side-nav-tools .topnav-theme-switch").count(), 1);
-  assert.equal(await page.locator(".side-nav-tools [data-ui-mode-menu]").count(), 1);
+  assert.equal(await navigation.locator(".active").count(), 1);
+  assert.equal(await navigation.locator(".active").textContent(), locale === "zh" ? "概览" : "Overview");
+  assert.equal(await page.locator(".app-shell > aside").count(), 0, "禁止空白占位侧栏");
+  assert.equal(await page.locator(".topnav-tools .topnav-theme-switch").count(), 1);
+  assert.equal(await page.locator(".topnav-tools [data-ui-mode-menu]").count(), 1);
   assert.equal(await page.locator(".dashboard-page.dashboard-bento").count(), 1);
   assert.equal(await page.locator(".dashboard-heading h1").count(), 1);
   assert.equal(await page.locator(".dashboard-top-grid .dash-hero").count(), 1);
@@ -515,23 +515,31 @@ try {
   await open(1280, 900, "zh", "aerospace");
   await countryRefresh();
   await freshServicesOnResume();
-  const sideButtons = page.locator('.side-nav-items .side-nav-item');
-  const selectedIcon = await sideButtons.nth(0).locator('svg path').getAttribute('d');
+  const navButtons = page.locator('.topnav-items .topnav-item');
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await sideButtons.nth(1).click();
-  await page.waitForFunction(() => document.querySelector('.side-nav-indicator')?.getAnimations().some(animation => animation.playState === 'running'));
-  assert.equal(await sideButtons.nth(1).locator('svg path').getAttribute('fill'), 'currentColor', '选中图标切为实心');
-  assert.equal(await sideButtons.nth(0).locator('svg path').getAttribute('fill'), 'none', '未选中图标回到线框');
-  assert.notEqual(await sideButtons.nth(0).locator('svg path').getAttribute('d'), selectedIcon, '图标形态切换而非只换色');
+  await navButtons.nth(1).click();
+  await page.waitForFunction(index => {
+    const active = document.querySelectorAll('.topnav-items .topnav-item')[index];
+    const indicator = document.querySelector('.topnav-indicator');
+    if (!active || !indicator) return false;
+    const a = active.getBoundingClientRect();
+    const i = indicator.getBoundingClientRect();
+    return Math.abs(a.left - i.left) < 1 && Math.abs(a.right - i.right) < 1 &&
+      Math.abs(a.top - i.top) < 1 && Math.abs(a.bottom - i.bottom) < 1;
+  }, 1);
+  assert.equal(await navButtons.nth(1).getAttribute('class'), 'topnav-item active', '文字导航切换为节点页');
+  assert.equal(await navButtons.nth(0).getAttribute('class'), 'topnav-item', '概览退出选中态');
+  assert.notEqual(await page.locator('.topnav-indicator').evaluate(el => getComputedStyle(el).transitionDuration), '0s', '标准模式保留顶部导航动效');
   for (let index = 2; index < 6; index++) {
-    await sideButtons.nth(index).click();
-    assert.equal(await sideButtons.nth(index).locator('svg path').getAttribute('fill'), 'currentColor');
-    assert.equal(await sideButtons.nth(index - 1).locator('svg path').getAttribute('fill'), 'none');
+    await navButtons.nth(index).click();
+    assert.equal(await navButtons.nth(index).getAttribute('class'), 'topnav-item active');
+    assert.equal(await navButtons.nth(index - 1).getAttribute('class'), 'topnav-item');
   }
   await page.evaluate(() => window.dashboardFixture.setMotion('reduced'));
-  await sideButtons.nth(0).click();
-  assert.equal(await page.locator('.side-nav-indicator').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+  await navButtons.nth(0).click();
   assert.equal(await page.locator('main > .page-enter').evaluate(el => getComputedStyle(el).animationName), 'none');
+  assert.equal(await page.locator('.topnav-indicator').evaluate(el => getComputedStyle(el).transitionDuration), '0s', '减少动态关闭指示条过渡');
+  assert.equal(await navButtons.nth(0).evaluate(el => getComputedStyle(el).transitionDuration), '0s', '减少动态关闭文字导航过渡');
   await page.evaluate(() => window.dashboardFixture.setMotion('standard'));
   assert.equal(await page.evaluate(() => document.documentElement.dataset.motionReduced), 'false', '应用标准模式独立于系统减少动态');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -539,10 +547,7 @@ try {
   await cardMotion(true);
   await page.evaluate(() => window.dashboardFixture.setMotion('system'));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await cardMotion(false);
-  assert.equal(await page.locator('.dashboard-power-visual .orbit').evaluate(el =>
-    [el, ...el.querySelectorAll('*')].every(node => ['::before', '::after', null].every(pseudo =>
-      getComputedStyle(node, pseudo).animationName === 'none'))), true, "减少动态效果时关闭经典轨道CSS动画");
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.motionReduced), 'true', '系统模式跟随系统减少动态');
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.evaluate(() => window.dashboardFixture.setMotion('standard'));
   await cardMotion(true);

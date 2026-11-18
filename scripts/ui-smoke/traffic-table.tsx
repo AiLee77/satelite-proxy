@@ -2,11 +2,11 @@ import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AppSettings, ConnectionView, ProxyStatus } from "../../src/types";
 // 与 App.tsx 一致：组件基础样式先于 App.css / 专业外观覆盖加载。
-import "../../src/components/SideNav.css";
 import "../../src/App.css";
 import "../../src/ProAppearance.css";
+import "../../src/ProMotion.css";
 
-// 不引入夹具布局 CSS；真实页面、侧栏及 Provider 使用生产样式。
+// 不引入夹具布局 CSS；真实页面、顶部导航及 Provider 使用生产样式。
 const params = new URLSearchParams(location.search);
 const locale = params.get("locale") === "en" ? "en" : "zh";
 const theme = locale === "zh" ? "day" : "aerospace";
@@ -84,14 +84,14 @@ mockIPC((command, payload) => {
 mockWindows("main");
 
 const { TrafficPage } = await import("../../src/pages/TrafficPage");
-const { SideNav } = await import("../../src/components/SideNav");
+const { TopNav } = await import("../../src/components/TopNav");
 const { LocaleProvider } = await import("../../src/i18n");
 const { ThemeProvider } = await import("../../src/theme");
 const { UiModeProvider } = await import("../../src/ui/UiModeContext");
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider><LocaleProvider><UiModeProvider>
-    <div className="app-shell pro-shell">
-      <SideNav active="traffic" onChange={() => {}} />
+    <div className="app-shell">
+      <TopNav active="traffic" onChange={() => {}} />
       <main className="main">
         <div className="page-enter"><TrafficPage /></div>
       </main>

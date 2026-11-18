@@ -110,10 +110,11 @@ try {
     await page.goto(`${base}/scripts/ui-smoke/traffic-table.html?${new URLSearchParams({ locale, zoom: String(zoom) })}`);
     await page.locator(".traffic-header .glass-seg").getByRole("button", { name: labels[locale].tabs[0], exact: true }).waitFor();
     await page.waitForFunction(theme => document.documentElement.dataset.theme === theme &&
-      getComputedStyle(document.querySelector(".pro-shell")).getPropertyValue("--pro-panel").trim().length > 0,
+      document.querySelector(".app-shell > .topnav-wrap") !== null,
     locale === "zh" ? "day" : "aerospace");
     await page.evaluate(() => document.fonts.ready);
-    assert.equal(await page.locator(".pro-shell > .side-nav").count(), 1, "使用真实侧栏");
+    assert.equal(await page.locator(".app-shell > .topnav-wrap").count(), 1, "使用真实顶部导航");
+    assert.equal(await page.locator(".topnav-items .topnav-item").count(), 6, "六个页面入口");
     assert.equal(await page.evaluate(() => Number(getComputedStyle(document.documentElement).zoom)), zoom);
     for (const [index, mode] of modes.entries()) {
       currentCase = `${width}-${locale}-zoom${zoom}-${mode}`;

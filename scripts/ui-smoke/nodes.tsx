@@ -2,7 +2,6 @@ import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AppSettings, ProxyNode } from "../../src/types";
 // 与 App.tsx 一致的样式顺序，避免夹具漏掉专业模式的实际覆盖。
-import "../../src/components/SideNav.css";
 import "../../src/App.css";
 import "../../src/ProAppearance.css";
 import "../../src/ProMotion.css";
@@ -90,14 +89,14 @@ mockIPC((command, payload) => {
 }, { shouldMockEvents: true });
 mockWindows("main");
 const { NodesPage } = await import("../../src/pages/NodesPage");
-const { SideNav } = await import("../../src/components/SideNav");
+const { TopNav } = await import("../../src/components/TopNav");
 const { LocaleProvider } = await import("../../src/i18n");
 const { ThemeProvider } = await import("../../src/theme");
 const { UiModeProvider } = await import("../../src/ui/UiModeContext");
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider><LocaleProvider><UiModeProvider>
-    <div className="app-shell pro-shell">
-      <SideNav active="nodes" onChange={() => {}} />
+    <div className="app-shell">
+      <TopNav active="nodes" onChange={() => {}} />
       <main className="main"><div className="page-enter"><NodesPage /></div></main>
     </div>
   </UiModeProvider></LocaleProvider></ThemeProvider>,

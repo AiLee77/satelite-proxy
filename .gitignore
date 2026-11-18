@@ -26,6 +26,7 @@ dist-ssr
 # Rust / Tauri build output
 target
 src-tauri/target
+src-tauri/target-codex/
 src-tauri/gen/schemas
 
 # Bundled sing-box core (download via scripts/fetch-bundled-core-*.sh)
@@ -58,3 +59,6 @@ nul
 assets/icon/*
 !assets/icon/ic_launcher-web.png
 !assets/icon/ic_launcher-mac.png
+
+# 本地浏览器回归取证截图（CI 中由 Actions 上传为 artifact，不入库）
+test-results/

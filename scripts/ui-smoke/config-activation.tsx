@@ -159,6 +159,6 @@ const { LocaleProvider } = await import("../../src/i18n");
 const { ImportIntentProvider } = await import("../../src/ImportIntentContext");
 createRoot(document.getElementById("root")!).render(
   <LocaleProvider><ImportIntentProvider>
-    <div className="app-shell pro-shell"><main className="main"><ConfigPage /></main></div>
+    <div className="app-shell"><main className="main"><ConfigPage /></main></div>
   </ImportIntentProvider></LocaleProvider>,
 );

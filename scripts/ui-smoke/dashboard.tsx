@@ -223,13 +223,13 @@ const { DashboardPage } = await import("../../src/pages/DashboardPage");
 const { LocaleProvider } = await import("../../src/i18n");
 const { ThemeProvider } = await import("../../src/theme");
 const { UiModeProvider } = await import("../../src/ui/UiModeContext");
-const { SideNav } = await import("../../src/components/SideNav");
+const { TopNav } = await import("../../src/components/TopNav");
 localStorage.setItem("satelite.uiMode", "pro");
 function DashboardFixture() {
   const [nav, setNav] = useState<NavKey>("dashboard");
   return (
-    <div className="app-shell pro-shell">
-      <SideNav active={nav} onChange={setNav} />
+    <div className="app-shell">
+      <TopNav active={nav} onChange={setNav} />
       <main className="main">
         <div className={`page-enter${nav === "settings" ? " settings-enter" : ""}`} key={nav}>
           <DashboardPage onGoTraffic={() => { state.trafficOpens++; }} />

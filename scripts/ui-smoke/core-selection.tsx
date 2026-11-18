@@ -80,6 +80,6 @@ function Draft() {
   return <NodeDraftFields value={draft} onChange={setDraft} />;
 }
 const mode = new URLSearchParams(location.search).get("mode");
-createRoot(document.getElementById("root")!).render(<LocaleProvider><ThemeProvider><div className={`app-shell ${mode === "simple" ? "simple-shell" : "pro-shell"}`}><main className="main">
+createRoot(document.getElementById("root")!).render(<LocaleProvider><ThemeProvider><div className={`app-shell ${mode === "simple" ? "simple-shell" : ""}`}><main className="main">
   {mode === "edit" ? <EditLocalNodesModal open profileId="fixture" profileName="Fixture" onClose={() => {}} /> : mode === "draft" ? <Draft /> : mode === "pro" ? <NodesPage /> : mode === "simple" ? <SimpleServersPage /> : <SettingsPage />}
 </main></div></ThemeProvider></LocaleProvider>);
