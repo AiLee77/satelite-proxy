@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { refreshProxyStatus } from "./api";
+import { onChainAutoDeactivated, refreshProxyStatus } from "./api";
 import { TopNav } from "./components/TopNav";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ErrorModal } from "./components/ErrorModal";
@@ -15,18 +15,20 @@ import { UiModeProvider, useUiMode } from "./ui/UiModeContext";
 import { SimpleShell } from "./ui/simple";
 import { useViewportScale } from "./hooks/useViewportScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useRuntimeSource } from "./hooks/useRuntimeSource";
 import "./App.css";
 import "./ProAppearance.css";
 import "./ProMotion.css";
 import "./uiMotion";
 
-// Cmd/Ctrl+数字切换到与顶部导航一致的页面。
+// Cmd/Ctrl+数字切换到与顶部导航顺序一致的页面。
 const PRO_SHORTCUT_MAP: Partial<Record<string, NavKey>> = {
   "1": "dashboard",
   "2": "nodes",
-  "3": "config",
-  "4": "traffic",
-  "5": "logs",
+  "3": "chains",
+  "4": "config",
+  "5": "traffic",
+  "6": "logs",
 };
 
 // Secondary pages: code-split so low-memory WebView recreate only parses home first.
@@ -35,6 +37,9 @@ const ConfigPage = lazy(() =>
 );
 const NodesPage = lazy(() =>
   import("./pages/NodesPage").then((m) => ({ default: m.NodesPage })),
+);
+const ChainPage = lazy(() =>
+  import("./pages/ChainPage").then((m) => ({ default: m.ChainPage })),
 );
 const TrafficPage = lazy(() =>
   import("./pages/TrafficPage").then((m) => ({ default: m.TrafficPage })),
@@ -60,6 +65,13 @@ function PageFallback() {
 function ProShell() {
   const [nav, setNav] = useState<NavKey>("dashboard");
   const { token, prefill } = useImportIntent();
+  const runtimeSource = useRuntimeSource();
+
+  // custom（自配 sing-box）运行来源下代理链入口被顶部导航隐藏；
+  // 用户已停留在链页时回落仪表盘，与设置页旧入口的拦截行为一致。
+  useEffect(() => {
+    if (runtimeSource.startsWith("singbox:") && nav === "chains") setNav("dashboard");
+  }, [runtimeSource, nav]);
 
   // One-click subscribe → jump to profiles so ConfigPage can open the add form.
   useEffect(() => {
@@ -87,6 +99,7 @@ function ProShell() {
             <Suspense fallback={<PageFallback />}>
               {nav === "config" && <ConfigPage />}
               {nav === "nodes" && <NodesPage />}
+              {nav === "chains" && <ChainPage />}
               {nav === "traffic" && <TrafficPage />}
               {nav === "logs" && <LogsPage />}
               {nav === "settings" && <SettingsPage />}
@@ -103,6 +116,7 @@ function AppShell() {
   const { mode } = useUiMode();
   const { t } = useI18n();
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [chainNotice, setChainNotice] = useState<string | null>(null);
 
   // Maximize magnification: zoom the whole UI when the OS window exceeds
   // the design size (see hooks/useViewportScale.ts).
@@ -121,6 +135,22 @@ function AppShell() {
     });
     return () => unlisten?.();
   }, []);
+
+  // E（链毕业批）：当前链出口因某跳存活条件被破坏被后端自动停用时，
+  // 弹全局 transient 通知说明哪条链、为何停用（可能发生在任何页面——
+  // 订阅在 AppShell 而非 ChainPage）。
+  useEffect(() => {
+    let timer = 0;
+    const dispose = onChainAutoDeactivated(({ chainName, reason }) => {
+      setChainNotice(t("chain.autoDeactivated", { name: chainName, reason }));
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setChainNotice(null), 8000);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      dispose();
+    };
+  }, [t]);
 
   // Background rule/config apply restarts the core outside invoke wrappers —
   // keep the navbar spinner in sync via the apply-status event.
@@ -160,6 +190,11 @@ function AppShell() {
           message={applyError}
           onClose={() => setApplyError(null)}
         />
+      )}
+      {chainNotice && (
+        <div className="chain-auto-toast" role="status" aria-live="polite">
+          {chainNotice}
+        </div>
       )}
       {/* Crash net: any render exception below would otherwise blank the
          whole window; the boundary reports it to the app log and offers a

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { CSSProperties } from "react";
 import { getProxyStatus, onProxySnapshot } from "../api";
 import { useCoreBusy } from "../coreBusy";
+import { useRuntimeSource } from "../hooks/useRuntimeSource";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/messages";
@@ -9,12 +10,19 @@ import type { NavKey } from "../types";
 import { ThemeSwitch } from "./ThemeSwitch";
 import { UiModeMenu } from "../ui/UiModeMenu";
 
-type NavItem = { key: NavKey; labelKey: MessageKey };
+type NavItem = {
+  key: NavKey;
+  labelKey: MessageKey;
+  /** Slot width override — see ITEM_WIDTH. */
+  width?: string;
+};
 
-/** Compact capsule order — style3 horizontal nav. */
+/** Compact capsule order — style3 horizontal nav (chains between nodes and
+ *  config, same order as the feature-chain-ux SideNav). */
 const ITEMS: NavItem[] = [
   { key: "dashboard", labelKey: "dashboard.title" },
   { key: "nodes", labelKey: "nodes.title" },
+  { key: "chains", labelKey: "chains.title", width: "calc(12ch + 1.5rem)" },
   { key: "config", labelKey: "config.title" },
   { key: "traffic", labelKey: "traffic.title" },
   { key: "logs", labelKey: "logs.title" },
@@ -24,7 +32,9 @@ const ITEMS: NavItem[] = [
 // Fixed slot width (sized for the longest English label, "Overview"/"Profiles"/
 // "Settings" = 8 chars) plus the button's own left/right padding (0.5rem
 // 0.75rem, App.css:434). Every item shares this width so switching locale
-// only swaps the text — the pill never resizes.
+// only swaps the text — the pill never resizes. The chains entry overrides
+// with its own wider slot: "Proxy Chains" is 12 chars and would clip in the
+// 8ch capsule. `.topnav-items` scrolls horizontally if the row overflows.
 const ITEM_WIDTH = "calc(8ch + 1.5rem)";
 
 interface Props {
@@ -35,8 +45,13 @@ interface Props {
 export function TopNav({ active, onChange }: Props) {
   const { t } = useI18n();
   const coreBusy = useCoreBusy();
+  const runtimeSource = useRuntimeSource();
   const [running, setRunning] = useState(false);
   const [coreState, setCoreState] = useState("stopped");
+
+  // custom（自配 sing-box）运行来源下代理链无语义 — 隐藏入口（AppShell
+  // 同时把已停留的链页回落仪表盘）。
+  const chainsHidden = runtimeSource.startsWith("singbox:");
 
   // Sliding highlight indicator: measure the active button's position/size.
   const itemRefs = useRef<Record<string, HTMLButtonElement>>({});
@@ -131,7 +146,7 @@ export function TopNav({ active, onChange }: Props) {
             aria-hidden="true"
             style={indicatorStyle}
           />
-          {ITEMS.map((item) => (
+          {ITEMS.filter((item) => !chainsHidden || item.key !== "chains").map((item) => (
             <button
               key={item.key}
               type="button"
@@ -139,7 +154,7 @@ export function TopNav({ active, onChange }: Props) {
                 if (el) itemRefs.current[item.key] = el;
               }}
               className={`topnav-item ${active === item.key ? "active" : ""}`}
-              style={{ width: ITEM_WIDTH }}
+              style={{ width: item.width ?? ITEM_WIDTH }}
               onClick={() => onChange(item.key)}
             >
               {t(item.labelKey)}
