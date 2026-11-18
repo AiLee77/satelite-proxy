@@ -84,6 +84,9 @@ mockIPC((command, payload) => {
   if (["set_ui_mode_pref", "plugin:window|set_min_size", "plugin:window|set_max_size",
     "plugin:window|set_resizable", "plugin:window|set_size"].includes(command)) return;
   if (command === "plugin:window|current_monitor") return null;
+  // 视口变化回归会触发 watchWindowSize（300ms 防抖后查询最大化/内尺寸），须在夹具内声明。
+  if (command === "plugin:window|is_maximized") return false;
+  if (command === "plugin:window|inner_size") return { width: 960, height: 900 };
   state.unexpected.push(command);
   throw new Error(`夹具未实现命令：${command}`);
 }, { shouldMockEvents: true });
