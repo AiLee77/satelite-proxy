@@ -44,7 +44,7 @@ pub struct ListedNode {
 /// Strip the verbatim raw body before flattening a node onto the wire —
 /// listings would otherwise carry hundreds of KB of YAML the UI never uses
 /// (generation reads the store directly, not the wire copy).
-fn wire_node(mut node: ProxyNode) -> ProxyNode {
+pub(crate) fn wire_node(mut node: ProxyNode) -> ProxyNode {
     node.raw = None;
     node
 }
@@ -674,6 +674,10 @@ pub fn delete_node(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
             Ok((node, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): deleting a hop node breaks the current chain exit —
+    // before the restart decisions below so any queued rebuild already
+    // targets the fallback node.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",
@@ -728,6 +732,9 @@ pub fn delete_nodes(
             Ok((deleted, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): batch delete can hit a hop node of the current chain
+    // exit — same hook as the single delete above.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",
@@ -1073,6 +1080,8 @@ pub async fn generate_singbox_config(
 
     let (
         mut nodes,
+        keyword_eligible_count,
+        subscription_members,
         settings,
         rules,
         remote_rule_sets,
@@ -1082,8 +1091,26 @@ pub async fn generate_singbox_config(
         auto_candidates,
     ) = state
         .with_store(|store| {
+            // sing-box builds keep chain/explicit-pool referenced nodes from
+            // disabled subscriptions alive; the mihomo/Xray branches below
+            // share this tuple but have no chain-pool emission, so they keep
+            // the plain enabled list and never see disabled nodes.
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1163,6 +1190,8 @@ pub async fn generate_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1227,10 +1256,37 @@ pub fn get_active_config_path(state: State<'_, AppState>) -> Result<Option<Strin
 pub async fn preview_singbox_config(
     state: State<'_, AppState>,
 ) -> Result<GenerateConfigResult, String> {
-    let (mut nodes, settings, rules, remote_rule_sets, mihomo_configs, dns, chains) = state
+    let (
+        mut nodes,
+        keyword_eligible_count,
+        subscription_members,
+        settings,
+        rules,
+        remote_rule_sets,
+        mihomo_configs,
+        dns,
+        chains,
+    ) = state
         .with_store(|store| {
+            // Same node-source split as `generate_singbox_config`: sing-box
+            // carries chain-referenced nodes from disabled subscriptions,
+            // mihomo/Xray keep the plain enabled list.
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1304,6 +1360,8 @@ pub async fn preview_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1552,4 +1610,5 @@ mod tests {
         // Wrong shape ("short") and unknown 16-hex prefix stay untouched.
         assert_eq!(names, ["node-short", "node-aabbccddeeff0011"]);
     }
+
 }

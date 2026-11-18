@@ -407,6 +407,11 @@ pub struct SubscriptionDetail {
     pub user_agent: Option<String>,
 }
 
+// D（链毕业批收官）：H1 为链「停用」前端回落加的 additive `current_node_id`
+// 读取面已随 F 根因修复整体移除——回落优先级改由后端单源
+// `chain_exit_fallback_target_in` 接管，前端不再需要逐订阅 detail 读取该
+// 槽位；保留字段会是零消费者的死代码。
+
 impl Subscription {
     pub fn to_view(&self) -> SubscriptionView {
         let (source_kind, source_display, custom_kind) = match &self.source {

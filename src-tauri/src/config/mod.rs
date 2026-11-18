@@ -12,15 +12,16 @@ mod xray;
 pub use builder::{
     apply_udp_node_compatibility, build_singbox_config_with_chain_context,
     build_singbox_config_with_connection_policy, build_singbox_probe_config,
-    chain_hop_outbound_tag, explicit_set_pool_tags, generate_api_secret, outbound_tag,
-    rule_set_is_empty_for_config, service_diag_port, smart_pool_nodes, subscription_proxy_port,
+    chain_hop_outbound_tag, ensure_chain_selectable, explicit_set_pool_tags, generate_api_secret,
+    outbound_tag, rule_set_is_empty_for_config, service_diag_port,
+    subscription_proxy_port,
     BuildOptions, SidecarPlan, SidecarPort, DIAG_INBOUND_PORT, DIAG_INBOUND_TAG, DIAG_SELECTOR_TAG,
     SERVICE_DIAG_INBOUND_TAG, SERVICE_DIAG_SELECTOR_TAG, SUBSCRIPTION_PROXY_USERNAME,
 };
 pub use custom::{inspect_mihomo_config, inspect_singbox_config, inspect_xray_config};
 pub use dns_build::lookup_hosts;
 pub use dns_files::dump_dns_rules_file;
-pub use mihomo::{build_mihomo_config, build_mihomo_sidecar_config};
+pub use mihomo::{build_mihomo_chain_export, build_mihomo_config, build_mihomo_sidecar_config};
 pub use punycode::to_ascii_domain;
 pub use rule_files::{dump_rule_set_files, remove_rule_set_files};
 pub use write::{

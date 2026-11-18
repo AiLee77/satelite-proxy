@@ -16,6 +16,16 @@ pub enum PoolMode {
         #[serde(default)]
         exclude: Vec<String>,
     },
+    /// Dynamic whole-subscription pool: the members are exactly the nodes of
+    /// the referenced subscription that are currently enabled — re-evaluated
+    /// on every build, in store order (no latency sorting). A disabled or
+    /// deleted subscription resolves to an EMPTY pool: creating/saving such
+    /// a pool stays legal (validation only requires a non-empty id), build
+    /// skips its selector and chain rules fall back to `direct` (same empty-
+    /// pool path as keyword pools), and selecting a chain whose hop resolves
+    /// empty reports "no live members". Subscriptions that produce nodes
+    /// (`contributes_nodes`) qualify — anything but custom profiles.
+    Subscription { subscription_id: String },
 }
 
 /// Named, reusable node pool. Referenced by [`ProxyChain`] hops and (later)
@@ -68,6 +78,25 @@ pub fn pool_outbound_tag_for_id(id: &str) -> String {
     format!("pool-{}", &id[id.len().saturating_sub(20)..])
 }
 
+/// Virtual node id prefix for chain entries in the node list — a chain can
+/// be picked as the current exit exactly like a node (v2rayN-style), with
+/// `settings.current_node_id` holding `"chain:<chain_id>"`. Real node ids
+/// are bare sha256 hex (`ProxyNode::compute_id`) and chain ids already use
+/// a `chain-` prefix, so `chain:` collides with neither namespace.
+pub const CHAIN_NODE_ID_PREFIX: &str = "chain:";
+
+/// Virtual node id for a chain, as shown by node listings and persisted in
+/// `settings.current_node_id` when the chain is the selected exit.
+pub fn chain_virtual_node_id(chain_id: &str) -> String {
+    format!("{CHAIN_NODE_ID_PREFIX}{chain_id}")
+}
+
+/// Inverse of [`chain_virtual_node_id`] — `Some(chain_id)` for virtual chain
+/// entries, `None` for ordinary node ids.
+pub fn chain_id_from_virtual_node_id(id: &str) -> Option<&str> {
+    id.strip_prefix(CHAIN_NODE_ID_PREFIX)
+}
+
 /// One hop in a [`ProxyChain`] — either a single pinned node or a pool
 /// (resolved to that pool's selector/urltest outbound at build time).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +120,24 @@ pub struct ProxyChain {
     /// single-hop chain is just a node/pool pin and should use `RuleTarget::Node`
     /// / `RuleTarget::Pool` directly instead.
     pub hops: Vec<ChainHop>,
+    /// Name-origin marker for the auto-follow sync: `Some(false)` = the
+    /// editor generated the name from the hops ("A → B") and the user never
+    /// typed into the field, so the UI keeps such names in sync when a hop
+    /// node/pool gets renamed (`rename_chain_auto`). `Some(true)` = hand-
+    /// edited, never rewritten. `None` = absent = chains created before the
+    /// flag existed — treated as manual so old names are never silently
+    /// changed. Pure metadata: generated configs reference chains by id,
+    /// so a rename never needs a core restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_manual: Option<bool>,
+}
+
+impl ProxyChain {
+    /// Auto-named chain: born from the graph's "A → B" label and never
+    /// hand-edited — the only kind the auto-follow sync is allowed to touch.
+    pub fn is_name_auto(&self) -> bool {
+        self.name_manual == Some(false)
+    }
 }
 
 impl ProxyChain {
@@ -100,6 +147,8 @@ impl ProxyChain {
             id,
             name: name.trim().to_string(),
             hops,
+            // Absent = legacy/manual default — see the field doc above.
+            name_manual: None,
         }
     }
 
@@ -132,6 +181,20 @@ mod tests {
         );
         assert!(pool.id.starts_with("pool-"));
         assert!(pool.outbound_tag().starts_with("pool-"));
+    }
+
+    #[test]
+    fn subscription_pool_mode_wire_round_trips() {
+        let mode = PoolMode::Subscription {
+            subscription_id: "sub-abc".into(),
+        };
+        let wire = serde_json::to_value(&mode).expect("serialize");
+        assert_eq!(wire["mode"], "subscription");
+        assert_eq!(wire["subscription_id"], "sub-abc");
+        let back: PoolMode = serde_json::from_value(wire).expect("deserialize");
+        assert!(
+            matches!(back, PoolMode::Subscription { subscription_id } if subscription_id == "sub-abc")
+        );
     }
 
     #[test]

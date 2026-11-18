@@ -2,9 +2,12 @@
 //! multi-hop chains built from them (see `config::builder`'s
 //! `build_pool_selectors` / `build_chain_outbounds`).
 
-use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain, ProxyNode};
 use crate::state::AppState;
+use serde::Serialize;
 use tauri::{AppHandle, State};
+
+use super::config::wire_node;
 
 /// Queue one globally debounced restart — mirrors `rules.rs::apply_running`.
 /// Pool/chain edits change the generated outbounds the same way rule edits
@@ -20,6 +23,69 @@ pub fn list_pools(state: State<'_, AppState>) -> Result<Vec<NodePool>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Node listing for the pool/chain editors: every stored node from every
+/// subscription, not just enabled ones. Pools and chains hold node-ID
+/// references that routinely cross subscriptions — build a pool from sub A,
+/// switch the active sub to B (MIX off) and the pool must still list and
+/// keep A's nodes — so the editing UI needs the full universe. The
+/// enabled-subscription node pages keep listing via `list_all_nodes`.
+///
+/// `enabled` mirrors exactly what a config build consults (same predicate as
+/// `AppStore::enabled_nodes`, i.e. subscription enabled AND it feeds nodes
+/// into the generated config): UI previews that must match runtime keyword
+/// semantics — keyword pool membership, smart-style keyword filtering over
+/// the hop cards — filter on it client-side instead of widening the runtime
+/// semantic here.
+#[derive(Debug, Serialize)]
+pub struct ChainListedNode {
+    #[serde(flatten)]
+    pub node: ProxyNode,
+    pub subscription_id: String,
+    pub subscription_name: String,
+    pub favorite: bool,
+    /// False when the owning subscription is currently disabled: the node is
+    /// editable/selectable inside pools and chains, but keyword pools and
+    /// config-build keyword filtering only match enabled-subscription nodes.
+    pub enabled: bool,
+}
+
+#[tauri::command(async)]
+pub fn list_chain_nodes(state: State<'_, AppState>) -> Result<Vec<ChainListedNode>, String> {
+    state
+        .with_store(|store| {
+            let names: std::collections::HashMap<&str, &str> = store
+                .subscriptions
+                .iter()
+                .map(|sub| (sub.id.as_str(), sub.name.as_str()))
+                .collect();
+            let enabled_subs: std::collections::HashSet<&str> = store
+                .subscriptions
+                .iter()
+                .filter(|sub| sub.enabled && sub.source.contributes_nodes())
+                .map(|sub| sub.id.as_str())
+                .collect();
+            Ok(store
+                .ordered_nodes()
+                .into_iter()
+                .map(|stored| {
+                    let id = stored.node.id.clone();
+                    ChainListedNode {
+                        subscription_id: stored.subscription_id.clone(),
+                        subscription_name: names
+                            .get(stored.subscription_id.as_str())
+                            .copied()
+                            .unwrap_or("")
+                            .to_string(),
+                        favorite: store.favorite_nodes.contains(&id),
+                        enabled: enabled_subs.contains(stored.subscription_id.as_str()),
+                        node: wire_node(stored.node.clone()),
+                    }
+                })
+                .collect())
+        })
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub fn create_pool(
     state: State<'_, AppState>,
@@ -31,6 +97,15 @@ pub fn create_pool(
         .map_err(|e| e.to_string())
 }
 
+/// 追加1：池编辑保存结果——`pruned` = 保存时自动剔除的失效成员数
+/// （悬空引用自愈），前端据此提示「已剔除 N 个失效节点」。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePoolResult {
+    pool: NodePool,
+    pruned: usize,
+}
+
 #[tauri::command(async)]
 pub fn update_pool(
     app: AppHandle,
@@ -38,14 +113,16 @@ pub fn update_pool(
     id: String,
     name: String,
     mode: PoolMode,
-) -> Result<NodePool, String> {
-    let pool = state
+) -> Result<UpdatePoolResult, String> {
+    let (pool, pruned) = state
         .with_store_mut(|store| store.update_pool(&id, &name, mode))
         .map_err(|e| e.to_string())?;
+    // E (链毕业批)：清空/改写使用中链某跳引用的池同样算存活破坏。
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     // A pool's membership feeds every chain/rule that references it —
     // always worth a restart, same as editing a rule set's keyword filter.
     apply_running(&app);
-    Ok(pool)
+    Ok(UpdatePoolResult { pool, pruned })
 }
 
 #[tauri::command(async)]
@@ -54,7 +131,37 @@ pub fn delete_pool(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
         .with_store_mut(|store| store.delete_pool(&id))
         .map_err(|e| e.to_string())?;
     apply_running(&app);
+    // E (链毕业批): a deleted hop pool breaks the current chain exit —
+    // the queued rebuild above will regenerate with the fallback node the
+    // auto-deactivation picked.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     Ok(())
+}
+
+/// F (链毕业批): manual chain-exit deactivation. Backend owns the fallback
+/// priority now (single shared source with `ensure_current_node_valid`),
+/// replacing the H1 frontend loop of serial per-subscription detail fetches
+/// plus the 30s dead `waitForCoreRestart` wait. Returns
+/// `{ nodeId, restartNeeded }` when a chain exit was actually active,
+/// `null` otherwise (caller refreshes its view either way).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeactivateChainExitResult {
+    node_id: String,
+    restart_needed: bool,
+}
+
+#[tauri::command(async)]
+pub fn deactivate_chain_exit(
+    state: State<'_, AppState>,
+) -> Result<Option<DeactivateChainExitResult>, String> {
+    let outcome = state
+        .deactivate_chain_exit_serialized()
+        .map_err(|e| e.to_string())?;
+    Ok(outcome.map(|(node_id, restart_needed)| DeactivateChainExitResult {
+        node_id,
+        restart_needed,
+    }))
 }
 
 #[tauri::command(async)]
@@ -81,9 +188,10 @@ pub fn create_chain(
     state: State<'_, AppState>,
     name: String,
     hops: Vec<ChainHop>,
+    name_manual: Option<bool>,
 ) -> Result<ProxyChain, String> {
     state
-        .with_store_mut(|store| store.create_chain(&name, hops))
+        .with_store_mut(|store| store.create_chain(&name, hops, name_manual))
         .map_err(|e| e.to_string())
 }
 
@@ -94,12 +202,34 @@ pub fn update_chain(
     id: String,
     name: String,
     hops: Vec<ChainHop>,
+    name_manual: Option<bool>,
 ) -> Result<ProxyChain, String> {
     let chain = state
-        .with_store_mut(|store| store.update_chain(&id, &name, hops))
+        .with_store_mut(|store| store.update_chain(&id, &name, hops, name_manual))
         .map_err(|e| e.to_string())?;
+    // E (链毕业批)：编辑使用中的链（换跳指向已删节点等）同样可能破坏存活
+    // ——保存后立即复检，停核时也保证配置不再指向死链。
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     apply_running(&app);
     Ok(chain)
+}
+
+/// Auto-follow rename for editor-generated chain names ("A → B"): the UI
+/// recomputes the label from the hops' CURRENT node/pool names and pushes it
+/// here whenever a hop got renamed elsewhere. Only auto-named chains
+/// (`name_manual == Some(false)`) move — manual names, no-ops, invalid
+/// lengths and would-be duplicates are `Ok(None)` and leave the store
+/// untouched (the caller treats that as "keep the old name"). Deliberately
+/// NO restart: generated configs reference chains by id, not by name.
+#[tauri::command(async)]
+pub fn rename_chain_auto(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<Option<ProxyChain>, String> {
+    state
+        .with_store_mut(|store| store.rename_chain_auto(&id, &name))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -109,6 +239,100 @@ pub fn delete_chain(app: AppHandle, state: State<'_, AppState>, id: String) -> R
         .map_err(|e| e.to_string())?;
     apply_running(&app);
     Ok(())
+}
+
+/// Export one chain as a standalone mihomo (Clash Meta) config that
+/// externally replays the same hop semantics via `dialer-proxy` — for
+/// users who run mihomo somewhere else and just want the chain wiring.
+/// Node resolution deliberately uses the chain-aware node universe
+/// (enabled prefix + nodes referenced by chains/explicit pools), so a
+/// chain whose entry hop sits in a currently-disabled subscription still
+/// exports — keyword pools are unrelated here (export rejects pool hops
+/// outright, see `build_mihomo_chain_export`).
+#[tauri::command(async)]
+pub fn export_chain_mihomo_yaml(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    state
+        .with_store(|store| {
+            let chain = store
+                .chains
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or_else(|| crate::error::AppError::Config(format!("链 {id} 不存在")))?;
+            let nodes = store.enabled_nodes_with_chain_refs();
+            crate::config::build_mihomo_chain_export(&nodes, &chain)
+        })
+        .map(|built| built.yaml)
+        .map_err(|e| e.to_string())
+}
+
+/// Human-readable chain text (`入口 → … → 出口` with node/pool names) for
+/// clipboard export — the hand-shareable summary of a chain. Reuses the
+/// editor's node universe so stale ids surface as `[missing: <id8>]` rather
+/// than an empty hop.
+#[tauri::command(async)]
+pub fn export_chain_text(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    state
+        .with_store(|store| {
+            let chain = store
+                .chains
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or_else(|| crate::error::AppError::Config(format!("链 {id} 不存在")))?;
+            let nodes = store.enabled_nodes_with_chain_refs();
+            let node_by_id: std::collections::HashMap<&str, &str> = nodes
+                .iter()
+                .map(|n| (n.id.as_str(), n.name.as_str()))
+                .collect();
+            let pools: std::collections::HashMap<&str, &str> = store
+                .pools
+                .iter()
+                .map(|p| (p.id.as_str(), p.name.as_str()))
+                .collect();
+            let mut out = String::new();
+            if chain.hops.is_empty() {
+                return Ok(chain.name);
+            }
+            for (idx, hop) in chain.hops.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(" → ");
+                }
+                match hop {
+                    ChainHop::Pool { pool_id } => {
+                        out.push_str(&format!(
+                            "[池] {}",
+                            pools
+                                .get(pool_id.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| short_missing(pool_id))
+                        ));
+                    }
+                    ChainHop::Node { node_id } => {
+                        out.push_str(&format!(
+                            "[{}] {}",
+                            if idx == 0 {
+                                "入口"
+                            } else if idx == chain.hops.len() - 1 {
+                                "出口"
+                            } else {
+                                "中转"
+                            },
+                            node_by_id
+                                .get(node_id.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| short_missing(node_id))
+                        ));
+                    }
+                }
+            }
+            Ok(format!("{}: {out}", chain.name))
+        })
+        .map_err(|e| e.to_string())
+}
+
+fn short_missing(id: &str) -> String {
+    format!("[missing: {}]", &id[..id.len().min(8)])
 }
 
 /// Probe every hop of one chain through the live Clash delay API — solo
@@ -128,7 +352,12 @@ pub async fn diagnose_chain(
             Ok((
                 store.chains.iter().find(|c| c.id == chain_id).cloned(),
                 store.pools.clone(),
-                store.enabled_nodes(),
+                // Chain hops routinely reference nodes from disabled
+                // subscriptions (MIX off) — the diagnosis must resolve them
+                // the same way the config build does, or every hop of such a
+                // chain would read as missing even while the running config
+                // actually carries it.
+                store.enabled_nodes_with_chain_refs(),
                 crate::core::CoreKind::parse(&store.settings.core_type),
                 store.settings.probe_url.clone(),
                 store.settings.locale.clone(),

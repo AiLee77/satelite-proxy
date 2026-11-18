@@ -106,6 +106,15 @@ pub struct AppStore {
     retained_chains: Vec<Value>,
 }
 
+/// E (链毕业批): the current chain exit broke — emitted by
+/// [`AppStore::auto_deactivate_dead_chain_exit`] so the caller can notify.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChainExitDeath {
+    pub chain_id: String,
+    pub chain_name: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredNode {
     pub subscription_id: String,
@@ -1092,6 +1101,10 @@ impl AppStore {
             .map(|entry| entry.node.id.clone())
             .collect();
         self.nodes.splice(insertion..insertion, replacement);
+        // 追加2：刷新替换旧节点后同步清扫显式池名单（必须在新节点 splice
+        // 之后——否则合法成员被误清）；也同时覆盖 persist_import_replacing
+        // 的替换删除（其 retain 之后再走本方法）。
+        self.sweep_explicit_pool_members();
         // Reset only this profile to subscription order; preserve other
         // profiles' relative custom order and keep manual nodes at the end.
         let mut order = Vec::new();
@@ -1305,6 +1318,8 @@ impl AppStore {
             return Err(AppError::NotFound(id.to_string()));
         }
         self.nodes.retain(|n| n.subscription_id != id);
+        // 追加2：订阅删除即同步清扫显式池名单。
+        self.sweep_explicit_pool_members();
         self.clear_node_customizations_for_subscription(id);
         if self.settings.runtime_source().singbox_id() == Some(id) {
             self.settings
@@ -1359,6 +1374,87 @@ impl AppStore {
             .filter(|n| enabled.contains(n.subscription_id.as_str()))
             .map(|n| n.node.clone())
             .collect()
+    }
+
+    /// subscription_id → member node ids, for subscription pools
+    /// (`crate::domain::PoolMode::Subscription`): exactly the enabled-node
+    /// universe grouped by owning subscription, in store order — no latency
+    /// sorting. Disabled subscriptions have no entry and deleted ones vanish
+    /// from the map entirely, so a subscription pool over them resolves
+    /// EMPTY by design (mirrors `enabled_nodes()`); the build path treats
+    /// that like any other empty pool (selector skipped, chain rules fall
+    /// back to `direct`).
+    pub fn enabled_subscription_member_ids(
+        &self,
+    ) -> std::collections::BTreeMap<String, Vec<String>> {
+        let enabled: std::collections::HashSet<&str> = self
+            .subscriptions
+            .iter()
+            .filter(|s| s.enabled && s.source.contributes_nodes())
+            .map(|s| s.id.as_str())
+            .collect();
+        let mut map = std::collections::BTreeMap::new();
+        for stored in &self.nodes {
+            if enabled.contains(stored.subscription_id.as_str()) {
+                map.entry(stored.subscription_id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(stored.node.id.clone());
+            }
+        }
+        map
+    }
+
+    /// Node ids actually referenced by proxy chains (node hops) and explicit
+    /// node pools (fixed members). Keyword pools are deliberately excluded:
+    /// their membership is re-evaluated at build time against the
+    /// enabled-subscription universe only, and pulling disabled
+    /// subscriptions in by name would silently change what a keyword pool
+    /// matches. Dangling ids (node deleted / never existed) are simply not
+    /// in the set — callers only use this to widen the generated node set.
+    pub fn chain_referenced_node_ids(&self) -> std::collections::BTreeSet<String> {
+        let mut ids = std::collections::BTreeSet::new();
+        for pool in &self.pools {
+            if let crate::domain::PoolMode::Explicit { node_ids } = &pool.mode {
+                ids.extend(node_ids.iter().cloned());
+            }
+        }
+        for chain in &self.chains {
+            for hop in &chain.hops {
+                if let crate::domain::ChainHop::Node { node_id } = hop {
+                    ids.insert(node_id.clone());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Node source for sing-box config generation: every enabled
+    /// subscription node plus the closure of nodes that chains/explicit
+    /// pools reference across subscriptions — even when the owning
+    /// subscription is currently disabled. Pools and chains hold stable
+    /// node-ID references; switching the active subscription (MIX off)
+    /// must not silently drop hops from the generated config (they would
+    /// fail `build_chain_outbounds` and the chain's rules fall back with a
+    /// warning while the chain editor still promises a working chain).
+    /// Keyword pools are NOT widened here: they keep re-matching the
+    /// enabled universe at build time, by design.
+    pub fn enabled_nodes_with_chain_refs(&self) -> Vec<ProxyNode> {
+        let refs = self.chain_referenced_node_ids();
+        let mut out = self.enabled_nodes();
+        if refs.is_empty() {
+            return out;
+        }
+        // Owned set: `&str` borrows of `out` would collide with the
+        // `out.push` below (E0502 on CI run #6 — rustc held the immutable
+        // borrows alive across the push).
+        let present: std::collections::HashSet<String> = out.iter().map(|n| n.id.clone()).collect();
+        for stored in &self.nodes {
+            let id = stored.node.id.as_str();
+            if !present.contains(id) && refs.contains(id) {
+                out.push(stored.node.clone());
+            }
+        }
+        out
     }
 
     /// Cached Clash YAML from enabled node-producing subscriptions. Mihomo
@@ -1542,6 +1638,11 @@ impl AppStore {
         let Some(id) = self.settings.current_node_id.as_ref() else {
             return;
         };
+        // Virtual chain entries have no per-subscription memory slot — the
+        // selection lives in `current_node_id` alone.
+        if crate::domain::chain_id_from_virtual_node_id(id).is_some() {
+            return;
+        }
         if let Some(entry) = self.nodes.iter().find(|entry| {
             &entry.node.id == id
                 && self.subscriptions.iter().any(|sub| {
@@ -1568,22 +1669,144 @@ impl AppStore {
                         .any(|entry| &entry.subscription_id == sub_id && &entry.node.id == node_id)
             });
         let enabled = self.enabled_nodes();
-        let valid = self
-            .settings
-            .current_node_id
-            .as_ref()
-            .is_some_and(|id| enabled.iter().any(|node| &node.id == id));
+        let valid = self.settings.current_node_id.as_ref().is_some_and(|id| {
+            match crate::domain::chain_id_from_virtual_node_id(id) {
+                // A virtual chain entry stays valid while the chain
+                // exists — subscription refreshes can never wash it away.
+                Some(chain_id) => self.chains.iter().any(|chain| chain.id == chain_id),
+                None => enabled.iter().any(|node| &node.id == id),
+            }
+        });
         if !valid {
-            self.settings.current_node_id = self
-                .subscriptions
-                .iter()
-                .filter(|sub| sub.enabled && sub.source.contributes_nodes())
-                .filter_map(|sub| self.selected_nodes_by_subscription.get(&sub.id))
-                .find(|id| enabled.iter().any(|node| &node.id == *id))
-                .cloned()
-                .or_else(|| enabled.first().map(|node| node.id.clone()));
+            self.settings.current_node_id = self.chain_exit_fallback_target_in(&enabled);
         }
         self.remember_current_node();
+    }
+
+    /// Fallback target for leaving a chain exit (or any invalidated current
+    /// node): the enabled subscriptions' remembered node if it still lives in
+    /// the enabled universe, else the first enabled node. `None` = empty
+    /// universe. Single source shared by `ensure_current_node_valid`, the E
+    /// auto-deactivation and the manual deactivate command so no second
+    /// fallback priority can drift into existence.
+    pub fn chain_exit_fallback_target_in(
+        &self,
+        enabled: &[ProxyNode],
+    ) -> Option<String> {
+        self.subscriptions
+            .iter()
+            .filter(|sub| sub.enabled && sub.source.contributes_nodes())
+            .filter_map(|sub| self.selected_nodes_by_subscription.get(&sub.id))
+            .find(|id| enabled.iter().any(|node| &node.id == *id))
+            .cloned()
+            .or_else(|| enabled.first().map(|node| node.id.clone()))
+    }
+
+    /// 返修③: same fallback priority but with every hop of the given chain
+    /// removed from the candidate universe first. Deactivating a chain exit
+    /// must never land back on one of that chain's own hops (including its
+    /// first hop) — those nodes stay in the store, they are just not valid
+    /// *fallback* targets for leaving this chain.
+    pub fn chain_exit_fallback_target_in_excluding_chain(
+        &self,
+        enabled: &[ProxyNode],
+        chain_id: &str,
+    ) -> Option<String> {
+        let excluded: std::collections::HashSet<&str> = self
+            .chains
+            .iter()
+            .find(|chain| chain.id == chain_id)
+            .map(|chain| {
+                chain
+                    .hops
+                    .iter()
+                    .filter_map(|hop| match hop {
+                        crate::domain::ChainHop::Node { node_id } => Some(node_id.as_str()),
+                        crate::domain::ChainHop::Pool { .. } => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let candidates: Vec<ProxyNode> = enabled
+            .iter()
+            .filter(|node| !excluded.contains(node.id.as_str()))
+            .cloned()
+            .collect();
+        self.chain_exit_fallback_target_in(&candidates)
+    }
+
+    /// Convenience wrapper resolving the enabled universe first — the exact
+    /// priority the H1 deactivate button and the E auto-deactivation use.
+    /// When the current exit is a chain virtual id, that chain's hops are
+    /// excluded from the fallback candidates (返修③).
+    pub fn chain_exit_fallback_target(&self) -> Option<String> {
+        let enabled = self.enabled_nodes();
+        let chain_id = self
+            .settings
+            .current_node_id
+            .as_deref()
+            .and_then(crate::domain::chain_id_from_virtual_node_id);
+        match chain_id {
+            Some(chain_id) => self.chain_exit_fallback_target_in_excluding_chain(&enabled, chain_id),
+            None => self.chain_exit_fallback_target_in(&enabled),
+        }
+    }
+
+    /// E (链毕业批): the current exit is a chain virtual id and one of its
+    /// hops' liveness broke. Liveness mirrors `ensure_chain_selectable` but
+    /// runs over the ENABLED universe — deliberately stricter than the
+    /// build universe: a disabled source subscription kills its hops too.
+    pub fn active_chain_exit_death(&self) -> Option<ChainExitDeath> {
+        // Gates mirror `generated_singbox_selector_sync_plan`: chains only
+        // exist under a sing-box generated profile, and kernel-auto owns the
+        // selection (the urltest group ignores current_node_id).
+        if crate::core::CoreKind::parse(&self.settings.core_type) != crate::core::CoreKind::SingBox
+            || self.settings.runtime_source().is_custom()
+            || self.settings.auto_select.is_kernel()
+        {
+            return None;
+        }
+        let chain_id = self
+            .settings
+            .current_node_id
+            .as_deref()
+            .and_then(crate::domain::chain_id_from_virtual_node_id)?;
+        let chain = self.chains.iter().find(|chain| chain.id == chain_id)?;
+        let nodes = self.enabled_nodes();
+        let keyword_eligible_count = nodes.len();
+        let subscription_members = self.enabled_subscription_member_ids();
+        let sidecar =
+            crate::runtime::compute_sidecar_plan(&self.settings, &self.chains, &nodes);
+        crate::config::ensure_chain_selectable(
+            chain,
+            &self.pools,
+            &nodes,
+            keyword_eligible_count,
+            &subscription_members,
+            sidecar.as_ref(),
+        )
+        .err()
+        .map(|error| ChainExitDeath {
+            chain_id: chain.id.clone(),
+            chain_name: chain.name.clone(),
+            reason: error.to_string(),
+        })
+    }
+
+    /// E (链毕业批): auto-deactivate the current chain exit when a hop's
+    /// liveness broke (source subscription disabled / hop node deleted /
+    /// hop pool deleted / subscription refresh washed the node away).
+    /// Re-uses `ensure_current_node_valid`'s fallback priority verbatim and
+    /// returns the death record for the user-visible notice. Non-active
+    /// chains are never touched here — they keep the H3 "已失效" badge only.
+    pub fn auto_deactivate_dead_chain_exit(&mut self) -> Option<ChainExitDeath> {
+        let death = self.active_chain_exit_death()?;
+        // 返修③: route through the single-source fallback — with the dead
+        // chain still the current exit, its hops are excluded from the
+        // candidates so the fallback can never land back on a hop.
+        self.settings.current_node_id = self.chain_exit_fallback_target();
+        self.remember_current_node();
+        Some(death)
     }
 
     /// New subscription: enable only when no other is enabled (or none exist).
@@ -1703,6 +1926,28 @@ impl AppStore {
         Ok(edited)
     }
 
+    /// 追加2（显式池悬空引用源头清理）：节点从存储消失后，同步把被删
+    /// id 从所有显式池成员名单中清除。单一收口 helper，全部节点消失路径
+    /// （delete_node/delete_nodes 循环、remove_subscription、upsert_subscription
+    /// 刷新替换——同时覆盖 persist_import_replacing 的替换删除）在各自删除
+    /// 之后调用；幂等（只清不在存储里的 id）。返回本次清除的条目数。
+    fn sweep_explicit_pool_members(&mut self) -> usize {
+        let live: std::collections::HashSet<&str> = self
+            .nodes
+            .iter()
+            .map(|stored| stored.node.id.as_str())
+            .collect();
+        let mut swept = 0;
+        for pool in &mut self.pools {
+            if let crate::domain::PoolMode::Explicit { node_ids } = &mut pool.mode {
+                let before = node_ids.len();
+                node_ids.retain(|id| live.contains(id.as_str()));
+                swept += before - node_ids.len();
+            }
+        }
+        swept
+    }
+
     pub fn delete_node(&mut self, id: &str) -> AppResult<ProxyNode> {
         let index = self
             .nodes
@@ -1724,6 +1969,8 @@ impl AppStore {
             subscription.node_count = subscription.node_count.saturating_sub(1);
         }
         self.ensure_current_node_valid();
+        // 追加2：删除即同步清扫显式池名单（delete_nodes 循环复用本路径）。
+        self.sweep_explicit_pool_members();
         Ok(stored.node)
     }
 
@@ -2251,7 +2498,7 @@ impl AppStore {
         id: &str,
         name: &str,
         mode: crate::domain::PoolMode,
-    ) -> AppResult<crate::domain::NodePool> {
+    ) -> AppResult<(crate::domain::NodePool, usize)> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::Config("节点池名称不能为空".into()));
@@ -2266,7 +2513,17 @@ impl AppStore {
         {
             return Err(AppError::Config(format!("已存在同名节点池「{name}」")));
         }
-        Self::validate_pool_mode(&mode, &self.nodes)?;
+        // 追加1：编辑保存不再整单拒绝——失效成员 id（存储里已不存在的）
+        // 自动剔除后正常保存，剔光则存为空池、不擅自删池。add（create_pool）
+        // 维持原校验不放松。Keyword / Subscription 模式语义不动（仍走
+        // validate_pool_mode）。
+        let (mode, pruned) = self.heal_explicit_pool_mode(mode);
+        // Keyword / Subscription 模式语义不动（仍走 validate_pool_mode）；
+        // healed 后的 Explicit 名单按构造已合法（空池在此合法），跳过校验。
+        match &mode {
+            crate::domain::PoolMode::Explicit { .. } => {}
+            _ => Self::validate_pool_mode(&mode, &self.nodes)?,
+        }
         let pool = self
             .pools
             .iter_mut()
@@ -2274,7 +2531,26 @@ impl AppStore {
             .ok_or_else(|| AppError::NotFound(id.to_string()))?;
         pool.name = name.to_string();
         pool.mode = mode;
-        Ok(pool.clone())
+        Ok((pool.clone(), pruned))
+    }
+
+    /// 追加1：显式池模式自愈——剔除成员名单里已不在存储中的失效 id；
+    /// 剔光得到合法空池（空池在生成层被跳过、链规则回落 direct，语义既有）。
+    /// 其他模式原样返回（pruned = 0）。
+    fn heal_explicit_pool_mode(
+        &self,
+        mode: crate::domain::PoolMode,
+    ) -> (crate::domain::PoolMode, usize) {
+        match mode {
+            crate::domain::PoolMode::Explicit { node_ids } => {
+                let (kept, pruned): (Vec<String>, Vec<String>) =
+                    node_ids.into_iter().partition(|id| {
+                        self.nodes.iter().any(|stored| stored.node.id == *id)
+                    });
+                (crate::domain::PoolMode::Explicit { node_ids: kept }, pruned.len())
+            }
+            other => (other, 0),
+        }
     }
 
     pub fn delete_pool(&mut self, id: &str) -> AppResult<()> {
@@ -2328,6 +2604,16 @@ impl AppStore {
                     )));
                 }
             }
+            crate::domain::PoolMode::Subscription { subscription_id } => {
+                if subscription_id.trim().is_empty() {
+                    return Err(AppError::Config("订阅池必须选择一个订阅".into()));
+                }
+                // A missing or disabled subscription stays LEGAL: the pool
+                // resolves empty at build time (selector skipped, chain rules
+                // fall back) — same tolerance as an empty keyword match. Only
+                // a blank id is rejected so the pool can never dangle on an
+                // empty string.
+            }
         }
         Ok(())
     }
@@ -2336,6 +2622,7 @@ impl AppStore {
         &mut self,
         name: &str,
         hops: Vec<crate::domain::ChainHop>,
+        name_manual: Option<bool>,
     ) -> AppResult<crate::domain::ProxyChain> {
         let name = name.trim();
         if name.is_empty() {
@@ -2352,7 +2639,8 @@ impl AppStore {
             return Err(AppError::Config(format!("已存在同名链路「{name}」")));
         }
         self.validate_chain_hops(&hops)?;
-        let chain = crate::domain::ProxyChain::new(name, hops);
+        let mut chain = crate::domain::ProxyChain::new(name, hops);
+        chain.name_manual = name_manual;
         self.chains.push(chain.clone());
         Ok(chain)
     }
@@ -2362,6 +2650,7 @@ impl AppStore {
         id: &str,
         name: &str,
         hops: Vec<crate::domain::ChainHop>,
+        name_manual: Option<bool>,
     ) -> AppResult<crate::domain::ProxyChain> {
         let name = name.trim();
         if name.is_empty() {
@@ -2385,7 +2674,45 @@ impl AppStore {
             .ok_or_else(|| AppError::NotFound(id.to_string()))?;
         chain.name = name.to_string();
         chain.hops = hops;
+        if let Some(v) = name_manual {
+            chain.name_manual = Some(v);
+        }
         Ok(chain.clone())
+    }
+
+    /// Auto-follow rename (see `commands::rename_chain_auto`): ONLY auto-
+    /// named chains (`name_manual == Some(false)`) may move, and only to a
+    /// non-empty, ≤64-char name that doesn't collide with another chain.
+    /// Everything else — manual names, no-op renames, duplicates — returns
+    /// `Ok(None)` and leaves the store untouched. No restart: generated
+    /// configs reference chains by id, never by name.
+    pub fn rename_chain_auto(
+        &mut self,
+        id: &str,
+        name: &str,
+    ) -> AppResult<Option<crate::domain::ProxyChain>> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Ok(None);
+        }
+        let chain = self
+            .chains
+            .iter()
+            .find(|chain| chain.id == id)
+            .ok_or_else(|| AppError::NotFound(id.to_string()))?;
+        if !chain.is_name_auto() || chain.name == name {
+            return Ok(None);
+        }
+        if self
+            .chains
+            .iter()
+            .any(|chain| chain.id != id && chain.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(None);
+        }
+        let chain = self.chains.iter_mut().find(|chain| chain.id == id).unwrap();
+        chain.name = name.to_string();
+        Ok(Some(chain.clone()))
     }
 
     /// Chain ids this rule set effectively pins in the generated config —
@@ -2439,6 +2766,15 @@ impl AppStore {
     }
 
     pub fn delete_chain(&mut self, id: &str) -> AppResult<()> {
+        // A chain serving as the selected exit can't be deleted — switch to
+        // another node first (same refusal shape as rule-set references).
+        if self.settings.current_node_id.as_deref()
+            == Some(crate::domain::chain_virtual_node_id(id).as_str())
+        {
+            return Err(AppError::Config(
+                "该链路正被选为当前出口，请先切换到其他节点再删除".into(),
+            ));
+        }
         let referencing_rules: Vec<String> = self
             .rule_sets
             .iter()
@@ -5216,6 +5552,498 @@ mod tests {
     }
 
     #[test]
+    fn enabled_nodes_with_chain_refs_collects_only_referenced_when_mix_off() {
+        use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+
+        // MIX off scenario: only airport-b is enabled. Airport-a is disabled
+        // but its nodes are held by stable node IDs from a chain hop (hop_a)
+        // and an explicit pool member (pool_a). idle_a is unreferenced in
+        // the disabled subscription and must NOT enter the build node list.
+        let mut store = AppStore::default();
+        let mut sub_a = sample_url_sub("airport-a");
+        sub_a.id = "sub-airport-a".into();
+        sub_a.enabled = false;
+        let mut sub_b = sample_url_sub("airport-b");
+        sub_b.id = "sub-airport-b".into();
+        let mut hop_a = sample_hy2("hop-a", "日本 前置");
+        hop_a.server = "hop-a.example.test".into();
+        let mut pool_a = sample_hy2("pool-a", "香港 池成员");
+        pool_a.server = "pool-a.example.test".into();
+        let mut idle_a = sample_hy2("idle-a", "香港 未引用");
+        idle_a.server = "idle-a.example.test".into();
+        let mut exit_b = sample_hy2("exit-b", "出口 B");
+        exit_b.server = "exit-b.example.test".into();
+        store
+            .upsert_subscription(sub_a, vec![hop_a.clone(), pool_a.clone(), idle_a])
+            .unwrap();
+        store
+            .upsert_subscription(sub_b, vec![exit_b.clone()])
+            .unwrap();
+
+        // Historic enabled-only source stays exactly as before.
+        assert_eq!(
+            store
+                .enabled_nodes()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b"]
+        );
+
+        store.pools.push(NodePool::new(
+            "Explicit Pool",
+            PoolMode::Explicit {
+                node_ids: vec![pool_a.id.clone()],
+            },
+        ));
+        // A keyword pool matching idle_a's name must NOT collect it.
+        store.pools.push(NodePool::new(
+            "Keyword Pool",
+            PoolMode::Keyword {
+                include: vec!["香港".into()],
+                exclude: vec![],
+            },
+        ));
+        store.chains.push(ProxyChain::new(
+            "Chain",
+            vec![
+                ChainHop::Node {
+                    node_id: hop_a.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit_b.id.clone(),
+                },
+            ],
+        ));
+
+        // Referenced-collection: chain node hops + explicit pool members,
+        // nothing else (keyword pools and unreferenced nodes excluded).
+        assert_eq!(
+            store.chain_referenced_node_ids(),
+            [hop_a.id.clone(), pool_a.id.clone(), exit_b.id.clone()]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+
+        // Union source: enabled prefix first (keyword-match universe), then
+        // the chain-referenced disabled nodes in stored order. Keyword pools
+        // re-match only the enabled prefix at build time, so idle_a stays out
+        // even though its name matches the Keyword Pool above.
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b", "hop-a", "pool-a"]
+        );
+
+        // Removing the references (chain hop re-pinned to an enabled node)
+        // drops the collected nodes again — union stays reactive.
+        store.chains.clear();
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b", "pool-a"]
+        );
+        store.pools.retain(|p| p.name != "Explicit Pool");
+        assert_eq!(
+            store
+                .enabled_nodes_with_chain_refs()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["exit-b"]
+        );
+    }
+
+    #[test]
+    fn chain_virtual_selection_survives_refresh_and_delete_guard_works() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("airport");
+        let entry = sample_hy2("entry-1", "入口");
+        let exit = sample_hy2("exit-1", "出口");
+        store
+            .upsert_subscription(sub.clone(), vec![entry.clone(), exit.clone()])
+            .unwrap();
+        let chain = ProxyChain::new(
+            "日美",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        store.chains.push(chain.clone());
+        let virtual_id = chain_virtual_node_id(&chain.id);
+
+        // Chain selection survives ensure_current_node_valid…
+        store.settings.current_node_id = Some(virtual_id.clone());
+        store.ensure_current_node_valid();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(virtual_id.as_str())
+        );
+
+        // …and is never written into per-subscription memory (the first
+        // upsert already remembered a real node — a virtual remember must
+        // leave that map byte-identical).
+        let memory_before = store.selected_nodes_by_subscription.clone();
+        store.remember_current_node();
+        assert_eq!(store.selected_nodes_by_subscription, memory_before);
+        assert!(!memory_before.values().any(|id| id == &virtual_id));
+
+        // A subscription refresh (rebuilds nodes, re-runs ensure) cannot
+        // wash the chain selection away.
+        store
+            .upsert_subscription(sub, vec![entry.clone(), exit.clone()])
+            .unwrap();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(virtual_id.as_str())
+        );
+
+        // Delete guard: the selected exit refuses deletion…
+        let err = store
+            .delete_chain(&chain.id)
+            .expect_err("selected chain must refuse deletion");
+        assert!(err.to_string().contains("当前出口"), "{err}");
+        // …but after switching away to a real node it deletes cleanly.
+        store.settings.current_node_id = Some(exit.id.clone());
+        store
+            .delete_chain(&chain.id)
+            .expect("unselected chain deletes");
+        assert!(store.chains.is_empty());
+    }
+
+    #[test]
+    fn ensure_current_node_valid_falls_back_when_selected_chain_vanishes() {
+        // A stale chain:<id> selection (hand-edited store.json, or a chain
+        // removed by another version) falls back to the remembered / first
+        // enabled node instead of pointing at nothing.
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("airport");
+        let node = sample_hy2("node-1", "节点");
+        store.upsert_subscription(sub, vec![node.clone()]).unwrap();
+        store.settings.current_node_id = Some("chain:chain-deadbeef".into());
+        store.ensure_current_node_valid();
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(node.id.as_str())
+        );
+    }
+
+    /// E (链毕业批) shared fixture: sub A (jump/entry hop), sub B (exit
+    /// hop), two-hop chain across them, chain exit currently selected.
+    fn chain_exit_death_store() -> (AppStore, String, String, String, String) {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let mut store = AppStore::default();
+        let sub_a = sample_url_sub("alpha");
+        let sub_b = sample_url_sub("beta");
+        let entry = sample_hy2("entry-1", "入口");
+        let exit = sample_hy2("exit-1", "出口");
+        store
+            .upsert_subscription(sub_a, vec![entry.clone()])
+            .unwrap();
+        store
+            .upsert_subscription(sub_b, vec![exit.clone()])
+            .unwrap();
+        let chain = ProxyChain::new(
+            "跨链",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let chain_id = chain.id.clone();
+        store.chains.push(chain);
+        store.settings.current_node_id =
+            Some(chain_virtual_node_id(&chain_id));
+        (
+            store,
+            chain_id,
+            entry.id,
+            exit.id,
+            "id-beta".to_string(),
+        )
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_when_hop_subscription_disabled() {
+        let (mut store, chain_id, entry_id, exit_id, sub_b) = chain_exit_death_store();
+        // 返修③: entry_id is a chain hop and is now excluded from the
+        // fallback candidates — add a non-hop spare to sub A so the shared
+        // priority still has a legal landing node.
+        let spare = sample_hy2("spare-1", "备用");
+        let spare_id = spare.id.clone();
+        store.nodes.push(StoredNode {
+            subscription_id: "id-alpha".into(),
+            node: spare,
+            latency_method: None,
+            latency_error: None,
+        });
+        // Sanity: alive chain — no death, selection untouched.
+        assert!(store.active_chain_exit_death().is_none());
+        assert_eq!(
+            store.settings.current_node_id.as_deref(),
+            Some(crate::domain::chain_virtual_node_id(&chain_id).as_str())
+        );
+
+        // The E 口径: disabling the exit hop's source subscription kills the
+        // active chain exit → auto-deactivate with the shared fallback
+        // priority (sub A's remembered node wins) + a death record for the
+        // user-visible notice.
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == sub_b)
+            .unwrap()
+            .enabled = false;
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("disabled exit-hop subscription must auto-deactivate");
+        assert_eq!(death.chain_id, chain_id);
+        assert!(death.reason.contains("第 2 跳"), "reason: {}", death.reason);
+        // 返修③: entry_id is a chain hop → excluded; the fallback lands on
+        // the non-hop spare instead of looping back onto the chain.
+        assert_ne!(store.settings.current_node_id.as_deref(), Some(entry_id.as_str()));
+        assert_eq!(store.settings.current_node_id.as_deref(), Some(spare_id.as_str()));
+        // The remembered-node slot was re-pointed at the fallback, not left
+        // on the virtual id.
+        assert!(!store
+            .selected_nodes_by_subscription
+            .values()
+            .any(|id| id.starts_with("chain:")));
+        assert!(store.find_node(&exit_id).is_some(), "node itself stays stored");
+    }
+
+    #[test]
+    /// 返修③: the deactivate fallback must never land on a hop of the
+    /// deactivated chain — even when a hop is the source subscription's
+    /// remembered node (the top-priority fallback candidate). With the chain
+    /// still the current exit, the shared fallback excludes every hop from
+    /// the candidate universe, so the single non-hop node wins instead of
+    /// the remembered hop.
+    fn chain_deactivate_fallback_never_lands_on_a_chain_hop() {
+        let (mut store, chain_id, entry_id, exit_id, sub_b) = chain_exit_death_store();
+        // Add a non-hop spare node to sub A so the exclusion still has a
+        // legal landing node.
+        let spare = sample_hy2("spare-1", "备用");
+        let spare_id = spare.id.clone();
+        store.nodes.push(StoredNode {
+            subscription_id: "id-alpha".into(),
+            node: spare,
+            latency_method: None,
+            latency_error: None,
+        });
+        // Point the remembered slot of the still-enabled sub B at the exit
+        // hop itself — the pathological "remembered node is a chain hop"
+        // shape that used to let the fallback land back on the chain.
+        store
+            .selected_nodes_by_subscription
+            .insert(sub_b.clone(), exit_id.clone());
+
+        // Direct helper check: hops are excluded from the candidate universe.
+        let enabled = store.enabled_nodes();
+        let target = store
+            .chain_exit_fallback_target_in_excluding_chain(&enabled, &chain_id)
+            .expect("non-hop spare must survive the exclusion");
+        assert_ne!(target, entry_id, "entry hop excluded");
+        assert_ne!(target, exit_id, "remembered exit hop still excluded");
+        assert_eq!(target, spare_id, "only the non-hop spare remains");
+
+        // End-to-end: deactivate with the chain still the current exit — the
+        // remembered exit hop must NOT win; the spare must.
+        store.settings.current_node_id =
+            Some(crate::domain::chain_virtual_node_id(&chain_id));
+        let fallback = store
+            .chain_exit_fallback_target()
+            .expect("fallback must resolve");
+        assert_eq!(fallback, spare_id);
+        assert!(store.find_node(&fallback).is_some(), "plain node, not virtual");
+    }
+
+    #[test]
+    /// 追加1：显式池编辑保存自愈——失效成员 id 自动剔除后正常保存，不再
+    /// 整单报错；剔光存为合法空池；pruned 计数随结果返回。add 不放松。
+    fn update_pool_heals_dangling_explicit_members() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("alpha");
+        let node = sample_hy2("entry-1", "入口");
+        let node_id = node.id.clone();
+        store.upsert_subscription(sub, vec![node]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![node_id.clone(), "gone-1".into()],
+            },
+        );
+        store.pools.push(pool.clone());
+        let (saved, pruned) = store
+            .update_pool(&pool.id, "池", pool.mode.clone())
+            .expect("healed save must succeed");
+        assert_eq!(pruned, 1, "one dangling id pruned");
+        assert!(matches!(&saved.mode, PoolMode::Explicit { node_ids } if node_ids == &[node_id.clone()]));
+        // add（create_pool）维持原校验：失效 id 仍然拒绝。
+        assert!(store
+            .create_pool("新池", PoolMode::Explicit { node_ids: vec!["gone-1".into()] })
+            .is_err());
+        // 剔光 → 合法空池，不擅自删池。
+        let (emptied, pruned) = store
+            .update_pool(
+                &pool.id,
+                "池",
+                PoolMode::Explicit {
+                    node_ids: vec!["gone-1".into(), "gone-2".into()],
+                },
+            )
+            .expect("all-dangling save must land as empty pool");
+        assert_eq!(pruned, 2);
+        assert!(matches!(&emptied.mode, PoolMode::Explicit { node_ids } if node_ids.is_empty()));
+        assert!(store.pools.iter().any(|p| p.id == pool.id), "pool itself kept");
+    }
+
+    #[test]
+    /// 追加2：delete_node 同步清扫引用该节点的显式池名单（delete_nodes
+    /// 循环复用同一路径）。
+    fn delete_node_sweeps_explicit_pool_membership() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub = sample_url_sub("alpha");
+        let a = sample_hy2("entry-1", "A");
+        let b = sample_hy2("entry-2", "B");
+        let (a_id, b_id) = (a.id.clone(), b.id.clone());
+        store.upsert_subscription(sub, vec![a, b]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![a_id.clone(), b_id.clone()],
+            },
+        );
+        store.pools.push(pool);
+        store.delete_node(&a_id).expect("delete");
+        let pool = &store.pools[0];
+        assert!(matches!(&pool.mode, PoolMode::Explicit { node_ids } if node_ids == &[b_id]));
+    }
+
+    #[test]
+    /// 追加2：remove_subscription 与订阅刷新替换（persist_import_replacing
+    /// 的存储层形态）同样清扫显式池名单。
+    fn removal_and_refresh_sweep_explicit_pool_membership() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let sub_a = sample_url_sub("alpha");
+        let sub_b = sample_url_sub("beta");
+        let a = sample_hy2("entry-1", "A");
+        let a_id = a.id.clone();
+        let b = sample_hy2("entry-2", "B");
+        let b_id = b.id.clone();
+        store.upsert_subscription(sub_a, vec![a]).unwrap();
+        store.upsert_subscription(sub_b, vec![b.clone()]).unwrap();
+        let pool = crate::domain::NodePool::new(
+            "池",
+            PoolMode::Explicit {
+                node_ids: vec![a_id.clone(), b_id.clone()],
+            },
+        );
+        store.pools.push(pool.clone());
+
+        // 订阅删除：其节点从显式池名单同步清除。
+        store.remove_subscription("id-alpha").expect("remove");
+        assert!(matches!(&store.pools[0].mode, PoolMode::Explicit { node_ids } if node_ids == &[b_id.clone()]));
+
+        // 刷新替换：sub B 换内容后 entry-2 消失 → 名单再清扫（persist_import
+        // 的替换路径走的就是这条 upsert_subscription 路径）。换 server 才算
+        // 真实消失——同 server 同凭据的节点会被 identity 匹配收养并保留旧 id。
+        let mut fresh = sample_hy2("entry-9", "新");
+        fresh.server = "203.10.98.199".into();
+        let sub_b2 = sample_url_sub("beta");
+        store
+            .upsert_subscription(sub_b2, vec![fresh])
+            .expect("refresh replaces");
+        assert!(matches!(&store.pools[0].mode, PoolMode::Explicit { node_ids } if node_ids.is_empty()));
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_ignores_inactive_chains() {
+        // Non-active chain with the SAME broken hop shape: current is a plain
+        // node — the helper must stay a no-op (existing H3 badge territory).
+        let (mut store, _chain_id, _entry_id, exit_id, sub_b) = chain_exit_death_store();
+        store.settings.current_node_id = Some(exit_id.clone());
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == sub_b)
+            .unwrap()
+            .enabled = false;
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
+        assert_eq!(store.settings.current_node_id.as_deref(), Some(exit_id.as_str()));
+    }
+
+    #[test]
+    fn auto_deactivate_dead_chain_exit_covers_pool_and_empty_universe() {
+        use crate::domain::{ChainHop, NodePool, PoolMode};
+
+        // Pool hop deleted → death.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        let pool = NodePool {
+            id: "pool-1".into(),
+            name: "池".into(),
+            mode: PoolMode::Explicit {
+                node_ids: vec!["exit-1".into()],
+            },
+        };
+        store.pools.push(pool);
+        store.chains[0].hops[1] = ChainHop::Pool {
+            pool_id: "pool-1".into(),
+        };
+        store.pools.clear();
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("deleted hop pool must auto-deactivate");
+        assert!(death.reason.contains("第 2 跳"), "reason: {}", death.reason);
+
+        // Empty enabled universe: fallback clears the selection instead of
+        // pointing at nothing.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.subscriptions.iter_mut().for_each(|sub| sub.enabled = false);
+        let death = store
+            .auto_deactivate_dead_chain_exit()
+            .expect("all-hop-subscriptions disabled must auto-deactivate");
+        assert!(store.settings.current_node_id.is_none());
+        assert!(!death.reason.is_empty());
+
+        // New-policy mirrors the select-time gates: kernel-auto owns the
+        // group and chains are sing-box generated-profile only.
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.settings.auto_select = crate::domain::AutoSelectMode::Kernel;
+        store
+            .subscriptions
+            .iter_mut()
+            .find(|sub| sub.id == _sub_b)
+            .unwrap()
+            .enabled = false;
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
+        let (mut store, _chain_id, _entry, _exit, _sub_b) = chain_exit_death_store();
+        store.settings.core_type = "xray".into();
+        assert!(store.auto_deactivate_dead_chain_exit().is_none());
+    }
+
+    #[test]
     fn manual_adoption_does_not_merge_ambiguous_backends_or_same_names() {
         for different_password in [false, true] {
             let mut store = AppStore::default();
@@ -6433,6 +7261,88 @@ mod tests {
     }
 
     #[test]
+    fn subscription_pool_rejects_blank_id_but_tolerates_missing_subscription() {
+        use crate::domain::PoolMode;
+        let mut store = AppStore::default();
+        let err = store
+            .create_pool(
+                "空 id",
+                PoolMode::Subscription {
+                    subscription_id: "   ".into(),
+                },
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("必须选择一个订阅"));
+        // A dangling (deleted / never-existed) subscription id stays legal —
+        // the pool is simply empty until the subscription comes back.
+        store
+            .create_pool(
+                "悬空池",
+                PoolMode::Subscription {
+                    subscription_id: "no-such-sub".into(),
+                },
+            )
+            .expect("missing subscription must be tolerated");
+    }
+
+    #[test]
+    fn enabled_subscription_member_ids_groups_enabled_universe_in_store_order() {
+        use crate::domain::{Protocol, ProtocolConfig, ProxyNode};
+        let mk = |id: &str, sub: &str| StoredNode {
+            subscription_id: sub.into(),
+            node: ProxyNode {
+                id: id.into(),
+                name: format!("节点 {id}"),
+                protocol: Protocol::Trojan,
+                server: "example.com".into(),
+                port: 443,
+                tls: None,
+                transport: None,
+                udp: None,
+                config: ProtocolConfig::Trojan {
+                    password: "pw".into(),
+                },
+                source: None,
+                raw: None,
+                latency_ms: None,
+                latency_at: None,
+            },
+            latency_method: None,
+            latency_error: None,
+        };
+        let mut store = AppStore::default();
+        let mut sub_a = sample_url_sub("airport-a");
+        sub_a.id = "sub-a".into();
+        let mut sub_b = sample_url_sub("airport-b");
+        sub_b.id = "sub-b".into();
+        sub_b.enabled = false;
+        store.subscriptions.push(sub_a);
+        store.subscriptions.push(sub_b);
+        store.nodes.push(mk("n1", "sub-a"));
+        store.nodes.push(mk("n2", "sub-b"));
+        store.nodes.push(mk("n3", "sub-a"));
+        let map = store.enabled_subscription_member_ids();
+        // Enabled subscription keeps store-ordered members; the disabled
+        // one has no entry; a deleted subscription id is simply absent.
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map.get("sub-a"),
+            Some(&vec!["n1".to_string(), "n3".to_string()])
+        );
+        assert!(!map.contains_key("sub-b"));
+        assert!(!map.contains_key("sub-deleted"));
+        // Subscription pools must not widen chain-referenced ids (that
+        // closure stays explicit-only by design).
+        store.pools.push(crate::domain::NodePool::new(
+            "订阅池",
+            crate::domain::PoolMode::Subscription {
+                subscription_id: "sub-a".into(),
+            },
+        ));
+        assert!(store.chain_referenced_node_ids().is_empty());
+    }
+
+    #[test]
     fn delete_pool_blocked_while_a_chain_references_it() {
         // Deleting a pool a chain depends on would leave that chain with a
         // dangling hop — the config builder degrades that to "chain absent"
@@ -6461,6 +7371,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let err = store.delete_pool(&pool.id).unwrap_err();
@@ -6486,6 +7397,7 @@ mod tests {
                 vec![ChainHop::Node {
                     node_id: "n1".into(),
                 }],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("至少需要 2 跳"));
@@ -6507,6 +7419,7 @@ mod tests {
                         node_id: "does-not-exist".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点"));
@@ -6522,6 +7435,7 @@ mod tests {
                         pool_id: "pool-nope".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点池"));
@@ -6544,6 +7458,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         // The set must hold at least one effective rule: an empty set emits
@@ -6588,6 +7503,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
 
@@ -6649,6 +7565,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let chain_rule = |name: &str| {
@@ -6723,6 +7640,7 @@ mod tests {
                         node_id: "n2".into(),
                     },
                 ],
+                None,
             )
             .unwrap();
         let err = store
@@ -6737,10 +7655,75 @@ mod tests {
                         node_id: "gone".into(),
                     },
                 ],
+                None,
             )
             .unwrap_err();
         assert!(err.to_string().contains("不存在的节点"));
         // Original hops must survive a rejected update.
         assert_eq!(store.chains[0].hops.len(), 2);
+    }
+
+    #[test]
+    fn rename_chain_auto_only_touches_auto_named_chains() {
+        use crate::domain::ChainHop;
+        let mut store = AppStore::default();
+        store.nodes.push(mk_stored_node("n1", "香港"));
+        store.nodes.push(mk_stored_node("n2", "日本"));
+        let hops = vec![
+            ChainHop::Node {
+                node_id: "n1".into(),
+            },
+            ChainHop::Node {
+                node_id: "n2".into(),
+            },
+        ];
+        let auto = store
+            .create_chain("香港 → 日本", hops.clone(), Some(false))
+            .unwrap();
+        let manual = store
+            .create_chain("我的链", hops.clone(), Some(true))
+            .unwrap();
+        let legacy = store.create_chain("旧链", hops, None).unwrap();
+
+        // Auto-named chains follow the fresh label.
+        let renamed = store
+            .rename_chain_auto(&auto.id, "新香港 → 新日本")
+            .unwrap()
+            .expect("auto chain should be renamed");
+        assert_eq!(renamed.name, "新香港 → 新日本");
+        assert_eq!(store.chains[0].name, "新香港 → 新日本");
+        // The marker survives (still follows on the next sync).
+        assert_eq!(store.chains[0].name_manual, Some(false));
+
+        // Manual and legacy (flag absent) names never move.
+        assert!(store
+            .rename_chain_auto(&manual.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .rename_chain_auto(&legacy.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+        assert_eq!(store.chains[1].name, "我的链");
+        assert_eq!(store.chains[2].name, "旧链");
+
+        // A would-be duplicate is a no-op, as are empty / over-long names.
+        assert!(store
+            .rename_chain_auto(&auto.id, "我的链")
+            .unwrap()
+            .is_none());
+        assert!(store.rename_chain_auto(&auto.id, "   ").unwrap().is_none());
+        let long: String = "名".repeat(65);
+        assert!(store.rename_chain_auto(&auto.id, &long).unwrap().is_none());
+        assert_eq!(store.chains[0].name, "新香港 → 新日本");
+
+        // No-op rename (same name) stays None — nothing to write.
+        assert!(store
+            .rename_chain_auto(&auto.id, "新香港 → 新日本")
+            .unwrap()
+            .is_none());
+
+        // Unknown chain id is an error, not a silent pass.
+        assert!(store.rename_chain_auto("chain-不存在", "x").is_err());
     }
 }
