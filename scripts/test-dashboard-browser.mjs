@@ -527,13 +527,16 @@ try {
     return Math.abs(a.left - i.left) < 1 && Math.abs(a.right - i.right) < 1 &&
       Math.abs(a.top - i.top) < 1 && Math.abs(a.bottom - i.bottom) < 1;
   }, 1);
-  assert.equal(await navButtons.nth(1).getAttribute('class'), 'topnav-item active', '文字导航切换为节点页');
-  assert.equal(await navButtons.nth(0).getAttribute('class'), 'topnav-item', '概览退出选中态');
+  // TopNav 的类名构造为 `topnav-item ${active ? "active" : ""}`，非选中项带尾随空
+  // 白；选中态用 classList 语义断言，不依赖完整字符串拼写。
+  const navState = i => navButtons.nth(i).evaluate(el => ({ item: el.classList.contains("topnav-item"), active: el.classList.contains("active") }));
+  assert.deepEqual(await navState(1), { item: true, active: true }, '文字导航切换为节点页');
+  assert.deepEqual(await navState(0), { item: true, active: false }, '概览退出选中态');
   assert.notEqual(await page.locator('.topnav-indicator').evaluate(el => getComputedStyle(el).transitionDuration), '0s', '标准模式保留顶部导航动效');
   for (let index = 2; index < 6; index++) {
     await navButtons.nth(index).click();
-    assert.equal(await navButtons.nth(index).getAttribute('class'), 'topnav-item active');
-    assert.equal(await navButtons.nth(index - 1).getAttribute('class'), 'topnav-item');
+    assert.deepEqual(await navState(index), { item: true, active: true });
+    assert.deepEqual(await navState(index - 1), { item: true, active: false });
   }
   await page.evaluate(() => window.dashboardFixture.setMotion('reduced'));
   await navButtons.nth(0).click();
@@ -547,6 +550,9 @@ try {
   await cardMotion(true);
   await page.evaluate(() => window.dashboardFixture.setMotion('system'));
   await page.emulateMedia({ reducedMotion: "reduce" });
+  // matchMedia 的 change 事件在 emulateMedia 应用后的下一帧才派发，
+  // 先有界等待监听器落地再断言。
+  await page.waitForFunction(() => document.documentElement.dataset.motionReduced === 'true', null, { timeout: 3000 }).catch(() => {});
   assert.equal(await page.evaluate(() => document.documentElement.dataset.motionReduced), 'true', '系统模式跟随系统减少动态');
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.evaluate(() => window.dashboardFixture.setMotion('standard'));

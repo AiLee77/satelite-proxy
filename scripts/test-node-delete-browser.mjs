@@ -158,12 +158,17 @@ try {
       await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
-      // 在列表底部改变实际容器宽度，核对重新分行及占位高度。
+      // 在列表底部改变实际容器宽度，核对重新分行及占位高度。先等网格按
+      // 新宽度完成重排列（ResizeObserver→React 重渲染是异步的，慢机上
+      // 抢跑读 scrollHeight 会拿到旧列数的总高，滚底变成滚到中部，尾部
+      // 节点永不进窗口）。
       await page.setViewportSize({ width: Math.max(720, width - 180), height: 900 });
+      await settledGrid();
       await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
       await page.setViewportSize({ width, height: 900 });
+      await settledGrid();
       await page.locator(".main").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.locator('.node-card[data-node-id="node-602"]').waitFor();
       await layout(true);
