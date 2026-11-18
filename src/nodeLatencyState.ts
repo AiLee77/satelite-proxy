@@ -29,6 +29,17 @@ export function isRealLatencyMethod(method?: string | null): boolean {
   return method === "clash_api" || !!method?.endsWith("_http");
 }
 
+/** 测速失败即删除候选：已测过（latency_at 非空）且最近一次分类属于节点自身的失败。
+ *  命中 timeout/connection/http/tls/config/failed，这些是节点质量问题；
+ *  unsupported（压根没测成）与 core/missing_core（本地内核问题，不是节点的错）不计。
+ *  成功（latency_ms 有效）的节点自然不在列。 */
+export function isTimedOutNode(node: LatencyFields): boolean {
+  if (node.latency_at == null) return false;
+  const { kind } = latencyState(node);
+  return kind === "timeout" || kind === "connection" || kind === "http" ||
+    kind === "tls" || kind === "config" || kind === "failed";
+}
+
 /** 与 store 的 reachability_only 判定一致，精确匹配旧版可达性提示。
  * `unsupported:` 是本次节点参数探测的有效结果，必须正常接受。 */
 function isReachabilityOnly(update: LatencyFields): boolean {

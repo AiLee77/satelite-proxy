@@ -24,7 +24,8 @@ test("流式回包可清除旧标记，空结果不影响其他节点", () => {
 test("分组按钮复用单点批量测速并隔离折叠事件，独立订阅列保留最小宽度", () => {
   const page = readFileSync(new URL("../src/pages/NodesPage.tsx", import.meta.url), "utf8");
   assert.match(page, /event\.stopPropagation\(\);\s*void onTestNodes\(item\.nodes\.map/);
-  assert.match(page, /customRuntime \|\| item\.nodes\.length === 0/);
+  // Chain 组（E3 虚拟链条目）不渲染测速按钮。
+  assert.match(page, /customRuntime \|\| item\.key === "__chains" \|\| item\.nodes\.length === 0/);
   assert.match(page, /className="node-list-sub"/);
   assert.match(page, /minmax\(260px,3fr\) minmax\(160px,1\.4fr\)/);
   assert.match(page, /setTestingGroupKey\(null\)/);

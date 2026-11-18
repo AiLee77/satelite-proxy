@@ -1,6 +1,7 @@
 export type NavKey =
   | "dashboard"
   | "config"
+  | "chains"
   | "nodes"
   | "traffic"
   | "logs"
@@ -371,6 +372,16 @@ export interface ProxyNode {
   subscription_name?: string;
   /** Present from list_all_nodes — true if the node id is in favorite_nodes. */
   favorite?: boolean;
+  /** Present ONLY on virtual chain entries (v2rayN-style "chain as exit"):
+   *  the chain's hop count. The entry id is `chain:<chain_id>` and its name
+   *  is the chain name; placeholder protocol/server fields carry no meaning.
+   *  Branch on this marker, never on the placeholder fields. */
+  chain_hops?: number | null;
+  /** Node listing only (`list_chain_nodes`): false when the owning
+   *  subscription is currently disabled. Keyword pools stay enabled-only by
+   *  mirroring this flag; absent = legacy listing without the information
+   *  (treated as enabled). */
+  enabled?: boolean;
   /** Full protocol parameters (serde-flattened from Rust; always present on
    * list_all_nodes payloads, optional so summary-shaped consumers still type). */
   config?: ProtocolConfig;
@@ -929,12 +940,20 @@ export interface Rule {
 /** How a reusable node pool selects its live members. */
 export type PoolMode =
   | { mode: "explicit"; node_ids: string[] }
-  | { mode: "keyword"; include: string[]; exclude: string[] };
+  | { mode: "keyword"; include: string[]; exclude: string[] }
+  | { mode: "subscription"; subscription_id: string };
 
 export interface NodePool {
   id: string;
   name: string;
   mode: PoolMode;
+}
+
+/** update_pool 的返回：pool 为保存后的池，pruned = 保存时自动剔除的
+ *  失效成员数（显式池悬空引用自愈，0 = 无剔除/其他模式）。 */
+export interface UpdatePoolResult {
+  pool: NodePool;
+  pruned: number;
 }
 
 export type ChainHop =
@@ -945,6 +964,10 @@ export interface ProxyChain {
   id: string;
   name: string;
   hops: ChainHop[];
+  /** 名称来源标记（additive，旧后端可缺省）：false = 编辑器按跳生成的
+   *  「A → B」自动名且从未手改——UI 会随节点改名同步重算；true/缺省 =
+   *  手动命名，永不自动改写。纯元数据，生成配置按 id 引用链。 */
+  name_manual?: boolean | null;
 }
 
 export interface ChainHopDiag {

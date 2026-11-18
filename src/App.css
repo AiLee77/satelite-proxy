@@ -1839,6 +1839,14 @@ button {
   white-space: nowrap;
 }
 
+/* Virtual chain entry marker (nodes list/grid + simple mode): same
+   outlined-box family, tinted with the primary accent so a chain stands
+   out from delegation badges. */
+.sidecar-tag.chain {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
 /* —— Version tab: app bar (full width under the kernel cards) ——
    Two compact lines: identity + versions + actions, then a quiet meta strip
    (last check · platform · stack · exe path) and the link row. */
@@ -2114,6 +2122,28 @@ button {
 .core-download-toast-name {
   font-weight: 600;
   font-size: 0.82rem;
+}
+
+/* E（链毕业批）：链出口被后端自动停用的全局通知。左下角沉底，与右下角
+   core-download-toast 错位不遮碰；玻璃配方复用同款 token。 */
+.chain-auto-toast {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
+  max-width: min(26rem, calc(100vw - 2.5rem));
+  padding: 0.7rem 0.85rem;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-modal);
+  backdrop-filter: blur(20px) saturate(1.42) brightness(0.96);
+  -webkit-backdrop-filter: blur(20px) saturate(1.42) brightness(0.96);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+  animation: core-download-toast-in 0.18s ease-out;
 }
 
 .core-download-toast-head .lat-spinner {
@@ -2612,6 +2642,37 @@ button.node-card.active,
 .node-card.selected,
 .node-list-row.row-selected {
   background: var(--primary-muted) !important;
+}
+
+/* —— 链条款高亮调柔和：链虚拟条目复用通用行高亮过强——整行实底
+   （--primary-muted）降为轻染 + 左缘细条，链与普通节点一眼可分；
+   链条目以 .sidecar-tag.chain 徽标为标记（:has 纯 CSS，不改 JS）。
+   普通节点行保持原语义不动。 —— */
+.node-list-row:has(.sidecar-tag.chain).row-active {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.node-list-row:has(.sidecar-tag.chain).row-selected {
+  border-color: var(--primary-border);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
+}
+
+.node-card:has(.sidecar-tag.chain).selected {
+  border-color: var(--primary-border);
+  background:
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
 }
 
 .node-card.selected {
@@ -4652,7 +4713,7 @@ tr.rule-row:hover {
 }
 
 /* buttons — exclude nav/seg/icon/node cards/switch/menu/radio from primary */
-button:not(.nav-item):not(.topnav-item):not(.seg):not(.icon-btn):not(.node-card):not(.rule-menu-trigger):not(.rule-menu-item):not(.sub-menu-trigger):not(.sub-menu-item):not(.btn-pill):not(.solid-select-trigger):not(.solid-select-option):not(.topnav-theme-btn):not(.ui-mode-menu-trigger):not(.ui-mode-menu-item):not(.simple-orbit-btn):not(.simple-node-item):not(.simple-node-card):not(.simple-link-row):not(.glass-btn):not(.glass-switch):not(.tray-icon-pick):not(.simple-spark):not(.simple-hero-traffic):not(.simple-hero-subs):not(.corner-link):not(.core-radio):not(.node-select-dot):not(.node-latency-action):not(.node-context-menu-item):not(.react-flow__controls-button):not(.node-fav-btn):not(.node-group-test-btn):not(.dashboard-rate-card__open) {
+button:not(.nav-item):not(.topnav-item):not(.seg):not(.icon-btn):not(.node-card):not(.rule-menu-trigger):not(.rule-menu-item):not(.sub-menu-trigger):not(.sub-menu-item):not(.btn-pill):not(.solid-select-trigger):not(.solid-select-option):not(.topnav-theme-btn):not(.ui-mode-menu-trigger):not(.ui-mode-menu-item):not(.simple-orbit-btn):not(.simple-node-item):not(.simple-node-card):not(.simple-link-row):not(.glass-btn):not(.glass-switch):not(.tray-icon-pick):not(.simple-spark):not(.simple-hero-traffic):not(.simple-hero-subs):not(.corner-link):not(.core-radio):not(.node-select-dot):not(.node-latency-action):not(.node-context-menu-item):not(.react-flow__controls-button):not(.node-fav-btn):not(.node-group-test-btn):not(.dashboard-rate-card__open):not(.chain-candidate-group-head) {
   border-radius: var(--radius-pill);
   border: 1px solid transparent;
   padding: 0.42rem 0.95rem;
@@ -4665,7 +4726,7 @@ button:not(.nav-item):not(.topnav-item):not(.seg):not(.icon-btn):not(.node-card)
   color: var(--on-primary);
 }
 
-button:not(.nav-item):not(.topnav-item):not(.seg):not(.icon-btn):not(.node-card):not(.rule-menu-trigger):not(.rule-menu-item):not(.sub-menu-trigger):not(.sub-menu-item):not(.btn-pill):not(.solid-select-trigger):not(.solid-select-option):not(.topnav-theme-btn):not(.ui-mode-menu-trigger):not(.ui-mode-menu-item):not(.simple-orbit-btn):not(.simple-node-item):not(.simple-node-card):not(.simple-link-row):not(.glass-btn):not(.glass-switch):not(.tray-icon-pick):not(.simple-spark):not(.simple-hero-traffic):not(.simple-hero-subs):not(.corner-link):not(.core-radio):not(.node-select-dot):not(.node-latency-action):not(.node-context-menu-item):not(.react-flow__controls-button):not(.node-fav-btn):not(.node-group-test-btn):not(.dashboard-rate-card__open):hover:not(:disabled) {
+button:not(.nav-item):not(.topnav-item):not(.seg):not(.icon-btn):not(.node-card):not(.rule-menu-trigger):not(.rule-menu-item):not(.sub-menu-trigger):not(.sub-menu-item):not(.btn-pill):not(.solid-select-trigger):not(.solid-select-option):not(.topnav-theme-btn):not(.ui-mode-menu-trigger):not(.ui-mode-menu-item):not(.simple-orbit-btn):not(.simple-node-item):not(.simple-node-card):not(.simple-link-row):not(.glass-btn):not(.glass-switch):not(.tray-icon-pick):not(.simple-spark):not(.simple-hero-traffic):not(.simple-hero-subs):not(.corner-link):not(.core-radio):not(.node-select-dot):not(.node-latency-action):not(.node-context-menu-item):not(.react-flow__controls-button):not(.node-fav-btn):not(.node-group-test-btn):not(.dashboard-rate-card__open):not(.chain-candidate-group-head):hover:not(:disabled) {
   background: var(--primary-hover);
   box-shadow: 0 0 14px var(--primary-glow);
 }
@@ -9710,6 +9771,17 @@ button.simple-node-item:hover:not(:disabled) {
 .simple-node-item.selected {
   border-color: var(--primary-border);
   background: var(--primary-muted) !important;
+}
+
+/* 链条款高亮调柔和（简洁模式）：同专业列表——轻染 + 左缘细条。 */
+.simple-node-item:has(.sidecar-tag.chain).selected {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
 }
 
 .simple-node-proto {

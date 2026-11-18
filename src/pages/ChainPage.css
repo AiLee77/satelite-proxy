@@ -167,6 +167,33 @@
   border-bottom: none;
 }
 
+/* Subscription tag on pool/editor/candidate rows — with the cross-subscription
+   node listing (list_chain_nodes) users need to tell which config a node came
+   from, and rows from a currently-disabled config dim slightly. */
+.chain-node-sub {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 9rem;
+  flex: none;
+}
+
+.chain-pool-node-item[data-disabled] > span:first-of-type,
+.chain-candidate-item[data-disabled] {
+  opacity: 0.55;
+}
+
+/* Transient feedback banner after copy/export menu actions (ChainPage). */
+.chain-page-notice {
+  font-size: 12px;
+  margin: 0;
+  padding: 0.2rem 0 0.8rem;
+}
+
 .chain-list {
   display: flex;
   flex-direction: column;
@@ -290,6 +317,14 @@
   text-align: center;
 }
 
+/* I6：跳名旁的最近延迟小字（纯显示既有 latency_ms 缓存）。 */
+.chain-station-latency {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .chain-flow-glyph {
   flex: none;
 }
@@ -308,13 +343,95 @@
   background: var(--danger);
 }
 
-/* Usage hints — preset-library info only, no runtime state on this page. */
-.chain-card-usage {
-  color: var(--accent-purple);
+/* G2: card-face diagnose affordance — same square footprint (1.85rem) as
+ *  the ⋮ RuleMenu trigger so the two read as one cluster on the card edge. */
+.chain-card-diag.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  font-size: 1rem;
 }
 
-.chain-card-usage.none {
-  opacity: 0.75;
+/* G2: share/export actions pulled left in the chain editor footer — the
+ *  global .modal-footer packs right, so the cluster owns the free side.
+   The glass-btn family already carries the right visual weight at 0.74rem,
+   no extra sizing needed. */
+.chain-editor-share {
+  margin-right: auto;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+/* G1: exit-activation control in the chain card header. `current` reads as
+ *  the live-exit badge (the chain already is the outbound), `unavailable`
+ *  explains the sing-box-only gating without an interactive affordance. */
+.chain-exit-btn {
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chain-exit-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.chain-exit-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chain-exit-btn.current {
+  color: var(--primary);
+  border-color: var(--primary);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* 停用：与启用同款 pill，与「使用中」徽标并置（同位同风格）。 */
+.chain-exit-btn.chain-exit-stop {
+  margin-left: 0.4rem;
+}
+
+/* 已失效：引用的节点/池已删除——红 pill 非交互，「使用」禁用，仅编辑可救。 */
+.chain-exit-btn.chain-exit-dead {
+  color: var(--danger);
+  border-color: var(--danger);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* 出口探测：同款 pill 并置；结果行在卡头下方，失败红字。 */
+.chain-exit-btn.chain-exit-probe {
+  margin-left: 0.4rem;
+}
+
+.chain-exit-probe-result {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.chain-exit-probe-result.err {
+  color: var(--danger);
+}
+
+.chain-exit-btn.unavailable {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
 }
 
 /* Chain diagnostics: per-hop probe table. The last row (whole chain) gets a
@@ -783,11 +900,85 @@
   gap: 0.25rem;
 }
 
+/* G4: subscription-grouped candidates. Groups are collapsed by default —
+   the flat list kept the whole subscription (~1000 rows) in the DOM, folded
+   groups render heads only. A group is open when the user toggled it open or
+   the search box is active (matches force groups open so hits are visible
+   immediately). */
+.chain-candidate-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+/* Excluded from the App.css global primary-button rule — a group head must
+   read as a passive text row, not an action button. */
+.chain-candidate-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chain-candidate-group-head:hover {
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+}
+
+.chain-candidate-group-arrow {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.chain-candidate-group-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+/* Hops already on the canvas dim in the candidate list so a duplicate is
+   visible before it gets dragged. Still draggable on purpose — placing the
+   same node twice has legitimate uses once isValidConnection permits it. */
+.chain-candidate-item.on-canvas {
+  opacity: 0.45;
+}
+
+/* In-chain state marker, always rendered (A 两态常驻): on-canvas rows lead
+   with a filled dot (same size/semantic color as the nodes-list current-node
+   dot: ● in --primary at 0.9rem), off-canvas rows keep a hollow ○ in --muted.
+   The mark is persistent in both states so names never shift horizontally
+   when a row's on-canvas status flips. Sidebar rows stay append-semantics
+   (click = append hop, still draggable) — the mark only says "already a
+   hop of the current chain" (filled) vs "not yet placed" (hollow). */
+.chain-candidate-item > .chain-candidate-mark,
+.chain-pool-member > .chain-candidate-mark {
+  flex: none;
+  padding-right: 0.25rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.chain-candidate-item.on-canvas > .chain-candidate-mark,
+.chain-pool-member.on-canvas > .chain-candidate-mark {
+  color: var(--primary);
+}
+
 .chain-candidate-item {
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 0.4rem 0.5rem;
   font-size: 0.82rem;
   color: var(--text);
@@ -803,8 +994,146 @@
   cursor: grabbing;
 }
 
-.chain-candidate-item:hover {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+/* B 候选行分隔与 hover：hairline 分隔线显式行界（同 chain-pool-node-item
+   的 --border 口径、/last-child 免责）；hover 语义改主色淡底并配合 A 的
+   常驻圆点把空心 ○ 点亮成实心 ●——hover 即预演 on-canvas 目标态。 */
+.chain-candidate-item:not(:last-child),
+.chain-pool-member:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.chain-candidate-item:hover,
+.chain-pool-member:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.chain-candidate-item:hover > .chain-candidate-mark,
+.chain-pool-member:hover > .chain-candidate-mark {
+  color: var(--primary);
+}
+
+/* Pool candidates: the whole pool stays draggable, with an inline expander
+   that lists its members for per-node picking ("add selected" appends each
+   checked member as an individual node hop). */
+.chain-candidate-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > .glyph,
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > span:not(.chain-node-sub) {
+  white-space: nowrap;
+}
+
+/* G 池展开按钮：向全局 icon-btn 设计语言收拢——border:none、背景透明、
+   最小方形形态（不抢池名视觉权）；hover 用主色淡底（与 B 候选行一处
+   语义），展开态图标收进链页既有主语义 --accent-purple（与 Handle/边
+   同系，不再叠边框）。 */
+.chain-pool-expand {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.chain-pool-expand:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--text);
+}
+
+.chain-candidate-pool.expanded .chain-pool-expand {
+  color: var(--accent-purple);
+}
+
+.chain-pool-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.3rem 0.4rem 0.4rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+/* 池页签紧凑化（成员行可点）：整池行与成员行都收窄内距/字号，密度优先，
+   hover 仅以淡色底提示可点。成员行与候选节点同一手势——点击直接入链尾、
+   拖拽仍可定位投放（同一 .on-canvas 淡化口径）。 */
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  padding: 0.24rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+.chain-pool-members {
+  gap: 1px;
+  padding: 0.2rem 0.3rem 0.28rem;
+}
+
+.chain-pool-member {
+  padding: 0.1rem 0.2rem;
+  font-size: 0.74rem;
+  touch-action: none;
+}
+
+.chain-pool-member > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-pool-member[data-disabled] {
+  opacity: 0.6;
+}
+
+/* 中段省略保尾：长名在行宽不足时只砍中段——订阅节点名的区分度几乎都
+   在后缀，尾部始终完整；宽裕时两段完整显示不省略。全名由行 title
+   提供（hover 可见），不在此重复。 */
+.chain-item-name {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chain-item-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-item-tail {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Cursor-following label shown while dragging a candidate onto the canvas
@@ -889,10 +1218,31 @@
     var(--shadow-card);
 }
 
-/* Connection dots on the hop capsules stay hidden until relevant (node hover,
-   node selected, or a connection being dragged nearby) — a row of always-on
-   purple dots at every node edge reads as visual noise. */
+/* Connection affordances on the hop capsules (G6): the handle element is a
+   transparent 24px hit zone whose centre is the connection point — xyflow
+   pins _left/_right to the node edge with translate(-50%,-50%) centre
+   alignment, so widening the box keeps the anchor exactly where the old
+   8px dot sat. The visible 8px dot moves to ::after, which lets the scale
+   feedback live on the pseudoelement without ever touching the element
+   transform xyflow uses for positioning (scale on the box itself used to
+   collide with the translate and offset the dot by a few px on hover).
+   Dots stay hidden until relevant (node hover, node selected, or a live
+   connection start/end nearby) — always-on purple dots at every node edge
+   read as visual noise. */
 .chain-editor-canvas .chain-hop-node .react-flow__handle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: crosshair;
+}
+
+.chain-editor-canvas .chain-hop-node .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -904,15 +1254,15 @@
     transform 0.15s ease;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting::after {
   opacity: 1;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after {
   transform: scale(1.25);
 }
 
