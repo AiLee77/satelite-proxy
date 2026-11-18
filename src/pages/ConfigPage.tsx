@@ -27,6 +27,7 @@ import { EditLocalNodesModal } from "../components/EditLocalNodesModal";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSwitch } from "../components/GlassSwitch";
 import { QrImportButton } from "../components/QrImportButton";
+import { SubShareModal } from "../components/SubShareModal";
 import type { QrImportPayload } from "../qrImport";
 import { useImportIntent } from "../ImportIntentContext";
 import { getVersion } from "@tauri-apps/api/app";
@@ -357,6 +358,9 @@ export function ConfigPage() {
   const [actionId, setActionId] = useState<string | null>(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
+  // Subscription QR share: `null` = closed. The URL load happens inside the
+  // dialog only — the menu/list render must not prefetch it.
+  const [shareProfile, setShareProfile] = useState<SubscriptionView | null>(null);
   const [renameProfile, setRenameProfile] = useState<SubscriptionView | null>(
     null,
   );
@@ -905,6 +909,20 @@ export function ConfigPage() {
                         {t("config.menuUpdate")}
                       </button>
                     )}
+                    {item.source_kind === "url" && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="sub-menu-item"
+                        disabled={busy}
+                        onClick={() => {
+                          setMenuId(null);
+                          setShareProfile(item);
+                        }}
+                      >
+                        {t("config.menuShare")}
+                      </button>
+                    )}
                     {item.source_kind !== "node" && <>
                       <button type="button" role="menuitem" className="sub-menu-item" disabled={busy}
                         onClick={() => { setMenuId(null); void openRawConfig(item); }}>
@@ -1131,6 +1149,10 @@ export function ConfigPage() {
           dismiss();
         }}
         onSubmit={(p) => void handleSubmit(p)}
+      />
+      <SubShareModal
+        item={shareProfile}
+        onClose={() => setShareProfile(null)}
       />
       {rawProfile && (
         <div className="modal-backdrop">

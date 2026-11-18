@@ -261,7 +261,7 @@ async function freshServicesOnResume() {
 async function structure(locale) {
   const navigation = page.locator(".app-shell > .topnav-wrap .topnav").getByRole("navigation");
   assert.equal(await navigation.count(), 1, "必须使用真实 TopNav 导航");
-  assert.equal(await navigation.getByRole("button").count(), 6, "六个页面入口");
+  assert.equal(await navigation.getByRole("button").count(), 7, "七个页面入口（含代理链）");
   assert.equal(await navigation.locator(".active").count(), 1);
   assert.equal(await navigation.locator(".active").textContent(), locale === "zh" ? "概览" : "Overview");
   assert.equal(await page.locator(".app-shell > aside").count(), 0, "禁止空白占位侧栏");
@@ -533,7 +533,7 @@ try {
   assert.deepEqual(await navState(1), { item: true, active: true }, '文字导航切换为节点页');
   assert.deepEqual(await navState(0), { item: true, active: false }, '概览退出选中态');
   assert.notEqual(await page.locator('.topnav-indicator').evaluate(el => getComputedStyle(el).transitionDuration), '0s', '标准模式保留顶部导航动效');
-  for (let index = 2; index < 6; index++) {
+  for (let index = 2; index < 7; index++) {
     await navButtons.nth(index).click();
     assert.deepEqual(await navState(index), { item: true, active: true });
     assert.deepEqual(await navState(index - 1), { item: true, active: false });

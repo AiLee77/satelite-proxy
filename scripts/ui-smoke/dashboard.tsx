@@ -120,6 +120,11 @@ mockIPC((command, payload) => {
     case "get_proxy_status": state.statusReads++; return copy(status);
     case "list_all_nodes": return copy(nodes);
     case "list_subscriptions": return copy(subscriptions);
+    case "list_chains": return [];
+    case "list_pools": return [];
+    case "list_chain_usage": return {};
+    // 代理链页候选全量节点（含 enabled 标记）。
+    case "list_chain_nodes": return copy(nodes);
     case "get_subscription": return { ...copy(subscriptions[0]), content: "{}" };
     case "get_core_info": return {
       kind: args.kind, name: args.kind === "singbox" ? "sing-box" : args.kind === "xray" ? "Xray" : "mihomo",

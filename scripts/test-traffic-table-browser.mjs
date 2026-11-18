@@ -114,7 +114,7 @@ try {
     locale === "zh" ? "day" : "aerospace");
     await page.evaluate(() => document.fonts.ready);
     assert.equal(await page.locator(".app-shell > .topnav-wrap").count(), 1, "使用真实顶部导航");
-    assert.equal(await page.locator(".topnav-items .topnav-item").count(), 6, "六个页面入口");
+    assert.equal(await page.locator(".topnav-items .topnav-item").count(), 7, "七个页面入口（含代理链）");
     assert.equal(await page.evaluate(() => Number(getComputedStyle(document.documentElement).zoom)), zoom);
     for (const [index, mode] of modes.entries()) {
       currentCase = `${width}-${locale}-zoom${zoom}-${mode}`;
