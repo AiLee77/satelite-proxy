@@ -761,12 +761,23 @@ try {
       const textRects = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
       const textTops = [...new Set(textRects.map(rect => Math.round(rect.top)))];
       const rect = element.getBoundingClientRect();
+      const rootStyle = getComputedStyle(document.documentElement);
+      const rootFontSize = parseFloat(rootStyle.fontSize);
+      const inheritedSingleLineHeight = parseFloat(rootStyle.lineHeight) * parseFloat(style.fontSize) / rootFontSize;
+      const originalSingleLineHeight = inheritedSingleLineHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+        parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
       const lineHeight = style.lineHeight === "normal" ? parseFloat(style.fontSize) * 1.2 : parseFloat(style.lineHeight);
       const singleLineScrollHeight = lineHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
       return { selector, missing: false, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
-        textLines: textTops.length, singleLineScrollHeight, height: rect.height, width: rect.width, rowWidth: row.getBoundingClientRect().width,
+        textLines: textTops.length, singleLineScrollHeight, originalSingleLineHeight, computedLineHeight: style.lineHeight,
+        height: rect.height, width: rect.width, rowWidth: row.getBoundingClientRect().width,
         flexGrow: style.flexGrow, flexBasis: style.flexBasis, whiteSpace: style.whiteSpace };
     });
+    const organizationTag = row.querySelector(".ip-info-org");
+    const organizationStyle = getComputedStyle(organizationTag);
+    const organization = { text: organizationTag.textContent, title: organizationTag.title,
+      expected: window.dashboardFixture.organization, scrollWidth: organizationTag.scrollWidth, clientWidth: organizationTag.clientWidth,
+      whiteSpace: organizationStyle.whiteSpace, overflow: organizationStyle.overflow, textOverflow: organizationStyle.textOverflow };
     const quality = row.querySelector(".ip-quality-good");
     const qualityRange = document.createRange(); qualityRange.selectNodeContents(quality);
     const qualityLineTops = [...new Set([...qualityRange.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0).map(rect => Math.round(rect.top)))];
@@ -777,7 +788,7 @@ try {
     const ipAddressRect = ip.querySelector(".dashboard-exit-ip-address").getBoundingClientRect();
     const ipLabelRect = ipLabel?.getBoundingClientRect();
     const ipRect = ip.getBoundingClientRect();
-    return { chips, qualityText: quality.textContent.trim(), qualityLines: qualityLineTops.length,
+    return { chips, organization, qualityText: quality.textContent.trim(), qualityLines: qualityLineTops.length,
       rowHeight, maxChipHeight: Math.max(...chips.filter(chip => !chip.missing).map(chip => chip.height)),
       ipLabelText: ipLabel?.textContent, ipLabelSameParent: ipLabel?.parentElement === ip,
       ipLabelSameLine: !!ipLabelRect && ipLabelRect.left >= ipAddressRect.right && ipLabelRect.top < ipAddressRect.bottom && ipLabelRect.bottom > ipAddressRect.top,
@@ -790,7 +801,16 @@ try {
       JSON.stringify(chip));
     checkBatch10(`${chip.selector} 内容自适应宽度`, !chip.missing && chip.flexGrow === "0" && chip.flexBasis === "auto" && chip.width < chip.rowWidth,
       JSON.stringify(chip));
+    if (chip.selector !== ".ip-info-open") {
+      checkBatch10(`${chip.selector} 保持原版单行高度`, !chip.missing && Math.abs(chip.height - chip.originalSingleLineHeight) < 1,
+        JSON.stringify(chip));
+    }
   }
+  checkBatch10("组织胶囊截断且 title 保留完整组织名", heroRepairMetrics.organization.title === heroRepairMetrics.organization.expected &&
+    heroRepairMetrics.organization.text === heroRepairMetrics.organization.expected &&
+    heroRepairMetrics.organization.scrollWidth > heroRepairMetrics.organization.clientWidth &&
+    heroRepairMetrics.organization.whiteSpace === "nowrap" && heroRepairMetrics.organization.overflow === "hidden" &&
+    heroRepairMetrics.organization.textOverflow === "ellipsis", JSON.stringify(heroRepairMetrics.organization));
   checkBatch10("质量 优 单行", heroRepairMetrics.qualityText === "质量 优" && heroRepairMetrics.qualityLines === 1,
     JSON.stringify({ text: heroRepairMetrics.qualityText, lines: heroRepairMetrics.qualityLines }));
   checkBatch10("标签整行高度等于单个胶囊高度", Math.abs(heroRepairMetrics.rowHeight - heroRepairMetrics.maxChipHeight) < 1,

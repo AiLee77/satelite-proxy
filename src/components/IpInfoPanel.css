@@ -1,6 +1,6 @@
 .ip-info-panel { margin-top: 10px; min-width: 0; }
 .ip-info-badges { display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; min-width: 0; }
-.ip-info-tag { color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-size: .65rem; line-height: 1.2; padding: 2px 6px; white-space: nowrap; flex: 0 0 auto; }
+.ip-info-tag { color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-size: .65rem; padding: 2px 6px; white-space: nowrap; flex: 0 0 auto; }
 .ip-info-open { white-space: nowrap; flex: 0 0 auto; }
 .ip-risk-low { color: var(--success); border-color: var(--success-border); background: var(--success-muted); }
 .ip-risk-moderate { color: var(--warning); }
