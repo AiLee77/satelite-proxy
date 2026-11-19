@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { NavKey } from "../../src/types";
-import type { AppSettings, ChainHop, ConnectionView, ExitIpInfo, ProxyChain, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
+import type { AppSettings, ChainHop, ConnectionView, ExitIpInfo, NodePool, ProxyChain, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
 import "../../src/App.css";
 import "../../src/ProAppearance.css";
 import "../../src/ProMotion.css";
@@ -21,6 +21,7 @@ document.documentElement.style.zoom = String(zoom);
 const nodeName = short ? "香港 HK 01" : "香港 Hong Kong · IPv6 Premium Edge · LongNodeName-0123456789 · Complete Node Name ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789";
 // 链场景（chain=1）：current_node_id 指向 chain: 虚拟条目，hero 信息行走链分支。
 const chainScenario = params.get("chain") === "1";
+const chainPageFixture = params.get("page") === "chain";
 const profileName = short ? "演示订阅" : "演示订阅 Subscription-Long-Name-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 // 保留既有夹具字段名；短场景使用文档专用 IPv4，长场景使用 IPv6。
 const ipv6 = short ? "192.0.2.8" : "2001:db8:abcd:1234:5678:90ab:cdef:1234";
@@ -49,11 +50,21 @@ const chainVirtualNode: ProxyNode = {
   id: "chain:fixture-chain", name: "演示链 Fixture Chain", protocol: "unknown", server: "", port: 0,
   latency_ms: null, subscription_id: "", subscription_name: "", chain_hops: 2,
 };
+const poolFixture: NodePool = { id: "fixture-pool", name: "指定节点池 Fixture pool", mode: { mode: "explicit", node_ids: ["fixture-node"] } };
 const chainHops: ChainHop[] = [
   { kind: "node", node_id: "fixture-node" },
   { kind: "node", node_id: "fixture-exit" },
 ];
-const chains: ProxyChain[] = chainScenario ? [{ id: "fixture-chain", name: "演示链 Fixture Chain", hops: chainHops }] : [];
+const primaryChain: ProxyChain = { id: "fixture-chain", name: "演示链 Fixture Chain", hops: chainHops };
+const editorChain: ProxyChain = { id: "fixture-editor-chain", name: "编辑器指定池 Fixture editor", hops: [
+  { kind: "node", node_id: "fixture-node" },
+  { kind: "pool", pool_id: "fixture-pool" },
+] };
+const deadChain: ProxyChain = { id: "fixture-dead-chain", name: "失效链 Fixture dead", hops: [
+  { kind: "node", node_id: "missing-node" },
+  { kind: "node", node_id: "fixture-exit" },
+] };
+const chains: ProxyChain[] = chainScenario ? [primaryChain, editorChain, deadChain] : [];
 const subscriptions: SubscriptionView[] = [{
   id: "fixture-sub", name: profileName, enabled: true, source_kind: custom ? "custom" : "url",
   custom_kind: custom ? "singbox" : null, source_display: "https://example.test/sub",
@@ -138,10 +149,10 @@ mockIPC((command, payload) => {
     case "list_all_nodes": return copy(chainScenario ? [...nodes, chainExitNode, chainVirtualNode] : nodes);
     case "list_subscriptions": return copy(subscriptions);
     case "list_chains": return copy(chains);
-    case "list_pools": return [];
+    case "list_pools": return copy(chainScenario ? [poolFixture] : []);
     case "list_chain_usage": return {};
     // 代理链页候选全量节点（含 enabled 标记）。
-    case "list_chain_nodes": return copy(nodes);
+    case "list_chain_nodes": return copy(chainScenario ? [...nodes, chainExitNode] : nodes);
     case "get_subscription": return { ...copy(subscriptions[0]), content: "{}" };
     case "get_core_info": return {
       kind: args.kind, name: args.kind === "singbox" ? "sing-box" : args.kind === "xray" ? "Xray" : "mihomo",
@@ -246,20 +257,22 @@ mockIPC((command, payload) => {
 mockWindows("main");
 
 const { DashboardPage } = await import("../../src/pages/DashboardPage");
+const { ChainPage } = await import("../../src/pages/ChainPage");
 const { LocaleProvider } = await import("../../src/i18n");
 const { ThemeProvider } = await import("../../src/theme");
 const { UiModeProvider } = await import("../../src/ui/UiModeContext");
 const { TopNav } = await import("../../src/components/TopNav");
 localStorage.setItem("satelite.uiMode", "pro");
 function DashboardFixture() {
-  const [nav, setNav] = useState<NavKey>("dashboard");
+  const [nav, setNav] = useState<NavKey>(chainPageFixture ? "chains" : "dashboard");
   return (
     <div className="app-shell">
       <TopNav active={nav} onChange={setNav} />
       <main className="main">
-        <div className={`page-enter${nav === "settings" ? " settings-enter" : ""}`} key={nav}>
+        <div className={`page-enter${nav === "settings" ? " settings-enter" : ""}`} key="dashboard" style={chainPageFixture ? { position: "fixed", left: "-10000px", visibility: "hidden", pointerEvents: "none" } : undefined}>
           <DashboardPage onGoTraffic={() => { state.trafficOpens++; }} />
         </div>
+        {chainPageFixture && nav === "chains" && <ChainPage />}
       </main>
     </div>
   );
