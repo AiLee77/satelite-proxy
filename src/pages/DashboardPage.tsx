@@ -35,7 +35,6 @@ import { useI18n } from "../i18n";
 import { ErrorModal } from "../components/ErrorModal";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
-import { DashboardRateCard } from "../components/DashboardRateCard";
 import { HeroVisual } from "../components/HeroVisual";
 import { IpInfoPanel } from "../components/IpInfoPanel";
 import { ServiceStatusCard } from "../components/ServiceStatusCard";
@@ -987,7 +986,7 @@ function coreDisplayName(kind: string | null | undefined): string {
   const coreErrorText = proxy?.error && !running ? proxy.error : null;
 
   return (
-    <div className="page dashboard-page dashboard-bento">
+    <div className="page dashboard-page">
       {toast && <div className="toast">{toast}</div>}
       {error && (
         <ErrorModal
@@ -1008,14 +1007,14 @@ function coreDisplayName(kind: string | null | undefined): string {
         />
       )}
 
-      <header className="dashboard-heading">
-        <h1>{t("dashboard.title")}</h1>
-        <span className="dashboard-app-version">SATELITE · {appVersion ?? "—"}</span>
-      </header>
-
-      <div className="dashboard-top-grid">
+      {/* —— Hero: orbit + status + quick controls（原版三列结构） —— */}
       <section className={`dash-hero is-${orbitState}`}>
-        <div className="dashboard-card-ambient" aria-hidden="true" />
+        <HeroVisual
+          state={orbitState}
+          spinning={running || switching}
+          switching={switching}
+        />
+
         <div className="dash-hero-copy">
           <div className="dash-kicker mono">
             <span className={`status-dot ${dotClass}`} />
@@ -1023,7 +1022,7 @@ function coreDisplayName(kind: string | null | undefined): string {
               ? stateLabel === "stopping" ? t("dashboard.coreStopping") : t("dashboard.coreStarting")
               : isError ? t("dashboard.coreError") : t("dashboard.coreStopped")}
             <span className="dash-kicker-sep">·</span>
-            {coreDisplayName(proxy?.core_type)}
+            SATELITE {appVersion ?? "—"}
           </div>
 
           <div className="dashboard-exit-summary">
@@ -1043,15 +1042,14 @@ function coreDisplayName(kind: string | null | undefined): string {
             </div>
           </div>
           <IpInfoPanel exitIp={exitIp} sessionKey={autoProbeKey} />
-          <div className="dashboard-node-context">
-          <div className="dashboard-uptime"><span className="dashboard-status-key">{t("dashboard.uptime")}</span><strong>{running ? fmtUptime(proxy?.core_started_at) : "—"}</strong></div>
-          <h2 className="dash-hero-title" title={heroTitle ?? undefined}>
+
+          <h1 className="dash-hero-title" title={heroTitle ?? undefined}>
             {heroTitle == null ? (
               <span className="skel skel-inline skel-w-40" aria-hidden />
             ) : (
               heroTitle
             )}
-          </h2>
+          </h1>
           <p className="dash-hero-desc">
             {heroSub == null ? (
               <span className="skel skel-inline skel-w-30" aria-hidden />
@@ -1059,7 +1057,6 @@ function coreDisplayName(kind: string | null | undefined): string {
               heroSub
             )}
           </p>
-          </div>
 
           <div className="dash-hero-actions">
             {!running ? (
@@ -1070,7 +1067,6 @@ function coreDisplayName(kind: string | null | undefined): string {
                 disabled={busy || !canStart || switching || !statusReady}
                 onClick={() => void onStart()}
               >
-                <span className="dashboard-power-visual" aria-hidden="true"><span className="dashboard-visual-scale"><HeroVisual state={orbitState} spinning={running || switching} switching={switching} /></span></span>
                 {busy || stateLabel === "starting"
                   ? t("dashboard.starting")
                   : isError
@@ -1085,7 +1081,6 @@ function coreDisplayName(kind: string | null | undefined): string {
                 disabled={busy || switching}
                 onClick={() => void onStop()}
               >
-                <span className="dashboard-power-visual" aria-hidden="true"><span className="dashboard-visual-scale"><HeroVisual state={orbitState} spinning={running || switching} switching={switching} /></span></span>
                 {t("dashboard.stop")}
               </button>
             )}
@@ -1231,14 +1226,8 @@ function coreDisplayName(kind: string | null | undefined): string {
             </div>
           </div>
         </div>
-      </section>
-      <DashboardRateCard direction="up" speed={proxy?.upload_speed ?? 0} total={proxy?.upload_total ?? 0}
-        samples={spark.map(s => s.up)} running={running} onOpen={onGoTraffic} />
-      <DashboardRateCard direction="down" speed={proxy?.download_speed ?? 0} total={proxy?.download_total ?? 0}
-        samples={spark.map(s => s.down)} running={running} onOpen={onGoTraffic} />
-      {statusReady ? <ServiceStatusCard sessionKey={`${autoProbeKey}:${proxy?.capture_mode ?? ""}:${proxy?.custom_inbound_port ?? ""}`} /> : <div className="instrument service-status-card" aria-busy="true" />}
-      </div>
 
+        {/* Right rail: light controls, no card chrome */}
         <aside className="dash-side-rail" aria-label="Quick controls">
           <div className="dash-rail-title mono">{t("dashboard.quickControls")}</div>
           <div className="dash-inline-row dash-rail-block">
@@ -1365,6 +1354,7 @@ function coreDisplayName(kind: string | null | undefined): string {
             />
           </div>
         </aside>
+      </section>
 
       {subCount === 0 && (
         <div className="dashboard-setup card glass">
@@ -1383,7 +1373,8 @@ function coreDisplayName(kind: string | null | undefined): string {
 
 
 
-      <section className="dashboard-details-grid" aria-label="Telemetry">
+      {/* —— 6 cards: core / activity / traffic stats / probe / sub / system —— */}
+      <section className="instrument-grid instrument-grid-6" aria-label="Telemetry">
         <article className="instrument accent-green dashboard-core-card">
           <header className="instrument-head">
             <svg className="dashboard-card-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></svg>
@@ -1458,6 +1449,21 @@ function coreDisplayName(kind: string | null | undefined): string {
             </div>
           </div>
         </article>
+
+        <SimpleTrafficSpark
+          samples={spark}
+          up={running ? proxy?.upload_speed ?? 0 : 0}
+          down={running ? proxy?.download_speed ?? 0 : 0}
+          conns={running ? proxy?.connections ?? 0 : 0}
+          running={running}
+          label={t("simple.spark")}
+          idleLabel={t("simple.sparkIdle")}
+          idleConnsLabel={t("simple.sparkIdleConns")}
+          connsLabel={t("simple.sparkConns", { n: proxy?.connections ?? 0 })}
+          onOpen={onGoTraffic}
+        />
+
+        <TrafficStatsCard status={proxy} onOpen={onGoTraffic} />
 
         <article
           className="instrument accent-cyan instrument-click dashboard-probe-card"
@@ -1655,21 +1661,10 @@ function coreDisplayName(kind: string | null | undefined): string {
         </article>
       </section>
 
-      <section className="instrument-grid dashboard-bottom-grid">
-        <TrafficStatsCard status={proxy} onOpen={onGoTraffic} />
-        <SimpleTrafficSpark
-          samples={spark}
-          up={running ? proxy?.upload_speed ?? 0 : 0}
-          down={running ? proxy?.download_speed ?? 0 : 0}
-          conns={running ? proxy?.connections ?? 0 : 0}
-          running={running}
-          label={t("simple.spark")}
-          idleLabel={t("simple.sparkIdle")}
-          idleConnsLabel={t("simple.sparkIdleConns")}
-          connsLabel={t("simple.sparkConns", { n: proxy?.connections ?? 0 })}
-          onOpen={onGoTraffic}
-        />
-      </section>
+      {/* —— Services band: 现版服务状态数据面全宽安置 —— */}
+      <div className="dashboard-service-band">
+        {statusReady ? <ServiceStatusCard sessionKey={`${autoProbeKey}:${proxy?.capture_mode ?? ""}:${proxy?.custom_inbound_port ?? ""}`} /> : <div className="instrument service-status-card" aria-busy="true" />}
+      </div>
 
       {proxy?.core_type === "mihomo" ? (
         <div className="card mihomo-policy-link"><span>{t("mihomoGroups.dashboardNotice")}</span>

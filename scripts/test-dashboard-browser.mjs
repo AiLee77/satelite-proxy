@@ -21,14 +21,12 @@ async function clean() {
   assert.deepEqual(blocked, [], "夹具不得发起外部网络请求");
   assert.deepEqual(errors, [], `${currentCase} 页面异常`);
 }
-async function cardMotion(running) {
-  const selector = ".dashboard-bento .dash-hero .dashboard-card-ambient";
-  const name = await page.locator(selector).evaluate(el => getComputedStyle(el, "::before").animationName);
-  assert.equal(name, running ? "dashboard-card-flow" : "none", "状态卡动效跟随运行状态");
-  if (running) {
-    const before = await page.locator(selector).evaluate(el => getComputedStyle(el, "::before").transform);
-    await page.waitForFunction(({ selector, before }) => getComputedStyle(document.querySelector(selector), "::before").transform !== before, { selector, before });
-  }
+async function heroMotion(running) {
+  const selector = ".dash-hero .orbit";
+  const name = await page.locator(selector).evaluate(el => getComputedStyle(el.querySelector(".orbit-sat")).animationName);
+  assert.equal(name, running ? "orbit-spin" : "none", "hero 轨道动效跟随运行状态");
+  const spinning = await page.locator(selector).evaluate(el => el.classList.contains("spin"));
+  assert.equal(spinning, running, "运行时轨道 spin 类跟随启停");
 }
 async function open(width, height, locale, theme, state = "running", hero = "classic", network = "business", sample = "long", menuOptions = {}) {
   if (page) await clean();
@@ -49,7 +47,7 @@ async function open(width, height, locale, theme, state = "running", hero = "cla
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${base}/scripts/ui-smoke/dashboard.html?${new URLSearchParams({ locale, theme, state, hero, network, sample, ...menuOptions })}`);
-  await page.locator(".dashboard-details-grid > :nth-child(4)").waitFor();
+  await page.locator(".instrument-grid-6 > :nth-child(4)").waitFor();
   await page.waitForFunction(({ theme, label }) =>
     document.documentElement.dataset.theme === theme &&
     document.querySelector(".dash-kicker")?.textContent.includes(label) &&
@@ -67,7 +65,7 @@ async function layout() {
     const issues = [];
     const root = document.documentElement;
     const dashboard = document.querySelector(".dashboard-page");
-    const cards = [...dashboard.querySelectorAll(".dash-hero, .dashboard-rate-card, .dashboard-top-grid > .service-status-card, .dash-side-rail, .dashboard-details-grid > *, .dashboard-bottom-grid > .instrument, .dashboard-bottom-grid > .simple-spark")];
+    const cards = [...dashboard.querySelectorAll(".dash-hero, .dashboard-service-band > .service-status-card, .dash-side-rail, .instrument-grid-6 > *")];
     const describe = el => `${el.tagName}.${el.className}`;
     const outside = (r, box) => r.left < box.left - 1.5 || r.right > box.right + 1.5 || r.top < box.top - 1.5 || r.bottom > box.bottom + 1.5;
     for (const el of [root, document.body, document.querySelector("main"), dashboard, ...cards]) {
@@ -84,7 +82,7 @@ async function layout() {
       }
     }
     // 节点标题和组织名必须完整换行；统计数值必须完整可见。
-    const critical = ".dashboard-exit-ip, .dashboard-node-context .dash-hero-title, .dash-hero .ip-organization, .dashboard-rate-card__number, .dashboard-rate-card__unit, .dashboard-rate-card__stats dd, .traffic-stats-number, .traffic-stats-table th";
+    const critical = ".dashboard-exit-ip, .dash-hero-title, .dash-hero .ip-organization, .traffic-stats-number, .traffic-stats-table th";
     for (const el of dashboard.querySelectorAll(critical)) {
       if (!el.textContent.trim()) { issues.push(`统计为空 ${describe(el)}`); continue; }
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) issues.push(`统计裁切 ${describe(el)}`);
@@ -112,20 +110,19 @@ async function heroGeometry() {
   const metrics = await page.evaluate(() => {
     const hero = document.querySelector('.dash-hero');
     const copy = hero.querySelector('.dash-hero-copy');
-    const node = hero.querySelector('.dashboard-node-context');
-    const title = node.querySelector('.dash-hero-title');
+    const title = copy.querySelector('.dash-hero-title');
     const actions = hero.querySelector('.dash-hero-actions');
     const box = hero.getBoundingClientRect(), content = copy.getBoundingClientRect();
-    const n = node.getBoundingClientRect(), a = actions.getBoundingClientRect(), t = title.getBoundingClientRect();
+    const a = actions.getBoundingClientRect(), t = title.getBoundingClientRect();
     const style = getComputedStyle(hero), textStyle = getComputedStyle(title);
     const range = document.createRange(); range.selectNodeContents(title);
     const lines = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
     const buttons = [...actions.querySelectorAll('.secondary, .dash-more-btn')].map(el => el.getBoundingClientRect());
     return {
-      height: box.height, rightHeight: document.querySelector('.service-status-card').getBoundingClientRect().height,
-      align: style.alignSelf, below: a.top >= n.bottom - 1,
-      buttonsBelow: buttons.length === 2 && buttons.every(b => b.top >= n.bottom - 1 && b.bottom <= a.bottom + 1),
-      fullWidth: Math.abs(n.left - content.left) <= 1 && Math.abs(n.right - content.right) <= 1 && Math.abs(t.width - n.width) <= 1,
+      height: box.height, serviceHeight: document.querySelector('.dashboard-service-band .service-status-card').getBoundingClientRect().height,
+      below: a.top >= t.bottom - 1,
+      buttonsBelow: buttons.length === 2 && buttons.every(b => b.top >= t.bottom - 1 && b.bottom <= a.bottom + 1),
+      fullWidth: Math.abs(t.left - content.left) <= 1 && Math.abs(t.right - content.right) <= 1,
       complete: title.textContent === window.dashboardFixture.nodes[0].name,
       wraps: textStyle.whiteSpace === 'normal' && textStyle.textOverflow === 'clip' && textStyle.webkitLineClamp === 'none',
       lineCount: new Set(lines.map(rect => Math.round(rect.top))).size,
@@ -140,7 +137,6 @@ async function heroGeometry() {
   assert.equal(metrics.fullWidth, true, `${currentCase} 节点标题占满 copy 可用宽度`);
   assert.equal(metrics.complete && metrics.wraps && metrics.textInside, true, `${currentCase} 节点标题完整且无裁切`);
   if (!metrics.short) assert.ok(metrics.lineCount >= 2, `${currentCase} 长节点名称实际换行`);
-  assert.equal(metrics.align, 'start', `${currentCase} hero 不随右侧网格拉伸`);
   assert.ok(Math.abs(metrics.bottomSlack) <= 2 && Math.abs(metrics.copySlack) <= 2, `${currentCase} copy 底部加 padding 后无多余空白 ${JSON.stringify(metrics)}`);
   return metrics;
 }
@@ -167,7 +163,7 @@ async function serviceRoundTrip(saveScreenshot = false) {
     await settled(count);
     const after = await heroGeometry();
     assert.ok(Math.abs(after.height - before.height) <= 2, `${currentCase} 2→4→2 服务不改变 hero 高度 ${before.height} → ${after.height}`);
-    if (count === 4) assert.ok(after.rightHeight > before.rightHeight + 2, `${currentCase} 右侧服务卡确实增高`);
+    if (count === 4) assert.ok(after.serviceHeight > before.serviceHeight + 2, `${currentCase} 服务带卡片确实增高`);
     await layout();
     if (count === 4 && saveScreenshot) await page.screenshot({ path: 'test-results/dashboard-1280-four-services.png' });
   }
@@ -267,33 +263,35 @@ async function structure(locale) {
   assert.equal(await page.locator(".app-shell > aside").count(), 0, "禁止空白占位侧栏");
   assert.equal(await page.locator(".topnav-tools .topnav-theme-switch").count(), 1);
   assert.equal(await page.locator(".topnav-tools [data-ui-mode-menu]").count(), 1);
-  assert.equal(await page.locator(".dashboard-page.dashboard-bento").count(), 1);
-  assert.equal(await page.locator(".dashboard-heading h1").count(), 1);
-  assert.equal(await page.locator(".dashboard-top-grid .dash-hero").count(), 1);
-  assert.equal(await page.locator(".dashboard-top-grid .dashboard-rate-card").count(), 2);
-  assert.equal(await page.locator(".dash-hero .dash-side-rail").count(), 0, "控制栏独立于状态卡");
+  assert.equal(await page.locator(".dashboard-page").count(), 1);
+  assert.equal(await page.evaluate(() => document.querySelector(".dashboard-page").classList.contains("dashboard-bento")), false, "恢复原版页面结构，不用 bento 覆盖层");
+  assert.equal(await page.locator(".dashboard-heading").count(), 0, "版本号回归 kicker，无独立 heading");
+  assert.equal(await page.evaluate(() => document.querySelector(".dash-kicker").textContent.includes("SATELITE")), true, "kicker 保留应用版本号");
+  assert.equal(await page.locator(".dashboard-page > .dash-hero").count(), 1, "hero 为页面首区块");
+  assert.equal(await page.locator(".dashboard-rate-card").count(), 0, "上/下行速率不拆卡");
+  assert.equal(await page.locator(".dash-hero > .dash-side-rail").count(), 1, "快捷面板归位 hero 第三列");
   assert.equal(await page.evaluate(() => {
     const ip = document.querySelector('.dash-hero .ip-info-panel').getBoundingClientRect();
-    const node = document.querySelector('.dashboard-node-context').getBoundingClientRect();
-    return ip.bottom <= node.top + 1;
-  }), true, "出口信息位于节点信息上方");
+    const title = document.querySelector('.dash-hero-title').getBoundingClientRect();
+    return ip.bottom <= title.top + 1;
+  }), true, "出口信息位于节点标题上方");
   await heroGeometry();
   const exit = await page.locator('.dashboard-exit-ip').evaluate(el => {
     const box = el.getBoundingClientRect();
-    const power = document.querySelector('.dashboard-power').getBoundingClientRect();
+    const title = document.querySelector('.dash-hero-title').getBoundingClientRect();
     const panel = document.querySelector('.dash-hero .ip-info-panel').getBoundingClientRect();
     const icon = document.querySelector('.dashboard-country-button').getBoundingClientRect();
     const rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
     return { text: el.textContent, rem: parseFloat(getComputedStyle(el).fontSize) / rootSize,
       wrap: getComputedStyle(el).overflowWrap, iconWidth: icon.width, iconHeight: icon.height,
-      beforePower: box.right <= power.left + 1, abovePanel: box.bottom <= panel.top + 1 };
+      beforeTitle: box.bottom <= title.top + 1, abovePanel: box.bottom <= panel.top + 1 };
   });
   const expectedIp = await page.evaluate(() => window.dashboardFixture.ipv6);
   assert.equal(exit.text, expectedIp, '主视觉保留完整 IPv4/IPv6');
   assert.ok(exit.rem >= (expectedIp.includes(':') ? 1.25 : 1.5) && exit.rem <= 1.7, '大 IP 字体比例');
   assert.equal(exit.wrap, 'anywhere', '长 IPv6 可完整换行');
   assert.ok(exit.iconWidth >= 44 && exit.iconWidth <= 48 && exit.iconHeight >= 44 && exit.iconHeight <= 48, '国家按钮触控尺寸');
-  assert.ok(exit.beforePower && exit.abovePanel, 'IP 为启停按钮留空间，类型和质量位于下方');
+  assert.ok(exit.beforeTitle && exit.abovePanel, '出口 IP 位于节点标题与类型徽章上方');
   const badge = await page.locator('.dashboard-country-button').evaluate(el => {
     const b = el.getBoundingClientRect(), svg = el.querySelector('svg').getBoundingClientRect(), text = el.querySelector('text').getBoundingClientRect();
     const style = getComputedStyle(el);
@@ -305,20 +303,21 @@ async function structure(locale) {
   assert.equal(badge.background, 'rgba(0, 0, 0, 0)', '国家按钮保留 SVG 花形底图');
   assert.ok(badge.svgOffset < 2 && badge.textOffset < 2, '国家图形与代码在按钮内部居中');
   assert.equal(await page.locator(".dash-side-rail").count(), 1);
-  assert.equal(await page.locator(".dashboard-details-grid > *").count(), 4);
-  assert.equal(await page.locator(".dashboard-power-visual .orbit").count(), 1, "首页动效保留");
+  assert.equal(await page.locator(".instrument-grid-6 > *").count(), 6, "六卡网格：核心/实时活动/流量统计/延迟/订阅/端口");
+  assert.equal(await page.locator(".dash-hero > .orbit").count(), 1, "hero 左列保留轨道动效");
+  assert.equal(await page.locator(".instrument-grid-6 > .traffic-stats-card").count(), 1, "流量统计合卡位于六卡内");
+  assert.equal(await page.locator(".instrument-grid-6 > .simple-spark").count(), 1, "实时活动位于六卡内");
+  assert.equal(await page.locator(".dashboard-service-band .service-status-card").count(), 1, "服务状态全宽带安置");
   await page.waitForFunction(() => document.querySelector('.ip-organization')?.textContent === window.dashboardFixture.organization);
   assert.equal(await page.locator('.ip-organization-row .ip-organization').evaluate(el => getComputedStyle(el).textOverflow), "clip");
   assert.ok((await page.locator('.ip-info-badges').innerText()).includes(locale === "zh" ? "商业" : "Commercial"));
   assert.equal(await page.locator('.service-status-card').count(), 1);
-  assert.equal(await page.locator(".dashboard-bottom-grid .traffic-stats-card").count(), 1);
-  assert.equal(await page.locator(".dashboard-bottom-grid .simple-spark").count(), 1);
   for (const id of ["proxy", "direct", "total"]) {
     assert.equal(await page.locator(`[data-traffic-row="${id}"]`).isVisible(), true, `分类 ${id} 可见`);
   }
   assert.equal(await page.locator("main").getByRole("button", { name: words[locale].stop, exact: true }).isEnabled(), true);
-  assert.equal(await page.locator("h2.dash-hero-title").getAttribute("title"), await page.evaluate(() => window.dashboardFixture.nodes[0].name));
-  await page.waitForFunction(() => [...document.querySelectorAll(".dashboard-details-grid .kv-v")].some(el => el.textContent.includes(window.dashboardFixture.ipv6)));
+  assert.equal(await page.locator("h1.dash-hero-title").getAttribute("title"), await page.evaluate(() => window.dashboardFixture.nodes[0].name));
+  await page.waitForFunction(() => [...document.querySelectorAll(".instrument-grid-6 .kv-v")].some(el => el.textContent.includes(window.dashboardFixture.ipv6)));
   const coreKinds = await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === "get_core_info").map(c => c.payload.kind));
   assert.deepEqual([...new Set(coreKinds)].sort(), ["mihomo", "singbox", "xray"]);
 }
@@ -547,7 +546,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.dataset.motionReduced), 'false', '应用标准模式独立于系统减少动态');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.waitForFunction(() => [...document.querySelectorAll('main > .page-enter')].every(el => el.getAnimations().every(animation => animation.playState === 'finished')));
-  await cardMotion(true);
+  await heroMotion(true);
   await page.evaluate(() => window.dashboardFixture.setMotion('system'));
   await page.emulateMedia({ reducedMotion: "reduce" });
   // matchMedia 的 change 事件在 emulateMedia 应用后的下一帧才派发，
@@ -556,7 +555,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.dataset.motionReduced), 'true', '系统模式跟随系统减少动态');
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.evaluate(() => window.dashboardFixture.setMotion('standard'));
-  await cardMotion(true);
+  await heroMotion(true);
   // 等待真实组件的第二轮状态/连接轮询，所有请求仍由内存 mock 响应。
   const reads = await page.evaluate(() => ({ status: window.dashboardFixture.statusReads, connections: window.dashboardFixture.connectionReads }));
   await page.waitForFunction(before => window.dashboardFixture.statusReads > before.status && window.dashboardFixture.connectionReads > before.connections, reads);
@@ -570,7 +569,7 @@ try {
   await page.getByRole("button", { name: words.zh.stop, exact: true }).click();
   const start = page.getByRole("button", { name: words.zh.start, exact: true });
   await start.waitFor();
-  await cardMotion(false);
+  await heroMotion(false);
   await page.waitForFunction(() => document.querySelector(".dashboard-power")?.disabled === false);
   await page.evaluate(() => { window.dashboardFixture.holdStart = true; });
   await start.click();
@@ -607,7 +606,7 @@ try {
   assert.equal(await page.locator('.dash-side-rail .glass-seg').nth(1).locator("button:enabled").count(), 0);
   await clean();
   await open(1280, 900, "zh", "aerospace", "running", "smiley");
-  assert.equal(await page.locator('.dashboard-power-visual .face-orbit').count(), 1);
+  assert.equal(await page.locator('.dash-hero > .face-orbit').count(), 1);
   await page.getByRole('button', { name: 'IP 信息 ↗', exact: true }).click();
   await page.getByRole('dialog', { name: 'IP 信息', exact: true }).waitFor();
   assert.match(await page.locator('.ip-details-dialog .ip-organization').innerText(), /Without Truncation/);
@@ -652,7 +651,7 @@ try {
   const latestServices = await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === 'check_service_status').at(-1).payload.ids);
   assert.deepEqual([...latestServices].sort(), ['google', 'github', 'youtube', 'chatgpt'].sort(), '开启代理后全部展示项自动检测并从暂态失败恢复');
   await open(1280, 900, "zh", "aerospace", "running", "particle");
-  assert.equal(await page.locator('.dashboard-power-visual .particle-orbit').count(), 1);
+  assert.equal(await page.locator('.dash-hero > .particle-orbit').count(), 1);
   await page.locator('.service-status-card').click();
   await page.getByRole('dialog').waitFor();
   await page.getByRole('switch', { name: '在卡片展示 Claude', exact: true }).check();
