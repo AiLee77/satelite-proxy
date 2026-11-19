@@ -780,14 +780,6 @@ function coreDisplayName(kind: string | null | undefined): string {
     stateLabel === "starting" || stateLabel === "stopping" || busy;
   const isError = stateLabel === "error" || (!!proxy?.error && !running);
 
-  const dotClass = running
-    ? "on"
-    : switching
-      ? "busy"
-      : isError
-        ? "off"
-        : "off";
-
   const orbitState = running
     ? "live"
     : switching
@@ -1010,15 +1002,6 @@ function coreDisplayName(kind: string | null | undefined): string {
         />
 
         <div className="dash-hero-copy">
-          <div className="dash-kicker mono">
-            <span className={`status-dot ${dotClass}`} />
-            {running ? t("dashboard.coreRunning") : switching
-              ? stateLabel === "stopping" ? t("dashboard.coreStopping") : t("dashboard.coreStarting")
-              : isError ? t("dashboard.coreError") : t("dashboard.coreStopped")}
-            <span className="dash-kicker-sep">·</span>
-            SATELITE
-          </div>
-
           <div className="dashboard-exit-summary">
             <button type="button" className="icon-btn dashboard-country-button"
               onClick={() => void onProbeExitIp()} disabled={exitIpProbing}

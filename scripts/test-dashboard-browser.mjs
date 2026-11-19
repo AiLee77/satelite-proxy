@@ -48,12 +48,11 @@ async function open(width, height, locale, theme, state = "running", hero = "cla
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${base}/scripts/ui-smoke/dashboard.html?${new URLSearchParams({ locale, theme, state, hero, network, sample, ...menuOptions })}`);
   await page.locator(".instrument-grid-6 > :nth-child(4)").waitFor();
-  await page.waitForFunction(({ theme, label }) =>
+  await page.waitForFunction(({ theme }) =>
     document.documentElement.dataset.theme === theme &&
-    document.querySelector(".dash-kicker")?.textContent.includes(label) &&
     document.querySelector(".dash-hero-title")?.getAttribute("title")?.length > 0 &&
     !document.querySelector(".dashboard-page .skel"),
-  { theme, label: state === "running" || state === "custom" ? words[locale].state : "" });
+  { theme });
   await page.evaluate(() => document.fonts.ready);
   // 与 App 相同的 page-enter 会暂时创建 transform 容器；等其退出再测量和截图。
   await page.waitForFunction(() => [...document.querySelectorAll("main > .page-enter")].every(el =>
@@ -267,8 +266,9 @@ async function structure(locale) {
   assert.equal(await page.locator(".topnav-tools [data-ui-mode-menu]").count(), 1);
   assert.equal(await page.locator(".dashboard-page").count(), 1);
   assert.equal(await page.evaluate(() => document.querySelector(".dashboard-page").classList.contains("dashboard-bento")), false, "恢复原版页面结构，不用 bento 覆盖层");
-  assert.equal(await page.locator(".dashboard-heading").count(), 0, "版本号回归 kicker，无独立 heading");
-  assert.equal(await page.evaluate(() => document.querySelector(".dash-kicker").textContent.includes("SATELITE")), true, "kicker 保留应用版本号");
+  assert.equal(await page.locator(".dashboard-heading").count(), 0, "无独立 heading");
+  assert.equal(await page.locator(".dash-kicker").count(), 0, "删「● 运行中 · SATELITE」状态行，不留空白");
+  assert.equal(await page.evaluate(() => document.querySelector(".dash-hero-copy").firstElementChild?.className), "dashboard-exit-summary", "hero 文案区首行即出口 IP 区，直接从大号 IP 开始");
   assert.equal(await page.locator(".dashboard-page > .dash-hero").count(), 1, "hero 为页面首区块");
   assert.equal(await page.locator(".dashboard-rate-card").count(), 0, "上/下行速率不拆卡");
   assert.equal(await page.locator(".dash-hero > .dash-side-rail").count(), 1, "快捷面板归位 hero 第三列");
