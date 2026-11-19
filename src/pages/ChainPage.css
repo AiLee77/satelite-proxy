@@ -1068,10 +1068,9 @@
   white-space: nowrap;
 }
 
-/* G 池展开按钮：向全局 icon-btn 设计语言收拢——border:none、背景透明、
-   最小方形形态（不抢池名视觉权）；hover 用主色淡底（与 B 候选行一处
-   语义），展开态图标收进链页既有主语义 --accent-purple（与 Handle/边
-   同系，不再叠边框）。 */
+/* F 返修：池展开按钮与 hero 快捷面板胶囊同源克制样式（GlassSeg 族）——
+   surface-2 深色底 + 1px 细描边 + radius-pill 圆角，不再透明悬浮；
+   hover 洗色，展开态图标收进链页既有主语义 --accent-purple。 */
 .chain-pool-expand {
   flex: none;
   width: 24px;
@@ -1079,19 +1078,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
   color: var(--muted);
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
   padding: 0;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .chain-pool-expand:hover {
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  background: var(--hover-wash);
+  border-color: var(--border-strong);
   color: var(--text);
 }
 

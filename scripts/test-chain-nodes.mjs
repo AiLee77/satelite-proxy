@@ -194,6 +194,7 @@ test("链卡出口胶囊样式 B：停用/已失效/检测出口深色底描边�
   assert.match(targetNode, /color: var\(--accent-blue\)/);
 });
 
+
 test("池展开双语文案与源码同步（B 回归）", () => {
   const messages = readFileSync(
     new URL("../src/i18n/messages.ts", import.meta.url),
@@ -1234,7 +1235,7 @@ test("B：候选行分隔与 hover 语义（hairline 行界 + 主色淡底 + 圆
   assert.doesNotMatch(css, /\.chain-candidate-item:hover \{[^}]*--accent-blue/);
 });
 
-test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
+test("F 返修：池展开按钮与快捷面板胶囊同源（GlassSeg 族）", () => {
   const page = readFileSync(
     new URL("../src/pages/ChainPage.tsx", import.meta.url),
     "utf8",
@@ -1248,20 +1249,22 @@ test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
     new URL("../src/pages/ChainPage.css", import.meta.url),
     "utf8",
   );
-  // 形态：border:none + 背景透明 + 最小方形（icon-btn 口径），不再带框。
+  // 形态（返修 F）：与 hero 快捷面板胶囊同源 GlassSeg 族三件套——surface-2
+  // 深色底 + 1px 细描边 + radius-pill 圆角，不再透明无底。
   const rule = css.match(/\.chain-pool-expand \{[^}]*\}/s)?.[0] ?? "";
-  assert.match(rule, /border: none;/);
-  assert.match(rule, /background: transparent;/);
+  assert.match(rule, /background: var\(--surface-2\)/);
+  assert.match(rule, /border: 1px solid var\(--border\)/);
+  assert.match(rule, /border-radius: var\(--radius-pill\)/);
   assert.match(rule, /width: 24px;/);
-  // icon-btn 口径补齐：高度 24px + 居中布局，且不再存在尾部覆写块。
+  // 同源口径补齐：高度 24px + 居中布局，且不再存在尾部覆写块。
   assert.match(rule, /height: 24px;/);
   assert.match(rule, /display: inline-flex;/);
   assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*width: 20px;/);
-  // hover：主色淡底（既有 --primary token）。
+  // hover：洗色克制（不再主色淡底）。
   assert.match(
     css,
     new RegExp(
-      "\\.chain-pool-expand:hover \\{\\s*background: color-mix\\(in srgb, var\\(--primary\\) 12%, transparent\\);",
+      "\\.chain-pool-expand:hover \\{\\s*background: var\\(--hover-wash\\);",
     ),
   );
   // 展开态：图标收进链页既有主语义 --accent-purple，不再叠边框。
@@ -1275,7 +1278,6 @@ test("G：池展开按钮向 icon-btn 设计语言收拢", () => {
     css,
     /\.chain-candidate-pool\.expanded \.chain-pool-expand \{[^}]*border-color/,
   );
-  assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*border: 1px solid/);
 });
 
 test("H：画布 fit view 手动复位入口与视口策略单源", () => {
