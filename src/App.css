@@ -6423,7 +6423,9 @@ button.check.on {
   grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) minmax(280px, 360px);
   gap: 1.25rem 1.75rem;
   align-items: center;
-  padding: 1.15rem 0.5rem 1.6rem;
+  /* 批次 8-C⑤：去顶部多余留白（1.15rem→0.6rem）；简洁模式头部比原版
+     矮（无出口 IP 摘要与按钮行），顶部留白经对称公式自动抵偿。 */
+  padding: 0.6rem 0.5rem 1.6rem;
   margin-bottom: 0.75rem;
   background: var(--hero-glow);
   border-radius: var(--radius);

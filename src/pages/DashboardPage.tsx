@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import {
   checkExitIp,
   getCoreInfo,
@@ -162,7 +161,6 @@ export function DashboardPage({
   /** LAN IPv4 for the listen card (null until fetched / offline). */
   const [lanIp, setLanIp] = useState<string | null>(null);
   const [coreVersion, setCoreVersion] = useState<string | null>(null);
-  const [appVersion, setAppVersion] = useState<string | null>(null);
   // Seed from the cross-mount status snapshot so re-mounting on tab switch
   // paints the quick-control segs at their real values (still disabled until
   // statusReady) instead of flashing the fallbacks.
@@ -325,12 +323,6 @@ function coreDisplayName(kind: string | null | undefined): string {
   useEffect(() => {
     void reload();
   }, [reload]);
-
-  useEffect(() => {
-    void getVersion()
-      .then(setAppVersion)
-      .catch(() => undefined);
-  }, []);
 
   // requestCaptureMode is defined by the hook below but the retry action
   // needs to call back into it — a ref breaks the definition-order cycle
@@ -1024,7 +1016,7 @@ function coreDisplayName(kind: string | null | undefined): string {
               ? stateLabel === "stopping" ? t("dashboard.coreStopping") : t("dashboard.coreStarting")
               : isError ? t("dashboard.coreError") : t("dashboard.coreStopped")}
             <span className="dash-kicker-sep">·</span>
-            SATELITE {appVersion ?? "—"}
+            SATELITE
           </div>
 
           <div className="dashboard-exit-summary">
@@ -1039,12 +1031,17 @@ function coreDisplayName(kind: string | null | undefined): string {
               </svg>
             </button>
             <div className="dashboard-exit-copy">
-              <span className="dashboard-status-key">{t("dashboard.exitIp")}{exitIp && !exitIp.viaProxy ? ` · ${t("dashboard.exitIpDirect")}` : ""}</span>
-              <strong className={`dashboard-exit-ip${exitIp?.ip.includes(":") ? " is-ipv6" : ""}`} title={exitIp?.ip}>{exitIp?.ip ?? "—"}</strong>
-              <span className="dashboard-exit-org ip-organization" title={orgName ?? undefined}>{orgName || "—"}</span>
+              {/* 批次 8-C：「出口IP」小字标签行删除；直连标记并入大号 IP 行尾，
+                  组织小字迁往「IP 信息 ↗」标签行末尾（单行截断）。 */}
+              <strong className={`dashboard-exit-ip${exitIp?.ip.includes(":") ? " is-ipv6" : ""}`} title={exitIp?.ip}>
+                {exitIp?.ip ?? "—"}
+                {exitIp && !exitIp.viaProxy && (
+                  <span className="dashboard-exit-ip-direct">{t("dashboard.exitIpDirect")}</span>
+                )}
+              </strong>
             </div>
           </div>
-          <IpInfoPanel exitIp={exitIp} sessionKey={autoProbeKey} onOrganization={setOrgName} />
+          <IpInfoPanel exitIp={exitIp} sessionKey={autoProbeKey} onOrganization={setOrgName} organization={orgName} />
 
           <h1 className="dash-hero-title" title={heroTitle ?? undefined}>
             {heroTitle == null ? (

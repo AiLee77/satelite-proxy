@@ -28,7 +28,7 @@ function ExitProbeSource({ source, l }: { source: string; l: typeof labels.en })
   </>;
 }
 
-export function IpInfoPanel({ exitIp, sessionKey, onOrganization }: { exitIp: ExitIpInfo | null; sessionKey: string; onOrganization?: (org: string | null) => void }) {
+export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }: { exitIp: ExitIpInfo | null; sessionKey: string; onOrganization?: (org: string | null) => void; organization?: string | null }) {
   const { locale } = useI18n();
   const l = labels[locale === "en" ? "en" : "zh"];
   const ip = exitIp?.ip;
@@ -89,6 +89,8 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization }: { exitIp: Ex
         {showType && <span className="ip-info-tag ip-network-tag">{type}</span>}
         {showQuality && <span className={`ip-info-tag ip-quality-${data?.ipQuality ?? "unknown"}`}>{qualityLabel} {quality}</span>}
         {busy && <span className="ip-info-hint">{l.checking}</span>}
+        {/* 批次 8-C：组织小字迁到本行末尾（原出口 IP 行小字位），单行截断不换行。 */}
+        <span className="ip-info-org dashboard-exit-org ip-organization" title={organization ?? undefined}>{organization || "—"}</span>
       </div>
       <dialog ref={dialog} className="ip-details-dialog" aria-labelledby="ip-details-title" onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
         <header><h2 id="ip-details-title">{l.title}</h2><button type="button" className="glass-btn small" onClick={() => setOpen(false)} autoFocus>{l.close}</button></header>

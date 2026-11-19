@@ -8,8 +8,19 @@
 .ip-quality-normal { color: var(--muted); }
 .ip-quality-risky { color: var(--danger); border-color: var(--danger-border); }
 .ip-info-hint { font-size: .65rem; color: var(--muted); }
-/* 组织名迁至首页 hero 出口 IP 行（.dashboard-exit-org）；弹窗详情行沿用。 */
+/* 组织名迁至「IP 信息 ↗」标签行末尾（.ip-info-org；批次 8 前在出口 IP 行
+   小字位）；弹窗详情行沿用。 */
 .ip-organization { white-space: normal !important; overflow-wrap: anywhere; text-overflow: clip !important; }
+/* 标签行末尾组织小字：单行截断不换行（批次 8-C 明确要求），覆盖上面
+   .ip-organization 的整名换行口径——弹窗详情行不受本规则影响。 */
+.ip-info-badges .ip-info-org {
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
 .ip-details-dialog { color: var(--text); background: var(--panel-solid); border: 1px solid var(--border); border-radius: 20px; padding: 22px; width: min(540px, calc(100vw - 36px)); max-height: calc(100vh - 36px); overflow: auto; box-shadow: var(--shadow-modal); }
 .ip-details-dialog::backdrop { background: var(--overlay); }
 .ip-details-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }

@@ -81,8 +81,10 @@ async function layout() {
         if (box.left < b.right - 1.5 && box.right > b.left + 1.5 && box.top < b.bottom - 1.5 && box.bottom > b.top + 1.5) issues.push(`卡片重叠 ${describe(card)} / ${describe(other)}`);
       }
     }
-    // 节点标题和组织名必须完整换行；统计数值必须完整可见。
-    const critical = ".dashboard-exit-ip, .dash-hero-title, .dash-hero .dashboard-exit-org, .traffic-stats-number, .traffic-stats-table th";
+    // 节点标题必须完整换行；统计数值必须完整可见。批次 8-C：组织小字迁
+    // IP 信息标签行末尾后为单行省略（ellipsis），不再是「完整换行」口径，
+    // 其截断规格由 structure() 的 textOverflow 断言守护，移出本清单。
+    const critical = ".dashboard-exit-ip, .dash-hero-title, .traffic-stats-number, .traffic-stats-table th";
     for (const el of dashboard.querySelectorAll(critical)) {
       if (!el.textContent.trim()) { issues.push(`统计为空 ${describe(el)}`); continue; }
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) issues.push(`统计裁切 ${describe(el)}`);
@@ -309,7 +311,8 @@ async function structure(locale) {
   assert.equal(await page.locator(".instrument-grid-6 > .simple-spark").count(), 1, "实时活动位于六卡内");
   assert.equal(await page.locator(".instrument-grid-6 > .service-status-card").count(), 1, "服务状态卡入六卡网格（原网络探测卡位）");
   await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
-  assert.equal(await page.locator('.dash-hero .dashboard-exit-org').evaluate(el => getComputedStyle(el).textOverflow), "clip");
+  // 批次 8-C：组织小字迁「IP 信息 ↗」标签行末尾，规格为单行截断不换行。
+  assert.equal(await page.locator('.dash-hero .dashboard-exit-org').evaluate(el => getComputedStyle(el).textOverflow), "ellipsis");
   assert.ok((await page.locator('.ip-info-badges').innerText()).includes(locale === "zh" ? "商业" : "Commercial"));
   assert.equal(await page.locator('.service-status-card').count(), 1);
   for (const id of ["proxy", "direct", "total"]) {

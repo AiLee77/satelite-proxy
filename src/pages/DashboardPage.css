@@ -1,6 +1,7 @@
 /* 概览补丁层：hero 三列 + 六卡的原版结构、材质、断点全部由 App.css 提供。
    本文件只承载新增数据面/几何的样式：
-   ① hero 状态区的出口 IP 摘要（国旗刷新按钮 + 大号 IP + 组织小字）；
+   ① hero 状态区的出口 IP 摘要（国旗刷新按钮 + 大号 IP；组织小字批次 8
+     迁往「IP 信息 ↗」标签行末尾，见 IpInfoPanel.css）；
    ② hero 几何补丁：左右两块（轨道动效/快捷面板）与中列底边对齐；
    ③ 六卡的类型图标；
    ④ 节点名完整换行（App.css 基线是单行省略，专业首页放开为整名换行）。
@@ -56,9 +57,12 @@
   white-space: normal;
 }
 .dashboard-exit-ip.is-ipv6 { font-size: 1.35rem; }
-/* 组织名（IP 元数据）作出口 IP 行小字；.ip-organization 类保证整名换行不裁切。 */
+/* 组织名小字样式：迁移后在 IpInfoPanel.css 的 .ip-info-org 承载（单行截断）。 */
 .dashboard-exit-org { font-size: 0.72rem; line-height: 1.45; color: var(--muted); }
-.dashboard-status-key { font-size: 0.7rem; color: var(--muted); }
+/* 直连标记并入大号 IP 行尾（批次 8-C 删「出口IP」标签行后的落点）。 */
+.dashboard-exit-ip-direct { font-size: 0.7rem; font-weight: 500; color: var(--muted); margin-left: 0.5rem; }
+/* 批次 8-C：删标签行后 IP 顶格，块间距收紧。 */
+.dashboard-exit-copy { gap: 0; }
 
 /* —— ③ 六卡图标：标签跟随图标排布，右侧留给标签/状态 pill —— */
 .dashboard-card-icon {
