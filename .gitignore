@@ -62,3 +62,6 @@ assets/icon/*
 
 # 本地浏览器回归取证截图（CI 中由 Actions 上传为 artifact，不入库）
 test-results/
+
+# 本地 UI 浏览器回归依赖缓存（run-ui-tests.ps1 安装 playwright）
+.ui-test-deps/

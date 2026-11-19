@@ -368,8 +368,10 @@
 /* G1: exit-activation control in the chain card header. `current` reads as
  *  the live-exit badge (the chain already is the outbound), `unavailable`
  *  explains the sing-box-only gating without an interactive affordance.
- *  克制胶囊风：深色底（--surface-2）+ 细描边 + 低饱和语义色（循 .pill.target-*
- *  先例的 muted 底/描边/字色三件套，零新造色）；「使用中」仍一眼可辨。 */
+ *  批次 8 胶囊配色互换：克制三件套（深色底 --surface-2 + 细描边 + 低饱和语义
+ *  色，循 .pill.target-* 先例，零新造色）归「使用/停用/检测出口/不可用」；
+ *  「使用中」独占主色实底胶囊（--primary 填充 + --on-primary 字），同卡并
+ *  排时最醒目，状态优先级一眼可辨。 */
 .chain-exit-btn {
   padding: 0.28rem 0.7rem;
   border-radius: 999px;
@@ -394,11 +396,13 @@
   cursor: default;
 }
 
-/* 使用中：主色 muted 底 + 淡描边 + 主色字——非交互徽标，仍一眼可辨。 */
+/* 使用中：主色实底 + 描边 + --on-primary 字——整行唯一的实底胶囊，非
+ *  交互徽标（不可点），同卡并存时必须是最醒目的一个。 */
 .chain-exit-btn.current {
-  color: var(--primary);
-  border-color: var(--primary-border);
-  background: var(--primary-muted);
+  color: var(--on-primary);
+  border-color: var(--primary);
+  background: var(--primary);
+  font-weight: 600;
   cursor: default;
   pointer-events: none;
 }

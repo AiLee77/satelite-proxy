@@ -3510,8 +3510,13 @@ button.node-card:disabled,
   border-color: var(--border);
 }
 
+/* 批次 8 胶囊配色互换：规则集目标 pill 的「指定节点」与链池行的
+   「指定节点」共用此规则，统一归位克制三件套（深色底 + 细描边 + 低
+   饱和字色）——与「使用（启用为出口）」「停用」「检测出口」链胶囊同
+   语言，亮绿实底只留「使用中」。描边用边框同族低透明蓝，零新造色。 */
 .pill.target-node {
-  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
   color: var(--accent-blue);
   max-width: 14rem;
   overflow: hidden;
