@@ -7626,11 +7626,11 @@ button.check.on {
   gap: 0;
   padding: 0.18rem;
   border-radius: var(--radius-pill);
-  background: #232a37;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.055),
-    0 8px 24px rgba(0, 0, 0, 0.18);
+  /* 批次 8-E：轨道恢复原版低对比（001dcdb 前 .segmented 的 --surface-2 浅灰
+     绿轨道 + 细描边），不再用高饱和 #232a37 实底。 */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: none;
 }
 
 /* Opt-in frosted look (settings → control style). Re-adds the backdrop blur
@@ -7662,17 +7662,11 @@ button.check.on {
      by using calc so the indicator lands exactly over an option. */
   width: calc((100% - 0.36rem) / var(--count, 3));
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.19) 0%,
-    rgba(255, 255, 255, 0.11) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 1px 0 0 rgba(255, 255, 255, 0.045),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1),
-    0 2px 5px rgba(0, 0, 0, 0.13);
+  border: 1px solid var(--border);
+  /* 批次 8-E：选中胶囊恢复原版低对比——--surface 平涂仅略亮于 --surface-2
+     轨道（原 .seg.active 口径），去渐变/内发光/外投影。 */
+  background: var(--surface);
+  box-shadow: none;
   pointer-events: none;
   z-index: 0;
   transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
@@ -7692,11 +7686,8 @@ button.check.on {
   width: 65%;
   height: 45%;
   border-radius: var(--radius-pill);
-  background: radial-gradient(
-    ellipse at top left,
-    rgba(255, 255, 255, 0.13),
-    rgba(255, 255, 255, 0) 70%
-  );
+  /* 批次 8-E：顶部光源高光随平涂选中胶囊一并去掉。 */
+  background: none;
   pointer-events: none;
 }
 
@@ -8020,18 +8011,18 @@ button.check.on {
 }
 
 
+/* 批次 8-E：day 主题轨道/选中胶囊改用同一低对比 token 体系（--surface-2 /
+   --surface + --border），浅色下即白轨道 + 略深选中，与原版 .segmented 同源。 */
 [data-theme="day"] .glass-seg {
-  background: rgba(0, 0, 0, 0.05);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.6),
-    0 4px 14px rgba(0, 0, 0, 0.08);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: none;
 }
 
 [data-theme="day"] .glass-seg-indicator {
-  background: #fff;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: none;
 }
 
 /* —— Glass controls inside modals go opaque ——
@@ -8040,9 +8031,11 @@ button.check.on {
    text smoothing (fuzzy unselected seg labels), and the translucent tint is
    exactly what shifts between differently calibrated monitors. Inside modals:
    solid fills, no backdrop blur — same crisp treatment as the white inputs.
-   Primary/danger variants keep their accent tint layered on the opaque base. */
+   Primary/danger variants keep their accent tint layered on the opaque base.
+   批次 8-E：modal 内轨道改用 --surface-2 低对比口径（与原实底 #232a37 同
+   属「不透明平涂」类别，无 backdrop 依赖）。 */
 .modal .glass-seg {
-  background: #232a37;
+  background: var(--surface-2);
   border-color: rgba(255, 255, 255, 0.08);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -8069,8 +8062,8 @@ button.check.on {
 }
 
 [data-theme="day"] .modal .glass-seg {
-  background: #e9edf3;
-  border-color: rgba(0, 0, 0, 0.06);
+  background: var(--surface-2);
+  border-color: var(--border);
   box-shadow: none;
 }
 
