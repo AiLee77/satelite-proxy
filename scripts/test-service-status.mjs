@@ -677,7 +677,11 @@ test("路由详情具备中英文来源、未确认与内核提示；主卡只�
   assert.match(card, /route\.chains\.join\(" → "\)/);
   assert.doesNotMatch(card, /destinationIP|globalIp|dangerouslySetInnerHTML/);
   const css = readFileSync(new URL("../src/components/ServiceStatusCard.css", import.meta.url), "utf8");
-  assert.match(css, /\.service-status-card-exit\s*\{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+  // 返修 B：行内出口 IP 与服务名/状态同行，长 IPv6 单行省略号截断，
+  // title 悬浮全文（不再 flex 100% 强占一整行换行撑高卡行）。
+  assert.match(css, /\.service-status-card-exit\s*\{[^}]*flex: 0 1 auto;[^}]*white-space: nowrap;/);
+  assert.match(css, /\.service-status-card-exit\s*\{[^}]*text-overflow: ellipsis;/);
+  assert.match(card, /title=\{`\$\{t\("serviceStatus\.exitIp"\)\}: \$\{exitIp\}`\}/);
   assert.match(css, /\.service-status-route-fields dd\s*\{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
 });
 
