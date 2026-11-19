@@ -1,10 +1,10 @@
 /* 概览补丁层：hero 三列 + 六卡的原版结构、材质、断点全部由 App.css 提供。
-   本文件只承载 2026-10/11 新增数据面的样式：
-   ① hero 状态区的出口 IP 摘要（国旗刷新按钮 + 大号 IP）；
-   ② 六卡网格下方的服务状态全宽带；
+   本文件只承载新增数据面/几何的样式：
+   ① hero 状态区的出口 IP 摘要（国旗刷新按钮 + 大号 IP + 组织小字）；
+   ② hero 几何补丁：左右两块（轨道动效/快捷面板）与中列底边对齐；
    ③ 六卡的类型图标；
    ④ 节点名完整换行（App.css 基线是单行省略，专业首页放开为整名换行）。
-   不覆盖 App.css 的既有玻璃材质、hero 网格与 instrument 卡片样式。 */
+   不覆盖 App.css 的既有玻璃材质与 instrument 卡片样式。 */
 
 /* ④ 节点/链名称完整换行，不截断、不缩字号；
    行高 1.35 ≥ 字体自然行盒，换行后字形不会溢出标题元素框。 */
@@ -56,6 +56,8 @@
   white-space: normal;
 }
 .dashboard-exit-ip.is-ipv6 { font-size: 1.35rem; }
+/* 组织名（IP 元数据）作出口 IP 行小字；.ip-organization 类保证整名换行不裁切。 */
+.dashboard-exit-org { font-size: 0.72rem; line-height: 1.45; color: var(--muted); }
 .dashboard-status-key { font-size: 0.7rem; color: var(--muted); }
 
 /* —— ③ 六卡图标：标签跟随图标排布，右侧留给标签/状态 pill —— */
@@ -71,18 +73,10 @@
 }
 .instrument-grid-6 .instrument-head .instrument-label { margin-right: auto; }
 
-/* —— ② 服务状态带：现版服务监控数据面全宽安置，两列行网格 —— */
-.dashboard-service-band { margin: 0; }
-.dashboard-service-band > .service-status-card { width: 100%; min-height: 0; }
-.dashboard-service-band .service-status-card-rows {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 14px;
-  row-gap: 8px;
-}
-@media (max-width: 720px) {
-  .dashboard-service-band .service-status-card-rows { grid-template-columns: minmax(0, 1fr); }
-}
+/* —— ② hero 几何：轨道动效与快捷面板改底边对齐（App.css 基线是居中），
+   中列内容不变；≤900px 断点两列/单列下该规则对满宽行无可见影响。 —— */
+.dashboard-page .dash-hero > .orbit,
+.dashboard-page .dash-hero > .dash-side-rail { align-self: end; }
 
 /* —— 更多菜单：长配置名完整换行 + 弹层动画与 portal 布局（沿用既有约定） —— */
 .dashboard-page .dash-more-menu,

@@ -367,12 +367,14 @@
 
 /* G1: exit-activation control in the chain card header. `current` reads as
  *  the live-exit badge (the chain already is the outbound), `unavailable`
- *  explains the sing-box-only gating without an interactive affordance. */
+ *  explains the sing-box-only gating without an interactive affordance.
+ *  克制胶囊风：深色底（--surface-2）+ 细描边 + 低饱和语义色（循 .pill.target-*
+ *  先例的 muted 底/描边/字色三件套，零新造色）；「使用中」仍一眼可辨。 */
 .chain-exit-btn {
   padding: 0.28rem 0.7rem;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
   font-size: 0.82rem;
@@ -383,7 +385,7 @@
 }
 
 .chain-exit-btn:hover:not(:disabled) {
-  background: var(--hover);
+  background: var(--hover-wash);
   border-color: var(--border-strong);
 }
 
@@ -392,27 +394,39 @@
   cursor: default;
 }
 
+/* 使用中：主色 muted 底 + 淡描边 + 主色字——非交互徽标，仍一眼可辨。 */
 .chain-exit-btn.current {
   color: var(--primary);
-  border-color: var(--primary);
+  border-color: var(--primary-border);
+  background: var(--primary-muted);
   cursor: default;
   pointer-events: none;
 }
 
-/* 停用：与启用同款 pill，与「使用中」徽标并置（同位同风格）。 */
+/* 停用：与启用同款 pill，danger muted 底/描边/字，可点（回落救生通道）。 */
 .chain-exit-btn.chain-exit-stop {
   margin-left: 0.4rem;
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
 }
 
-/* 已失效：引用的节点/池已删除——红 pill 非交互，「使用」禁用，仅编辑可救。 */
+.chain-exit-btn.chain-exit-stop:hover:not(:disabled) {
+  color: var(--danger-hover);
+  border-color: var(--danger-hover);
+  background: var(--hover-wash);
+}
+
+/* 已失效：引用的节点/池已删除——danger muted 非交互，「使用」禁用，仅编辑可救。 */
 .chain-exit-btn.chain-exit-dead {
   color: var(--danger);
-  border-color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
   cursor: default;
   pointer-events: none;
 }
 
-/* 出口探测：同款 pill 并置；结果行在卡头下方，失败红字。 */
+/* 出口探测：同款中性胶囊并置；结果行在卡头下方，失败红字。 */
 .chain-exit-btn.chain-exit-probe {
   margin-left: 0.4rem;
 }
@@ -429,7 +443,9 @@
 }
 
 .chain-exit-btn.unavailable {
-  opacity: 0.55;
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface-2);
   cursor: default;
   pointer-events: none;
 }

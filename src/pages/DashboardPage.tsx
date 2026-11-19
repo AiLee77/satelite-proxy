@@ -8,6 +8,7 @@ import {
   getSettings,
   getSubscription,
   listAllNodes,
+  listChains,
   listSubscriptions,
   onNodeLatencyChanged,
   onProxySnapshot,
@@ -28,7 +29,7 @@ import {
   useCaptureModeSwitch,
   type CaptureMode,
 } from "../hooks/useCaptureModeSwitch";
-import { isChainEntry } from "../chainVirtualNode";
+import { CHAIN_NODE_ID_PREFIX, isChainEntry } from "../chainVirtualNode";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useDashboardMenuPosition } from "../hooks/useDashboardMenuPosition";
 import { useI18n } from "../i18n";
@@ -49,6 +50,7 @@ import type {
   ExitIpInfo,
   GenerateConfigResult,
   OutboundMode,
+  ProxyChain,
   ProxyNode,
   ProxyStatus,
   SubscriptionTraffic,
@@ -129,25 +131,6 @@ function fmtLatency(ms?: number | null) {
   return `${ms} ms`;
 }
 
-function latencyClass(ms?: number | null) {
-  if (ms == null || ms < 0) return "lat-none";
-  if (ms < 200) return "lat-good";
-  if (ms < 300) return "lat-ok";
-  return "lat-slow";
-}
-
-/** Country code to a localized name, with the labels used by node grouping. */
-function countryDisplayName(cc: string, locale: string): string {
-  const code = cc.toUpperCase();
-  if (locale !== "en" && code === "HK") return "中国香港";
-  if (locale !== "en" && code === "TW") return "中国台湾";
-  try {
-    return new Intl.DisplayNames([locale], { type: "region" }).of(code) || cc;
-  } catch {
-    return cc;
-  }
-}
-
 /** Uptime from core_started_at (unix secs) to now, as "HH:MM:SS". */
 function fmtUptime(startedAt?: number | null) {
   if (startedAt == null) return "—";
@@ -163,9 +146,11 @@ export function DashboardPage({
   onGoNodes,
   onGoTraffic,
 }: Props) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const [subs, setSubs] = useState<SubscriptionView[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  /** 链列表（list_chains）—链激活时 hero 信息行的出口协议/延迟 join 数据源。 */
+  const [chains, setChains] = useState<ProxyChain[]>([]);
   const [currentNode, setCurrentNode] = useState<ProxyNode | null>(null);
   /** settings.current_node_id — available before full node list. */
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
@@ -216,6 +201,8 @@ export function DashboardPage({
   const [latencyProbing, setLatencyProbing] = useState(false);
   /** Exit-IP half of the dashboard network probe. */
   const [exitIp, setExitIp] = useState<ExitIpInfo | null>(null);
+  /** IP 元数据中的组织名 —由 IpInfoPanel 回传，hero 出口 IP 行作小字显示。 */
+  const [orgName, setOrgName] = useState<string | null>(null);
   const [exitIpProbing, setExitIpProbing] = useState(false);
   const exitIpVersionRef = useRef(0);
   const autoProbeKeyRef = useRef<string | null>(null);
@@ -282,6 +269,7 @@ function coreDisplayName(kind: string | null | undefined): string {
       const detailP = Promise.all([
         listSubscriptions(),
         listAllNodes(),
+        listChains(),
         getCoreInfo("singbox").catch(() => null),
         getCoreInfo("xray").catch(() => null),
         getCoreInfo("mihomo").catch(() => null),
@@ -300,10 +288,11 @@ function coreDisplayName(kind: string | null | undefined): string {
       pushSpark(status);
       setStatusReady(true);
 
-      const [subList, nodeList, coreSingbox, coreXray, coreMihomo, lan] =
+      const [subList, nodeList, chainList, coreSingbox, coreXray, coreMihomo, lan] =
         await detailP;
       setSubs(subList);
       setNodes(nodeList);
+      setChains(chainList);
       setLanIp(lan ?? null);
       const cur =
         nodeList.find((n) => n.id === settings.current_node_id) ??
@@ -732,12 +721,6 @@ function coreDisplayName(kind: string | null | undefined): string {
     }
   }, [autoProbeKey]);
 
-  /** Refresh latency and exit IP together from the network-probe card. */
-  function onProbeNetwork() {
-    void onProbeLatency();
-    void onProbeExitIp();
-  }
-
   // Re-probe when the core starts/stops, routing mode changes, or the
   // selected node changes. The version stamp above prevents a slower earlier
   // request from replacing a newer answer.
@@ -762,6 +745,17 @@ function coreDisplayName(kind: string | null | undefined): string {
   );
 
   const exitCountryCode = exitIp?.countryCode?.toUpperCase().match(/^[A-Z]{2}$/)?.[0] ?? "—";
+  // 链激活时，hero 信息行的出口协议/延迟来自链尾跳对应的真实节点
+  // （list_chains → 尾跳 node_id → nodes 回查）；池尾跳没有固定出口，省略。
+  const chainExitNode = useMemo(() => {
+    if (!currentNode || !isChainEntry(currentNode)) return null;
+    const chainId = currentNode.id.slice(CHAIN_NODE_ID_PREFIX.length);
+    const chain = chains.find((c) => c.id === chainId);
+    const lastHop = chain?.hops[chain.hops.length - 1];
+    return lastHop && lastHop.kind === "node"
+      ? nodes.find((n) => n.id === lastHop.node_id) ?? null
+      : null;
+  }, [currentNode, chains, nodes]);
   const running = proxy?.running ?? false;
   const stateLabel = proxy?.core_state ?? "stopped";
   // Multi-core is "on" while the sidecar processes actually run — the same
@@ -830,7 +824,16 @@ function coreDisplayName(kind: string | null | undefined): string {
         ? proxy?.core_type === "mihomo"
           ? t("mihomoGroups.dashboardNotice")
           : currentNode && isChainEntry(currentNode)
-            ? `${t("nodes.chainBadge")} · ${t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 })}`
+            ? [
+                t("nodes.chainBadge"),
+                t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 }),
+                chainExitNode?.protocol.toUpperCase(),
+                chainExitNode?.latency_ms != null && chainExitNode.latency_ms >= 0
+                  ? fmtLatency(chainExitNode.latency_ms)
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")
             : [currentNode?.protocol?.toUpperCase(), fmtLatency(currentNode?.latency_ms)]
                 .filter(Boolean)
                 .join(" · ")
@@ -981,7 +984,6 @@ function coreDisplayName(kind: string | null | undefined): string {
           ? "warn"
           : "ok";
 
-  const currentLatency = currentNode?.latency_ms;
   /** Core failure while stopped — surfaced as a modal unless dismissed. */
   const coreErrorText = proxy?.error && !running ? proxy.error : null;
 
@@ -1039,9 +1041,10 @@ function coreDisplayName(kind: string | null | undefined): string {
             <div className="dashboard-exit-copy">
               <span className="dashboard-status-key">{t("dashboard.exitIp")}{exitIp && !exitIp.viaProxy ? ` · ${t("dashboard.exitIpDirect")}` : ""}</span>
               <strong className={`dashboard-exit-ip${exitIp?.ip.includes(":") ? " is-ipv6" : ""}`} title={exitIp?.ip}>{exitIp?.ip ?? "—"}</strong>
+              <span className="dashboard-exit-org ip-organization" title={orgName ?? undefined}>{orgName || "—"}</span>
             </div>
           </div>
-          <IpInfoPanel exitIp={exitIp} sessionKey={autoProbeKey} />
+          <IpInfoPanel exitIp={exitIp} sessionKey={autoProbeKey} onOrganization={setOrgName} />
 
           <h1 className="dash-hero-title" title={heroTitle ?? undefined}>
             {heroTitle == null ? (
@@ -1465,76 +1468,10 @@ function coreDisplayName(kind: string | null | undefined): string {
 
         <TrafficStatsCard status={proxy} onOpen={onGoTraffic} />
 
-        <article
-          className="instrument accent-cyan instrument-click dashboard-probe-card"
-          role="button"
-          tabIndex={0}
-          title={t("dashboard.probeNetworkHint")}
-          onClick={onProbeNetwork}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onProbeNetwork();
-            }
-          }}
-        >
-          <header className="instrument-head">
-            <svg className="dashboard-card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>
-            <span className="instrument-label">
-              {t("dashboard.cardProbe")}
-            </span>
-          </header>
-          <div
-            className={`instrument-value readout mono ${latencyClass(currentLatency)}`}
-          >
-            {latencyProbing ? (
-              <span
-                className="lat-spinner"
-                aria-label={t("dashboard.probeNetworkRunning")}
-              />
-            ) : (
-              fmtLatency(currentLatency)
-            )}
-          </div>
-          <div className="instrument-kv mono">
-            <div>
-              <span className="kv-k">{t("dashboard.exitIp")}</span>
-              <span
-                className={`kv-v exit-ip${exitIp ? "" : " lat-none"}`}
-                title={exitIp?.ip ?? undefined}
-              >
-                {exitIpProbing ? (
-                  <span
-                    className="lat-spinner"
-                    aria-label={t("dashboard.probeNetworkRunning")}
-                  />
-                ) : exitIp ? (
-                  <>
-                    {exitIp.ip}
-                    {!exitIp.viaProxy && (
-                      <span className="exit-ip-direct">
-                        {t("dashboard.exitIpDirect")}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  "—"
-                )}
-              </span>
-            </div>
-            <div>
-              <span className="kv-k">{t("dashboard.exitCountry")}</span>
-              <span
-                className={`kv-v${exitIp?.countryCode ? "" : " lat-none"}`}
-                title={exitIp?.source ?? undefined}
-              >
-                {exitIp?.countryCode
-                  ? countryDisplayName(exitIp.countryCode, locale)
-                  : "—"}
-              </span>
-            </div>
-          </div>
-        </article>
+        {/* 服务状态卡（原网络探测卡位）：现版服务监控数据面，点击打开详情弹窗。 */}
+        {statusReady
+          ? <ServiceStatusCard sessionKey={`${autoProbeKey}:${proxy?.capture_mode ?? ""}:${proxy?.custom_inbound_port ?? ""}`} />
+          : <div className="instrument service-status-card" aria-busy="true" />}
 
         <article
           className="instrument accent-green instrument-click dashboard-profile-card"
@@ -1660,11 +1597,6 @@ function coreDisplayName(kind: string | null | undefined): string {
           </div>
         </article>
       </section>
-
-      {/* —— Services band: 现版服务状态数据面全宽安置 —— */}
-      <div className="dashboard-service-band">
-        {statusReady ? <ServiceStatusCard sessionKey={`${autoProbeKey}:${proxy?.capture_mode ?? ""}:${proxy?.custom_inbound_port ?? ""}`} /> : <div className="instrument service-status-card" aria-busy="true" />}
-      </div>
 
       {proxy?.core_type === "mihomo" ? (
         <div className="card mihomo-policy-link"><span>{t("mihomoGroups.dashboardNotice")}</span>

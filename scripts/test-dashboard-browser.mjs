@@ -65,7 +65,7 @@ async function layout() {
     const issues = [];
     const root = document.documentElement;
     const dashboard = document.querySelector(".dashboard-page");
-    const cards = [...dashboard.querySelectorAll(".dash-hero, .dashboard-service-band > .service-status-card, .dash-side-rail, .instrument-grid-6 > *")];
+    const cards = [...dashboard.querySelectorAll(".dash-hero, .dash-side-rail, .instrument-grid-6 > *")];
     const describe = el => `${el.tagName}.${el.className}`;
     const outside = (r, box) => r.left < box.left - 1.5 || r.right > box.right + 1.5 || r.top < box.top - 1.5 || r.bottom > box.bottom + 1.5;
     for (const el of [root, document.body, document.querySelector("main"), dashboard, ...cards]) {
@@ -82,7 +82,7 @@ async function layout() {
       }
     }
     // 节点标题和组织名必须完整换行；统计数值必须完整可见。
-    const critical = ".dashboard-exit-ip, .dash-hero-title, .dash-hero .ip-organization, .traffic-stats-number, .traffic-stats-table th";
+    const critical = ".dashboard-exit-ip, .dash-hero-title, .dash-hero .dashboard-exit-org, .traffic-stats-number, .traffic-stats-table th";
     for (const el of dashboard.querySelectorAll(critical)) {
       if (!el.textContent.trim()) { issues.push(`统计为空 ${describe(el)}`); continue; }
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) issues.push(`统计裁切 ${describe(el)}`);
@@ -106,7 +106,7 @@ async function layout() {
   assert.deepEqual(issues, [], `${currentCase} 布局/统计文字`);
 }
 async function heroGeometry() {
-  await page.waitForFunction(() => document.querySelector('.dash-hero .ip-organization')?.textContent === window.dashboardFixture.organization);
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
   const metrics = await page.evaluate(() => {
     const hero = document.querySelector('.dash-hero');
     const copy = hero.querySelector('.dash-hero-copy');
@@ -119,7 +119,7 @@ async function heroGeometry() {
     const lines = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
     const buttons = [...actions.querySelectorAll('.secondary, .dash-more-btn')].map(el => el.getBoundingClientRect());
     return {
-      height: box.height, serviceHeight: document.querySelector('.dashboard-service-band .service-status-card').getBoundingClientRect().height,
+      height: box.height, serviceHeight: document.querySelector('.instrument-grid-6 .service-status-card').getBoundingClientRect().height,
       below: a.top >= t.bottom - 1,
       buttonsBelow: buttons.length === 2 && buttons.every(b => b.top >= t.bottom - 1 && b.bottom <= a.bottom + 1),
       fullWidth: Math.abs(t.left - content.left) <= 1 && Math.abs(t.right - content.right) <= 1,
@@ -144,7 +144,7 @@ async function heroGeometry() {
 async function serviceRoundTrip(saveScreenshot = false) {
   const settled = async count => page.waitForFunction(count => {
     const rows = [...document.querySelectorAll('.service-status-card-row')];
-    return document.querySelector('.dash-hero .ip-organization')?.textContent === window.dashboardFixture.organization &&
+    return document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization &&
       rows.length === count && rows.every(row => row.querySelector('.service-status-state')?.getAttribute('data-status') ===
         (['chatgpt', 'youtube'].includes(row.getAttribute('data-service-id')) ? 'available' : 'reachable')) &&
       !document.querySelector('.service-status-card .service-status-checking');
@@ -163,7 +163,7 @@ async function serviceRoundTrip(saveScreenshot = false) {
     await settled(count);
     const after = await heroGeometry();
     assert.ok(Math.abs(after.height - before.height) <= 2, `${currentCase} 2→4→2 服务不改变 hero 高度 ${before.height} → ${after.height}`);
-    if (count === 4) assert.ok(after.serviceHeight > before.serviceHeight + 2, `${currentCase} 服务带卡片确实增高`);
+    if (count === 4) assert.ok(after.serviceHeight > before.serviceHeight + 2, `${currentCase} 服务状态卡确实增高`);
     await layout();
     if (count === 4 && saveScreenshot) await page.screenshot({ path: 'test-results/dashboard-1280-four-services.png' });
   }
@@ -195,7 +195,7 @@ async function countryRefresh() {
   const button = page.locator('.dashboard-country-button');
   await page.waitForFunction(() => document.querySelector('.dashboard-country-button text')?.textContent === 'HK');
   assert.equal(await button.getAttribute('aria-label'), '刷新 出口IP');
-  await page.waitForFunction(() => document.querySelector('.dash-hero .ip-organization')?.textContent === window.dashboardFixture.organization);
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
   await assertExitDetails('https://example.test/cdn-cgi/trace?format=plain%20text', '2023-11-14T22:13:20.000Z', true);
   const metadataCalls = await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === 'check_ip_metadata').length);
   for (const [country, text] of [['US', 'US'], ['', '—'], ['invalid', '—']]) {
@@ -211,7 +211,7 @@ async function countryRefresh() {
     await page.waitForFunction(() => window.dashboardFixture.releaseExitIp !== null);
     assert.equal(await button.isDisabled(), true, '探测中禁止重复点击');
     assert.equal(await button.getAttribute('aria-busy'), 'true');
-    assert.equal(await page.locator('.dash-hero .ip-organization-row .ip-organization').textContent(), await page.evaluate(() => window.dashboardFixture.organization), '刷新出口期间保留同IP组织信息，不清空闪烁');
+    assert.equal(await page.locator('.dash-hero .dashboard-exit-org').textContent(), await page.evaluate(() => window.dashboardFixture.organization), '刷新出口期间保留同IP组织信息，不清空闪烁');
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.dashboardFixture.exitIpReads), before + 1, '每次点击仅发一个 check_exit_ip，忙碌时不重复');
     await page.evaluate(() => {
@@ -303,13 +303,13 @@ async function structure(locale) {
   assert.equal(badge.background, 'rgba(0, 0, 0, 0)', '国家按钮保留 SVG 花形底图');
   assert.ok(badge.svgOffset < 2 && badge.textOffset < 2, '国家图形与代码在按钮内部居中');
   assert.equal(await page.locator(".dash-side-rail").count(), 1);
-  assert.equal(await page.locator(".instrument-grid-6 > *").count(), 6, "六卡网格：核心/实时活动/流量统计/延迟/订阅/端口");
+  assert.equal(await page.locator(".instrument-grid-6 > *").count(), 6, "六卡网格：核心/实时活动/流量统计/服务/订阅/端口");
   assert.equal(await page.locator(".dash-hero > .orbit").count(), 1, "hero 左列保留轨道动效");
   assert.equal(await page.locator(".instrument-grid-6 > .traffic-stats-card").count(), 1, "流量统计合卡位于六卡内");
   assert.equal(await page.locator(".instrument-grid-6 > .simple-spark").count(), 1, "实时活动位于六卡内");
-  assert.equal(await page.locator(".dashboard-service-band .service-status-card").count(), 1, "服务状态全宽带安置");
-  await page.waitForFunction(() => document.querySelector('.ip-organization')?.textContent === window.dashboardFixture.organization);
-  assert.equal(await page.locator('.ip-organization-row .ip-organization').evaluate(el => getComputedStyle(el).textOverflow), "clip");
+  assert.equal(await page.locator(".instrument-grid-6 > .service-status-card").count(), 1, "服务状态卡入六卡网格（原网络探测卡位）");
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
+  assert.equal(await page.locator('.dash-hero .dashboard-exit-org').evaluate(el => getComputedStyle(el).textOverflow), "clip");
   assert.ok((await page.locator('.ip-info-badges').innerText()).includes(locale === "zh" ? "商业" : "Commercial"));
   assert.equal(await page.locator('.service-status-card').count(), 1);
   for (const id of ["proxy", "direct", "total"]) {
