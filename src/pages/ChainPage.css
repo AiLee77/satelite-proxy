@@ -368,16 +368,16 @@
 /* G1: exit-activation control in the chain card header. `current` reads as
  *  the live-exit badge (the chain already is the outbound), `unavailable`
  *  explains the sing-box-only gating without an interactive affordance.
- *  批次 8 胶囊配色互换：克制三件套（深色底 --surface-2 + 细描边 + 低饱和语义
- *  色，循 .pill.target-* 先例，零新造色）归「使用/停用/检测出口/不可用」；
- *  「使用中」独占主色实底胶囊（--primary 填充 + --on-primary 字），同卡并
- *  排时最醒目，状态优先级一眼可辨。 */
+ *  返修 A 胶囊样式 B：克制三件套（深色底 --surface-2 + 细描边 + 低饱和语义
+ *  字色，循 .pill.target-* 先例，零新造色）归「启用/停用/已失效/检测出口/
+ *  不可用」；「使用中」独占主色实底胶囊（--primary 填充 + --on-primary 字），
+ *  同卡并排时整行唯一亮色，状态优先级一眼可辨。 */
 .chain-exit-btn {
   padding: 0.28rem 0.7rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--muted);
   font: inherit;
   font-size: 0.82rem;
   line-height: 1;
@@ -407,12 +407,13 @@
   pointer-events: none;
 }
 
-/* 停用：与启用同款 pill，danger muted 底/描边/字，可点（回落救生通道）。 */
+/* 停用：同款克制三件套——深色底 --surface-2 + danger 细描边 + 低饱和 danger
+ *  字（不再染彩 danger-bg 底），可点（回落救生通道）。 */
 .chain-exit-btn.chain-exit-stop {
   margin-left: 0.4rem;
   color: var(--danger);
   border-color: var(--danger-border);
-  background: var(--danger-bg);
+  background: var(--surface-2);
 }
 
 .chain-exit-btn.chain-exit-stop:hover:not(:disabled) {
@@ -421,11 +422,12 @@
   background: var(--hover-wash);
 }
 
-/* 已失效：引用的节点/池已删除——danger muted 非交互，「使用」禁用，仅编辑可救。 */
+/* 已失效：引用的节点/池已删除——同停用三件套（深色底+描边+低饱和 danger 字，
+ *  不染彩 danger-bg），非交互，「使用」禁用，仅编辑可救。 */
 .chain-exit-btn.chain-exit-dead {
   color: var(--danger);
   border-color: var(--danger-border);
-  background: var(--danger-bg);
+  background: var(--surface-2);
   cursor: default;
   pointer-events: none;
 }

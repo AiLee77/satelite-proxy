@@ -140,6 +140,60 @@ test("池候选可展开，点成员行直接入链尾（B 回归，勾选暂存
   assert.match(page, /preview\.length - liveMembers\.length/);
 });
 
+test("链卡出口胶囊样式 B：停用/已失效/检测出口深色底描边低饱和，使用中整行唯一亮色（返修 A）", () => {
+  const css = readFileSync(
+    new URL("../src/pages/ChainPage.css", import.meta.url),
+    "utf8",
+  );
+  const rule = (sel) => {
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = css.match(new RegExp(esc + "\\s*\\{([^}]*)\\}"));
+    assert.ok(m, `缺规则 ${sel}`);
+    return m[1];
+  };
+  // 检测出口（复用基类，含「启用」）：深色底 --surface-2 + 细描边 +
+  // 低饱和 --muted 字色，不再用 --text 主文字色。
+  const base = rule(".chain-exit-btn");
+  assert.match(base, /background: var\(--surface-2\)/);
+  assert.match(base, /border: 1px solid var\(--border\)/);
+  assert.match(base, /color: var\(--muted\)/);
+  assert.ok(!base.includes("var(--text)"));
+  // 不可用：同款克制三件套 + 低饱和 muted。
+  const unavailable = rule(".chain-exit-btn.unavailable");
+  assert.match(unavailable, /background: var\(--surface-2\)/);
+  assert.match(unavailable, /color: var\(--muted\)/);
+  // 停用/已失效：深色底 + danger 细描边 + 低饱和 danger 字，不染彩
+  // danger-bg 底（否则整行不止一处亮色，压过「使用中」）。
+  for (const sel of [".chain-exit-btn.chain-exit-stop", ".chain-exit-btn.chain-exit-dead"]) {
+    const r = rule(sel);
+    assert.match(r, /background: var\(--surface-2\)/);
+    assert.ok(!r.includes("danger-bg"), `${sel} 不得再染彩 danger-bg 底`);
+    assert.match(r, /color: var\(--danger\)/);
+    assert.match(r, /border-color: var\(--danger-border\)/);
+  }
+  // 使用中：唯一亮色 = 主色实底 --primary + --on-primary 字。
+  const cur = rule(".chain-exit-btn.current");
+  assert.match(cur, /background: var\(--primary\)/);
+  assert.match(cur, /color: var\(--on-primary\)/);
+  // 整行唯一亮色：链出口胶囊全规则面里，只有 .current 允许携带
+  // --primary/--success 亮底（hover 洗色不算亮色）。
+  const pills = [...css.matchAll(/\.chain-exit-btn[^{},]*\{[^}]*\}/g)].map((m) => m[0]);
+  assert.ok(pills.length >= 5, "链出口胶囊规则面应含 基类/使用中/停用/失效/不可用");
+  for (const p of pills) {
+    if (/\.current/.test(p)) continue;
+    assert.ok(!/var\(--primary\)/.test(p), `使用中之外不得使用主色亮底：${p}`);
+    assert.ok(!/var\(--success\)/.test(p), `使用中之外不得使用亮绿底：${p}`);
+  }
+  // 链池行/规则集共用的「指定节点」pill（App.css）：同款三件套
+  // （深色底 + 低透明蓝描边 + 低饱和蓝字）。
+  const appCss = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
+  const targetNode = appCss.match(/\.pill\.target-node \{[^}]*\}/s)?.[0] ?? "";
+  assert.ok(targetNode, "App.css 缺 .pill.target-node 规则");
+  assert.match(targetNode, /background: var\(--surface-2\)/);
+  assert.match(targetNode, /border-color: color-mix\(in srgb, var\(--accent-blue\) 45%, transparent\)/);
+  assert.match(targetNode, /color: var\(--accent-blue\)/);
+});
+
 test("池展开双语文案与源码同步（B 回归）", () => {
   const messages = readFileSync(
     new URL("../src/i18n/messages.ts", import.meta.url),
