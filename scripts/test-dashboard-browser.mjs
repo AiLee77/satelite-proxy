@@ -311,8 +311,31 @@ async function structure(locale) {
   assert.equal(await page.locator(".instrument-grid-6 > .simple-spark").count(), 1, "实时活动位于六卡内");
   assert.equal(await page.locator(".instrument-grid-6 > .service-status-card").count(), 1, "服务状态卡入六卡网格（原网络探测卡位）");
   await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
-  // 批次 8-C：组织小字迁「IP 信息 ↗」标签行末尾，规格为单行截断不换行。
+  // 返修 C-1：四同款胶囊同行（[IP 信息 ↗][商业][质量 优][组织]）；组织胶囊
+  // 与商业胶囊同源描边/底色/圆角/字号/内边距，单行截断（截组织）。
   assert.equal(await page.locator('.dash-hero .dashboard-exit-org').evaluate(el => getComputedStyle(el).textOverflow), "ellipsis");
+  const pillParity = await page.evaluate(() => {
+    const org = document.querySelector('.dash-hero .ip-info-badges .ip-info-org');
+    const network = document.querySelector('.dash-hero .ip-info-badges .ip-network-tag');
+    if (!org || !network) return null;
+    const a = getComputedStyle(org), b = getComputedStyle(network);
+    const row = getComputedStyle(document.querySelector('.dash-hero .ip-info-badges'));
+    return {
+      tagClass: org.classList.contains('ip-info-tag'),
+      parity: a.borderTopWidth === b.borderTopWidth && a.borderTopStyle === b.borderTopStyle && a.borderTopColor === b.borderTopColor
+        && a.backgroundColor === b.backgroundColor && a.borderRadius === b.borderRadius
+        && a.fontSize === b.fontSize && a.paddingTop === b.paddingTop && a.paddingLeft === b.paddingLeft,
+      singleLine: a.whiteSpace === 'nowrap' && row.flexWrap === 'nowrap' && (() => {
+        const o = org.getBoundingClientRect(), n = network.getBoundingClientRect();
+        return o.left > n.left && o.top < n.bottom && o.bottom > n.top;
+      })(),
+      hugsText: a.textAlign === 'start',
+    };
+  });
+  assert.equal(pillParity && pillParity.tagClass, true, "组织胶囊与 ip-info-tag 同源");
+  assert.equal(pillParity && pillParity.parity, true, "组织胶囊描边/底色/圆角/字号/内边距与商业胶囊一致");
+  assert.equal(pillParity && pillParity.singleLine, true, "四胶囊同行，组织单行截断不换行");
+  assert.equal(pillParity && pillParity.hugsText, true, "组织胶囊贴合文本，不再整行填满右对齐");
   assert.ok((await page.locator('.ip-info-badges').innerText()).includes(locale === "zh" ? "商业" : "Commercial"));
   assert.equal(await page.locator('.service-status-card').count(), 1);
   for (const id of ["proxy", "direct", "total"]) {

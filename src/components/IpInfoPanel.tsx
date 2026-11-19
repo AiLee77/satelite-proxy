@@ -89,8 +89,9 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }
         {showType && <span className="ip-info-tag ip-network-tag">{type}</span>}
         {showQuality && <span className={`ip-info-tag ip-quality-${data?.ipQuality ?? "unknown"}`}>{qualityLabel} {quality}</span>}
         {busy && <span className="ip-info-hint">{l.checking}</span>}
-        {/* 批次 8-C：组织小字迁到本行末尾（原出口 IP 行小字位），单行截断不换行。 */}
-        <span className="ip-info-org dashboard-exit-org ip-organization" title={organization ?? undefined}>{organization || "—"}</span>
+        {/* 返修 C-1：组织为与商业/质量优同款的描边胶囊（同 .ip-info-tag 底），
+            贴合文本宽度单行截断（截组织），title 悬浮全名；弹窗详情行沿用整名换行。 */}
+        <span className="ip-info-tag ip-info-org dashboard-exit-org ip-organization" title={organization ?? undefined}>{organization || "—"}</span>
       </div>
       <dialog ref={dialog} className="ip-details-dialog" aria-labelledby="ip-details-title" onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
         <header><h2 id="ip-details-title">{l.title}</h2><button type="button" className="glass-btn small" onClick={() => setOpen(false)} autoFocus>{l.close}</button></header>

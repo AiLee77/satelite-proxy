@@ -57,8 +57,8 @@
   white-space: normal;
 }
 .dashboard-exit-ip.is-ipv6 { font-size: 1.35rem; }
-/* 组织名小字样式：迁移后在 IpInfoPanel.css 的 .ip-info-org 承载（单行截断）。 */
-.dashboard-exit-org { font-size: 0.72rem; line-height: 1.45; color: var(--muted); }
+/* 组织名样式：迁移后由 IpInfoPanel.css 承载（返修 C-1：与商业/质量优同款
+   描边胶囊 .ip-info-tag 底，单行截断）。 */
 /* 直连标记并入大号 IP 行尾（批次 8-C 删「出口IP」标签行后的落点）。 */
 .dashboard-exit-ip-direct { font-size: 0.7rem; font-weight: 500; color: var(--muted); margin-left: 0.5rem; }
 /* 批次 8-C：删标签行后 IP 顶格，块间距收紧。 */

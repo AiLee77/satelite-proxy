@@ -199,7 +199,7 @@ export function DashboardPage({
   const [latencyProbing, setLatencyProbing] = useState(false);
   /** Exit-IP half of the dashboard network probe. */
   const [exitIp, setExitIp] = useState<ExitIpInfo | null>(null);
-  /** IP 元数据中的组织名 —由 IpInfoPanel 回传，hero 出口 IP 行作小字显示。 */
+  /** IP 元数据中的组织名 —由 IpInfoPanel 回传，「IP 信息 ↗」标签行末尾组织胶囊即时显示。 */
   const [orgName, setOrgName] = useState<string | null>(null);
   const [exitIpProbing, setExitIpProbing] = useState(false);
   const exitIpVersionRef = useRef(0);
