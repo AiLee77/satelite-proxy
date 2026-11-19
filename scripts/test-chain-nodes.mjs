@@ -494,14 +494,15 @@ test("G4 分组头与层叠样式配套（全局主按钮排除 + 折叠组样�
   // 组头按钮必须进全局主按钮排除列表（项目惯例）。
   const primary = appCss.match(/button:not\([^}]*\) \{/s)?.[0] ?? "";
   assert.ok(primary);
-  assert.notEqual(
-    primary,
-    primary.replace(":not(.chain-candidate-group-head)", ""),
-    "App.css 首条主按钮规则未排除 chain-candidate-group-head",
+  assert.ok(
+    primary.includes(":not(.chain-candidate-group-head)") &&
+      primary.includes(":not(.chain-exit-btn)") &&
+      primary.includes(":not(.chain-pool-expand)"),
+    "App.css 主按钮规则必须排除链分组头、链出口按钮及池展开按钮",
   );
   assert.match(
     appCss,
-    /:not\(\.chain-candidate-group-head\):hover:not\(:disabled\) \{/,
+    /:not\(\.chain-candidate-group-head\):not\(\.chain-exit-btn\):not\(\.chain-pool-expand\):hover:not\(:disabled\) \{/,
   );
   assert.match(chainCss, /\.chain-candidate-group-head \{/);
   assert.match(chainCss, /\.chain-candidate-item\.on-canvas \{\n  opacity: 0\.45;/);

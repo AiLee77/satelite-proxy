@@ -12,6 +12,10 @@ const browser = await chromium.launch({ headless: true });
 let context, page;
 let currentCase = "setup";
 let errors = [], blocked = [];
+const batch10Checks = [];
+function checkBatch10(name, passed, detail = "") {
+  batch10Checks.push({ name, result: passed ? "绿" : "红", detail: String(detail) });
+}
 const words = {
   zh: { stop: "停止代理", start: "启动代理", routing: "路由模式", global: "全局", rule: "规则", state: "运行中", config: "指定配置", generated: "系统默认" },
   en: { stop: "Stop", start: "Start", routing: "Routing mode", global: "Global", rule: "Rule", state: "Running", config: "Choose config", generated: "System default" },
@@ -47,7 +51,7 @@ async function open(width, height, locale, theme, state = "running", hero = "cla
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${base}/scripts/ui-smoke/dashboard.html?${new URLSearchParams({ locale, theme, state, hero, network, sample, ...menuOptions })}`);
-  await page.locator(".instrument-grid-6 > :nth-child(4)").waitFor();
+  await page.locator(".instrument-grid-6 > :nth-child(4)").waitFor({ state: "attached" });
   await page.waitForFunction(({ theme }) =>
     document.documentElement.dataset.theme === theme &&
     document.querySelector(".dash-hero-title")?.getAttribute("title")?.length > 0 &&
@@ -221,7 +225,7 @@ async function countryRefresh() {
     });
     await page.waitForFunction(() => document.querySelector('.dashboard-country-button')?.getAttribute('aria-busy') === 'false');
     assert.equal(await button.locator('text').textContent(), text, '国家代码来自当前出口结果，未知使用占位');
-    assert.equal(await page.locator('.dashboard-exit-ip').textContent(), await page.evaluate(() => window.dashboardFixture.ipv6));
+    assert.equal(await page.locator('.dashboard-exit-ip-address').textContent(), await page.evaluate(() => window.dashboardFixture.ipv6));
     assert.equal(await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === 'check_ip_metadata').length), metadataCalls, '相同IP刷新复用元数据缓存');
     if (country === 'US' || country === 'invalid') {
       await assertExitDetails('https://example.test/geoip', country === 'US' ? '2023-11-14T22:13:21.000Z' : null);
@@ -267,7 +271,7 @@ async function exitIpMetadataBackgroundRefresh() {
   });
   await page.locator('.dashboard-country-button').click();
   // 出口 IP 随新结果立即渲染，不等元数据往返。
-  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-ip')?.textContent === '198.51.100.77');
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-ip-address')?.textContent === '198.51.100.77');
   await page.waitForFunction(() => document.querySelector('.ip-info-badges .ip-info-hint')?.textContent === '查询中…');
   assert.equal(await page.locator('.dash-hero .dashboard-exit-org').textContent(), await page.evaluate(() => window.dashboardFixture.organization), '换 IP 后台刷新期间保留已显示组织，不清空闪烁');
   assert.equal(await page.locator('.dash-hero .ip-info-badges .ip-quality-good').count(), 1, '后台刷新期间保留质量标签');
@@ -307,7 +311,7 @@ async function structure(locale) {
     const panel = document.querySelector('.dash-hero .ip-info-panel').getBoundingClientRect();
     const icon = document.querySelector('.dashboard-country-button').getBoundingClientRect();
     const rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    return { text: el.textContent, rem: parseFloat(getComputedStyle(el).fontSize) / rootSize,
+    return { text: el.querySelector('.dashboard-exit-ip-address')?.textContent, rem: parseFloat(getComputedStyle(el).fontSize) / rootSize,
       wrap: getComputedStyle(el).overflowWrap, iconWidth: icon.width, iconHeight: icon.height,
       beforeTitle: box.bottom <= title.top + 1, abovePanel: box.bottom <= panel.top + 1 };
   });
@@ -733,18 +737,139 @@ try {
     }
     assert.doesNotMatch(await page.locator('.ip-info-badges').innerText(), /推测/);
   }
-  // 返修 C-2：链激活时 hero 信息行「2 跳 ♢ HTTP · 2054 ms」——无「链」字头，
-  // 跳数与出口协议以 ♢ 相连，协议与延迟以 · 相连；节点名标题为链名。
-  for (const [locale, hops, badge] of [["zh", "2 跳", "链"], ["en", "2 hops", "Chain"]]) {
+  // 返修 C-2：链激活时 hero 行精确包含链字头和最终分隔符。
+  for (const [locale, expected] of [["zh", "链 · 2 跳 ♢ HTTP · 2054 ms"], ["en", "Chain · 2 hops ♢ HTTP · 2054 ms"]]) {
     currentCase = `chain-hero-${locale}`;
     await open(1280, 900, locale, "aerospace", "running", "classic", "business", "long", { chain: "1" });
     assert.equal(await page.locator(".dash-hero-title").textContent(), "演示链 Fixture Chain", `${currentCase} 标题为链名`);
-    const desc = await page.locator(".dash-hero-desc").textContent();
-    assert.equal(desc, `${hops} ♢ HTTP · 2054 ms`, `${currentCase} 链行格式`);
-    assert.ok(!desc.includes(badge), `${currentCase} 无「链」字头`);
+    const actual = await page.locator(".dash-hero-desc").textContent();
+    checkBatch10(`${currentCase} 链行逐字格式`, actual === expected, `actual=${actual}; expected=${expected}`);
   }
+
+  currentCase = "hero-ip-labels-and-superscript";
+  await open(1280, 900, "zh", "aerospace", "running", "classic", "business", "long");
+  await page.waitForFunction(() => document.querySelector(".ip-info-org")?.textContent.includes("Without Truncation"));
+  const heroRepairMetrics = await page.evaluate(() => {
+    const root = document.querySelector(".dash-hero");
+    const row = root.querySelector(".ip-info-badges");
+    const selectors = [".ip-info-open", ".ip-network-tag", ".ip-quality-good", ".ip-info-org"];
+    const chips = selectors.map(selector => {
+      const element = row.querySelector(selector);
+      if (!element) return { selector, missing: true };
+      const style = getComputedStyle(element);
+      const range = document.createRange(); range.selectNodeContents(element);
+      const textRects = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+      const textTops = [...new Set(textRects.map(rect => Math.round(rect.top)))];
+      const rect = element.getBoundingClientRect();
+      const lineHeight = style.lineHeight === "normal" ? parseFloat(style.fontSize) * 1.2 : parseFloat(style.lineHeight);
+      const singleLineScrollHeight = lineHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      return { selector, missing: false, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+        textLines: textTops.length, singleLineScrollHeight, height: rect.height, width: rect.width, rowWidth: row.getBoundingClientRect().width,
+        flexGrow: style.flexGrow, flexBasis: style.flexBasis, whiteSpace: style.whiteSpace };
+    });
+    const quality = row.querySelector(".ip-quality-good");
+    const qualityRange = document.createRange(); qualityRange.selectNodeContents(quality);
+    const qualityLineTops = [...new Set([...qualityRange.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0).map(rect => Math.round(rect.top)))];
+    const rowHeight = row.getBoundingClientRect().height;
+    const ip = root.querySelector(".dashboard-exit-ip");
+    const ipStyle = getComputedStyle(ip);
+    const ipLabel = ip.querySelector(".dashboard-exit-ip-origin");
+    const ipAddressRect = ip.querySelector(".dashboard-exit-ip-address").getBoundingClientRect();
+    const ipLabelRect = ipLabel?.getBoundingClientRect();
+    const ipRect = ip.getBoundingClientRect();
+    return { chips, qualityText: quality.textContent.trim(), qualityLines: qualityLineTops.length,
+      rowHeight, maxChipHeight: Math.max(...chips.filter(chip => !chip.missing).map(chip => chip.height)),
+      ipLabelText: ipLabel?.textContent, ipLabelSameParent: ipLabel?.parentElement === ip,
+      ipLabelSameLine: !!ipLabelRect && ipLabelRect.left >= ipAddressRect.right && ipLabelRect.top < ipAddressRect.bottom && ipLabelRect.bottom > ipAddressRect.top,
+      ipLabelVerticalAlign: ipLabel ? getComputedStyle(ipLabel).verticalAlign : null,
+      ipLabelFontSize: ipLabel ? parseFloat(getComputedStyle(ipLabel).fontSize) : null,
+      ipFontSize: parseFloat(ipStyle.fontSize), ipLineHeight: ipStyle.lineHeight, ipRectHeight: ipRect.height };
+  });
+  for (const chip of heroRepairMetrics.chips) {
+    checkBatch10(`${chip.selector} 单行高度`, !chip.missing && chip.scrollHeight <= chip.singleLineScrollHeight + 1 && chip.textLines === 1 && chip.whiteSpace === "nowrap",
+      JSON.stringify(chip));
+    checkBatch10(`${chip.selector} 内容自适应宽度`, !chip.missing && chip.flexGrow === "0" && chip.flexBasis === "auto" && chip.width < chip.rowWidth,
+      JSON.stringify(chip));
+  }
+  checkBatch10("质量 优 单行", heroRepairMetrics.qualityText === "质量 优" && heroRepairMetrics.qualityLines === 1,
+    JSON.stringify({ text: heroRepairMetrics.qualityText, lines: heroRepairMetrics.qualityLines }));
+  checkBatch10("标签整行高度等于单个胶囊高度", Math.abs(heroRepairMetrics.rowHeight - heroRepairMetrics.maxChipHeight) < 1,
+    JSON.stringify({ row: heroRepairMetrics.rowHeight, chip: heroRepairMetrics.maxChipHeight }));
+  checkBatch10("IP 出口上标存在且同行弱化小字", heroRepairMetrics.ipLabelText === "出口" && heroRepairMetrics.ipLabelSameParent &&
+    heroRepairMetrics.ipLabelSameLine && heroRepairMetrics.ipLabelVerticalAlign === "super" && heroRepairMetrics.ipLabelFontSize < heroRepairMetrics.ipFontSize,
+    JSON.stringify({ text: heroRepairMetrics.ipLabelText, parent: heroRepairMetrics.ipLabelSameParent, sameLine: heroRepairMetrics.ipLabelSameLine,
+      verticalAlign: heroRepairMetrics.ipLabelVerticalAlign, font: heroRepairMetrics.ipLabelFontSize, ipFont: heroRepairMetrics.ipFontSize }));
+  checkBatch10("IP 行高保持改前 28.08px", heroRepairMetrics.ipLineHeight === "28.08px" && Math.abs(heroRepairMetrics.ipRectHeight - 28.08) < 1,
+    JSON.stringify({ lineHeight: heroRepairMetrics.ipLineHeight, rectHeight: heroRepairMetrics.ipRectHeight }));
+  checkBatch10("普通节点行格式不变", await page.locator(".dash-hero-desc").textContent() === "VLESS · 42 ms",
+    await page.locator(".dash-hero-desc").textContent());
   await clean();
-  console.log("概览回归通过：指定配置菜单12组中英/960与1280/zoom 1与1.5与2，默认与右侧触发、双向展开、hover配置切换、Esc回焦、resize/滚动；真实侧栏、IP、服务、动效、启停与全屏。");
+
+  currentCase = "chain-style-computed-parity";
+  await open(1280, 900, "zh", "aerospace", "running", "classic", "business", "long", { chain: "1", page: "chain" });
+  await page.locator(".chain-page .chain-card").first().waitFor();
+  await page.waitForFunction(() => document.querySelector(".chain-exit-btn.current"));
+  const editorCard = page.locator(".chain-card").filter({ hasText: "编辑器指定池 Fixture editor" });
+  await editorCard.getByRole("button", { name: "操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "编辑", exact: true }).click();
+  await page.locator(".chain-editor-sidebar .glass-seg-btn").nth(1).click();
+  await page.locator(".chain-editor-sidebar .chain-pool-expand").waitFor();
+  const chainSurface = await page.evaluate(() => {
+    const quick = document.querySelector(".dash-side-rail .glass-seg");
+    const reference = quick ? getComputedStyle(quick).backgroundColor : null;
+    const primarySample = document.createElement("span");
+    primarySample.style.backgroundColor = "var(--primary)";
+    document.body.append(primarySample);
+    const primary = getComputedStyle(primarySample).backgroundColor;
+    primarySample.remove();
+    const selectors = [
+      ["链卡停用按钮", ".chain-card .chain-exit-btn.chain-exit-stop"],
+      ["链卡检测出口按钮", ".chain-card .chain-exit-btn.chain-exit-probe"],
+      ["链卡启用为出口按钮", ".chain-card .chain-exit-btn:not(.current):not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead)"],
+      ["链卡已失效态", ".chain-card .chain-exit-btn.chain-exit-dead"],
+      ["节点池卡指定节点标记", ".chain-pool-row .pill.target-node"],
+      ["链卡指定节点标记", ".chain-hop-node.pool-card .chain-hop-explicit-pill"],
+      ["编辑器节点池行尾展开按钮", ".chain-editor-sidebar .chain-pool-expand"],
+    ];
+    const results = selectors.map(([label, selector]) => {
+      const element = document.querySelector(selector);
+      if (!element) return { label, missing: true };
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return { label, background: style.backgroundColor, reference, primary,
+        matchesQuickCapsule: style.backgroundColor === reference,
+        avoidsPrimary: style.backgroundColor !== primary,
+        pillRadius: selector.includes("target-node") || selector.includes("explicit-pill")
+          ? parseFloat(style.borderTopLeftRadius) >= rect.height / 2 : true };
+    });
+    const current = document.querySelector(".chain-card .chain-exit-btn.current");
+    const inUseBackground = current ? getComputedStyle(current).backgroundColor : null;
+    return { results, inUseBackground, reference, primary };
+  });
+  for (const result of chainSurface.results) {
+    checkBatch10(`${result.label} computed 底色等于 hero 快捷胶囊`, !result.missing && result.matchesQuickCapsule,
+      JSON.stringify(result));
+    checkBatch10(`${result.label} computed 底色不等于亮绿主色`, !result.missing && result.avoidsPrimary,
+      JSON.stringify(result));
+    if (result.label.includes("指定节点")) {
+      checkBatch10(`${result.label} 圆角为 pill`, !result.missing && result.pillRadius, JSON.stringify(result));
+    }
+  }
+  checkBatch10("使用中保留 --primary 亮色实底", chainSurface.inUseBackground === chainSurface.primary,
+    JSON.stringify({ active: chainSurface.inUseBackground, primary: chainSurface.primary }));
+  checkBatch10("链页仅一个使用中亮色出口标记", await page.locator(".chain-page .chain-exit-btn.current").count() === 1,
+    String(await page.locator(".chain-page .chain-exit-btn.current").count()));
+  await clean();
+
+  currentCase = "overview-default-viewport-overflow";
+  await open(1280, 900, "zh", "aerospace", "running", "classic", "business", "long");
+  const overviewOverflow = await page.locator("main").evaluate(el => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+  checkBatch10("默认概览视口无纵向滚动溢出", overviewOverflow.scrollHeight <= overviewOverflow.clientHeight,
+    `${overviewOverflow.scrollHeight - overviewOverflow.clientHeight}px (${overviewOverflow.scrollHeight}/${overviewOverflow.clientHeight})`);
+  await clean();
+  console.log(`批次10断言（本次运行）：${JSON.stringify(batch10Checks)}`);
+  assert.deepEqual(batch10Checks.filter(check => check.result === "红"), [], "批次10新断言必须全绿；改前红项与改后绿项均逐项记录");
+  console.log("概览回归通过：指定配置菜单12组中英/960与1280/zoom 1与1.5与2，默认与右侧触发、双向展开、hover配置切换、Esc回焦、resize/滚动；真实侧栏、IP、服务、动效、启停与全屏；新增链池样式、标签单行、出口上标、链格式与溢出断言全部通过。");
 } catch (error) {
   console.error("概览夹具失败场景", currentCase);
   // 失败最多追加一张；成功最多三张（保留原两张及一张四服务代表图）。
