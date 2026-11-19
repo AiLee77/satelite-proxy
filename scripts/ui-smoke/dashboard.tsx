@@ -100,6 +100,8 @@ const state = {
   serviceFailures: 0,
   claudeStatus: "available", claudeRegion: "US", claudeHttp: 200,
   countryCode: "HK", exitIpReads: 0, holdExitIp: false, releaseExitIp: null as null | (() => void),
+  ipOverride: null as string | null, orgOverride: null as string | null,
+  holdMetadata: false, releaseMetadata: null as null | (() => void),
   exitSource: "https://example.test/cdn-cgi/trace?format=plain%20text",
   exitCheckedAt: 1_700_000_000_000 as number | undefined,
   setMotion: setUiMotion,
@@ -149,19 +151,23 @@ mockIPC((command, payload) => {
     case "check_exit_ip": {
       state.exitIpReads++;
       const result: ExitIpInfo = {
-        ip: ipv6, countryCode: state.countryCode, viaProxy: true, source: state.exitSource,
+        ip: state.ipOverride ?? ipv6, countryCode: state.countryCode, viaProxy: true, source: state.exitSource,
         ...(state.exitCheckedAt === undefined ? {} : { checkedAt: state.exitCheckedAt }),
       };
       if (!state.holdExitIp) return result;
       return new Promise(resolve => { state.releaseExitIp = () => { state.releaseExitIp = null; resolve(result); }; });
     }
-    case "check_ip_metadata": return {
-      ip: ipv6, organization,
-      isp: "China Mobile Communications", asn: "AS9808", networkType: ["tor", "abuse"].includes(params.get("network") ?? "") ? "business" : params.get("network") ?? "business", residentialInferred: false,
-      quality: params.get("network") === "tor" ? "high" : "low",
-      ipQuality: ["tor", "abuse"].includes(params.get("network") ?? "") ? "risky" : params.get("network") === "datacenter" ? "normal" : ["isp", "unknown"].includes(params.get("network") ?? "") ? "unknown" : "good",
-      riskScore: 5, riskSource: "IPQuery", isVpn: false, isProxy: false, isTor: params.get("network") === "tor", isAbuser: params.get("network") === "abuse", source: "IPQuery / proxycheck.io", checkedAt: 1700000000,
-    };
+    case "check_ip_metadata": {
+      const resolveMetadata = () => ({
+        ip: state.ipOverride ?? ipv6, organization: state.orgOverride ?? organization,
+        isp: "China Mobile Communications", asn: "AS9808", networkType: ["tor", "abuse"].includes(params.get("network") ?? "") ? "business" : params.get("network") ?? "business", residentialInferred: false,
+        quality: params.get("network") === "tor" ? "high" : "low",
+        ipQuality: ["tor", "abuse"].includes(params.get("network") ?? "") ? "risky" : params.get("network") === "datacenter" ? "normal" : ["isp", "unknown"].includes(params.get("network") ?? "") ? "unknown" : "good",
+        riskScore: 5, riskSource: "IPQuery", isVpn: false, isProxy: false, isTor: params.get("network") === "tor", isAbuser: params.get("network") === "abuse", source: "IPQuery / proxycheck.io", checkedAt: 1700000000,
+      });
+      if (!state.holdMetadata) return resolveMetadata();
+      return new Promise(resolve => { state.releaseMetadata = () => { state.releaseMetadata = null; resolve(resolveMetadata()); }; });
+    }
     case "check_service_status": {
       const failing = state.serviceFailures > 0;
       if (failing) { state.serviceFailures--; throw new Error("core transitioning"); }

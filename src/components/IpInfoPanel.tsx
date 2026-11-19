@@ -36,6 +36,10 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }
   const [storedData, setData] = useState<IpMetadata | null>(null);
   const data = storedData?.ip === ip ? storedData : null;
   const [busy, setBusy] = useState(false);
+  // 返修 C-3：标签行（含组织）用已有数据立即渲染——同 IP 缓存命中直出；
+  // 换 IP 未命中时保留上一份继续显示，元数据请求只做后台刷新（busy 提示），
+  // 返回后整体替换，不再等往返延迟才亮标签/清组织。弹窗详情行仍按当前 IP。
+  const shownData = data ?? (busy ? storedData : null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -49,8 +53,10 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }
     setError(null);
     if (!ip) { setData(null); setBusy(false); return; }
     const cached = metadataCache.peek(ip);
-    setData(previous => cached ?? (previous?.ip === ip ? previous : null));
+    if (cached) setData(cached);
     if (cached && !force) { setBusy(false); return; }
+    // 未命中/强制刷新：不动已有显示（busy 期间 shownData 继续渲染），
+    // 后台刷新完成后替换；不重复发起（在途请求经 flights 合并）。
     setBusy(true);
     void metadataCache.load(ip, async () => {
       const value = await checkIpMetadata(ip);
@@ -62,23 +68,24 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }
       .finally(() => { if (epoch.current === token) setBusy(false); });
     return () => { epoch.current++; };
   }, [ip, sessionKey, revision]);
-  // 组织名回传宿主（首页 hero 出口 IP 行小字）；本面板不再重复展示。
+  // 组织名回传宿主（「IP 信息 ↗」标签行末尾组织胶囊）；busy 期间沿用已显示值，
+  // 后台刷新完成才更新，不再随往返清空闪烁。
   useEffect(() => {
-    onOrganization?.(data?.organization ?? null);
-  }, [data, onOrganization]);
+    onOrganization?.(shownData?.organization ?? null);
+  }, [shownData, onOrganization]);
   useEffect(() => {
     if (open && dialog.current && !dialog.current.open) dialog.current.showModal();
     if (!open && dialog.current?.open) dialog.current.close();
   }, [open]);
-  const type = data ? data.networkType === "isp" ? l.ispNetwork : l[data.networkType] : l.unknown;
+  const type = shownData ? shownData.networkType === "isp" ? l.ispNetwork : l[shownData.networkType] : l.unknown;
   const qualityText = locale === "en"
     ? { good: "Good", normal: "Normal", risky: "Risky", unknown: "Unknown" }
     : { good: "优", normal: "普通", risky: "风险", unknown: "未知" };
-  const quality = qualityText[data?.ipQuality ?? "unknown"];
-  const risk = data ? l[data.quality] : l.unknown;
+  const quality = qualityText[shownData?.ipQuality ?? "unknown"];
+  const risk = shownData ? l[shownData.quality] : l.unknown;
   const qualityLabel = locale === "en" ? "Quality" : "质量";
-  const showType = !!data && ["residential", "mobile", "business", "datacenter"].includes(data.networkType);
-  const showQuality = showType || data?.ipQuality === "risky";
+  const showType = !!shownData && ["residential", "mobile", "business", "datacenter"].includes(shownData.networkType);
+  const showQuality = showType || shownData?.ipQuality === "risky";
   const lookupNotice = locale === "en"
     ? "Queries ident.me, IPQuery, IPLocate, ipapi.is and proxycheck.io over HTTPS in fallback waves. Only the public IP is used, without node credentials. Types require explicit data for the same IP. Quality follows FlClash: residential/mobile/commercial Good, datacenter Normal, Tor or abuse Risky; missing data Unknown. Risk scores remain separate and use IPQuery bands: 0–20 low, 21–50 moderate, 51–100 high."
     : "按批次通过 HTTPS 查询 ident.me、IPQuery、IPLocate、ipapi.is、proxycheck.io，只使用公网 IP，不发送节点凭据。类型以同一 IP 的明确数据为准。质量沿用 FlClash 分级：家宽/移动/商业为优，机房为普通，Tor 或滥用标记为风险，信息不足为未知。风险分数单独展示，沿用 IPQuery 阈值：0–20低、21–50中、51–100高。";
@@ -87,7 +94,7 @@ export function IpInfoPanel({ exitIp, sessionKey, onOrganization, organization }
       <div className="ip-info-badges">
         <button type="button" className="ip-info-open glass-btn small" onClick={() => setOpen(true)} title={l.details}>{l.title} ↗</button>
         {showType && <span className="ip-info-tag ip-network-tag">{type}</span>}
-        {showQuality && <span className={`ip-info-tag ip-quality-${data?.ipQuality ?? "unknown"}`}>{qualityLabel} {quality}</span>}
+        {showQuality && <span className={`ip-info-tag ip-quality-${shownData?.ipQuality ?? "unknown"}`}>{qualityLabel} {quality}</span>}
         {busy && <span className="ip-info-hint">{l.checking}</span>}
         {/* 返修 C-1：组织为与商业/质量优同款的描边胶囊（同 .ip-info-tag 底），
             贴合文本宽度单行截断（截组织），title 悬浮全名；弹窗详情行沿用整名换行。 */}

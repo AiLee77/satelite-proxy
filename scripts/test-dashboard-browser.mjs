@@ -255,6 +255,29 @@ async function freshServicesOnResume() {
   });
   assert.equal(counts.after, counts.before, '近期服务结果在重复 focus / hidden→visible 后不新增 IPC');
 }
+// 返修 C-3：标签行（含组织）用已有数据立即渲染；换 IP 后元数据请求只做后台刷新——
+// busy 期间保留原标签/组织不清空，不重复请求，返回后整体替换。
+async function exitIpMetadataBackgroundRefresh() {
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === window.dashboardFixture.organization);
+  const before = await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === 'check_ip_metadata').length);
+  await page.evaluate(() => {
+    window.dashboardFixture.ipOverride = '198.51.100.77';
+    window.dashboardFixture.orgOverride = 'New Exit Org Fixture';
+    window.dashboardFixture.holdMetadata = true;
+  });
+  await page.locator('.dashboard-country-button').click();
+  // 出口 IP 随新结果立即渲染，不等元数据往返。
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-ip')?.textContent === '198.51.100.77');
+  await page.waitForFunction(() => document.querySelector('.ip-info-badges .ip-info-hint')?.textContent === '查询中…');
+  assert.equal(await page.locator('.dash-hero .dashboard-exit-org').textContent(), await page.evaluate(() => window.dashboardFixture.organization), '换 IP 后台刷新期间保留已显示组织，不清空闪烁');
+  assert.equal(await page.locator('.dash-hero .ip-info-badges .ip-quality-good').count(), 1, '后台刷新期间保留质量标签');
+  assert.equal(await page.locator('.dash-hero .ip-info-badges .ip-network-tag').count(), 1, '后台刷新期间保留商业标签');
+  await page.evaluate(() => window.dashboardFixture.releaseMetadata());
+  await page.waitForFunction(() => document.querySelector('.dash-hero .dashboard-exit-org')?.textContent === 'New Exit Org Fixture');
+  const after = await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === 'check_ip_metadata').length);
+  assert.equal(after, before + 1, '换 IP 仅发一次后台元数据刷新，不重复请求');
+  assert.equal(await page.locator('.ip-info-badges .ip-info-hint').count(), 0, '刷新完成不再显示查询中');
+}
 async function structure(locale) {
   const navigation = page.locator(".app-shell > .topnav-wrap .topnav").getByRole("navigation");
   assert.equal(await navigation.count(), 1, "必须使用真实 TopNav 导航");
@@ -540,6 +563,7 @@ try {
   await open(1280, 900, "zh", "aerospace");
   await countryRefresh();
   await freshServicesOnResume();
+  await exitIpMetadataBackgroundRefresh();
   const navButtons = page.locator('.topnav-items .topnav-item');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await navButtons.nth(1).click();
