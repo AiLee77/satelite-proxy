@@ -363,7 +363,10 @@ function HopNode({ data }: NodeProps) {
           : t("chain.poolModeExplicit");
     sub = (
       <span className="chain-hop-sub">
-        {modeText} · {memberCount} {t("chain.poolMembersSuffix")}
+        {poolMode === "explicit" ? (
+          <span className="pill target-node chain-hop-explicit-pill">{modeText}</span>
+        ) : modeText}
+        {memberCount > 0 && ` · ${memberCount} ${t("chain.poolMembersSuffix")}`}
       </span>
     );
   } else {
