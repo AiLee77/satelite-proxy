@@ -684,19 +684,20 @@
 
 /* xyflow custom nodes, network-console style: single nodes are compact
    entity cards, pools are one-size-bigger aggregate cards (see HopNode).
-   Glass material matches .pill/.chip elsewhere in the app. */
+   批次 8-D：画布内节点卡与「指定节点/停用/检测出口」胶囊同一克制三件套
+   口径（--surface-2 底 + 细描边 + 低对比），不用漂浮 --surface 玻璃。 */
 .chain-hop-node {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.28rem;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.55rem 0.85rem 0.5rem;
   font-size: 0.82rem;
   color: var(--text);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -746,17 +747,20 @@
   justify-content: center;
   font-size: 0.68rem;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent-purple) 16%, transparent);
-  color: var(--accent-purple);
+  /* 批次 8-D：序号徽标去紫色实底，改中性描边 chip（surface-2 底 + muted
+     描边字），入口/出口两态改低饱和语义色小字。 */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
 }
 
 .chain-hop-node.entry .chain-hop-badge {
-  background: var(--success-muted);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
   color: var(--success);
 }
 
 .chain-hop-node.exit .chain-hop-badge {
-  background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
   color: var(--accent-blue);
 }
 
@@ -808,16 +812,15 @@
   color: var(--danger);
 }
 
-/* Hover/drag affordance: soft accent border + lifted shadow. */
+/* Hover/drag affordance: 批次 8-D 改绿色点缀（--primary 细描边），拖拽
+   仍给一层深色投影作浮起提示（浅色主题下投影很淡）。 */
 .chain-editor-canvas .react-flow__node:hover .chain-hop-node {
-  border-color: color-mix(in srgb, var(--accent-purple) 35%, var(--border));
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
 }
 
 .chain-editor-canvas .react-flow__node.dragging .chain-hop-node {
-  border-color: var(--accent-purple);
-  box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.16),
-    var(--shadow-card);
+  border-color: var(--primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
 }
 
 .chain-editor-modal {
@@ -1197,7 +1200,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  background: var(--bg-canvas, var(--bg));
+  /* 批次 8-D：画布容器底色对齐面板（与 react-flow__background 同色）。 */
+  background: var(--panel-solid);
 }
 
 .chain-graph-status {
@@ -1216,13 +1220,15 @@
 }
 
 /* xyflow ships its own light-only default theme; repaint the essentials to
-   follow the app's dark/light tokens instead of the library's white canvas. */
+   follow the app's dark/light tokens instead of the library's white canvas.
+   批次 8-D：画布底色对齐面板（--panel-solid，深色主题略深于页面）；连线
+   由紫色改主题绿，与「使用中」出口胶囊同源点缀。 */
 .chain-editor-canvas .react-flow__background {
-  background: var(--bg-canvas, var(--bg));
+  background: var(--panel-solid);
 }
 
 .chain-editor-canvas .react-flow__edge-path {
-  stroke: var(--accent-purple);
+  stroke: color-mix(in srgb, var(--primary) 75%, transparent);
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -1232,10 +1238,8 @@
 }
 
 .chain-editor-canvas .react-flow__node.selected .chain-hop-node {
-  border-color: var(--accent-purple);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent-purple) 30%, transparent),
-    var(--shadow-card);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 /* Connection affordances on the hop capsules (G6): the handle element is a
@@ -1267,7 +1271,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--panel-solid, var(--surface));
-  border: 2px solid var(--accent-purple);
+  border: 2px solid var(--primary);
   opacity: 0;
   transition:
     opacity 0.15s ease,
@@ -1288,15 +1292,16 @@
 
 /* Edge arrows follow the accent like the edge paths. xyflow bakes marker
    colors into inline styles, so the override needs !important to win the
-   cascade — CSS vars keep it themed across dark/light + custom accents. */
+   cascade — CSS vars keep it themed across dark/light + custom accents.
+   批次 8-D：随连线改主题绿。 */
 .chain-editor-canvas .react-flow__arrowhead polyline {
-  stroke: var(--accent-purple) !important;
-  fill: var(--accent-purple) !important;
+  stroke: var(--primary) !important;
+  fill: var(--primary) !important;
 }
 
 /* Line shown while dragging a new connection — same language as edges. */
 .chain-editor-canvas .react-flow__connection-path {
-  stroke: var(--accent-purple);
+  stroke: var(--primary);
   stroke-width: 2;
   stroke-linecap: round;
 }
