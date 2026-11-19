@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { NavKey } from "../../src/types";
-import type { AppSettings, ConnectionView, ExitIpInfo, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
+import type { AppSettings, ChainHop, ConnectionView, ExitIpInfo, ProxyChain, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
 import "../../src/App.css";
 import "../../src/ProAppearance.css";
 import "../../src/ProMotion.css";
@@ -19,6 +19,8 @@ const menuScenario = params.get("menus") === "true";
 const zoom = ["1", "1.5", "2"].includes(params.get("zoom") ?? "") ? Number(params.get("zoom")) : 1;
 document.documentElement.style.zoom = String(zoom);
 const nodeName = short ? "香港 HK 01" : "香港 Hong Kong · IPv6 Premium Edge · LongNodeName-0123456789 · Complete Node Name ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789";
+// 链场景（chain=1）：current_node_id 指向 chain: 虚拟条目，hero 信息行走链分支。
+const chainScenario = params.get("chain") === "1";
 const profileName = short ? "演示订阅" : "演示订阅 Subscription-Long-Name-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 // 保留既有夹具字段名；短场景使用文档专用 IPv4，长场景使用 IPv6。
 const ipv6 = short ? "192.0.2.8" : "2001:db8:abcd:1234:5678:90ab:cdef:1234";
@@ -29,7 +31,7 @@ localStorage.setItem("satelite.theme", theme);
 localStorage.setItem("satelite.heroStyle", "classic");
 
 const settings: AppSettings = {
-  mixed_port: 2080, api_port: 19090, current_node_id: "fixture-node",
+  mixed_port: 2080, api_port: 19090, current_node_id: chainScenario ? "chain:fixture-chain" : "fixture-node",
   probe_url: "https://example.test/204", locale, theme, hero_style: heroStyle === "smiley" || heroStyle === "particle" ? heroStyle : "classic",
   accent: "green", glow_color: "accent", glass_frost: false, core_type: "singbox",
   outbound_mode: "rule", auto_select: "off", capture_mode: "off",
@@ -39,6 +41,19 @@ const nodes: ProxyNode[] = [{
   id: "fixture-node", name: nodeName, protocol: "vless", server: "2001:db8::10", port: 443,
   latency_ms: 42, latency_method: "singbox_http", subscription_id: "fixture-sub", subscription_name: profileName,
 }];
+const chainExitNode: ProxyNode = {
+  id: "fixture-exit", name: "美国 US Exit 01", protocol: "http", server: "192.0.2.9", port: 8080,
+  latency_ms: 2054, latency_method: "singbox_http", subscription_id: "fixture-sub", subscription_name: profileName,
+};
+const chainVirtualNode: ProxyNode = {
+  id: "chain:fixture-chain", name: "演示链 Fixture Chain", protocol: "unknown", server: "", port: 0,
+  latency_ms: null, subscription_id: "", subscription_name: "", chain_hops: 2,
+};
+const chainHops: ChainHop[] = [
+  { kind: "node", node_id: "fixture-node" },
+  { kind: "node", node_id: "fixture-exit" },
+];
+const chains: ProxyChain[] = chainScenario ? [{ id: "fixture-chain", name: "演示链 Fixture Chain", hops: chainHops }] : [];
 const subscriptions: SubscriptionView[] = [{
   id: "fixture-sub", name: profileName, enabled: true, source_kind: custom ? "custom" : "url",
   custom_kind: custom ? "singbox" : null, source_display: "https://example.test/sub",
@@ -58,7 +73,7 @@ const running = scenario === "running" || custom;
 const status: ProxyStatus = {
   running, core_state: running ? "running" : scenario === "starting" ? "starting" : scenario === "error" ? "error" : "stopped",
   system_proxy: false, tun_enabled: false, capture_mode: "off", outbound_mode: "rule",
-  mixed_port: 2080, api_port: 19090, core_type: "singbox", current_node_id: nodes[0].id,
+  mixed_port: 2080, api_port: 19090, core_type: "singbox", current_node_id: chainScenario ? "chain:fixture-chain" : nodes[0].id,
   runtime_source: custom ? "singbox" : "generated", runtime_profile_id: custom ? "fixture-sub" : null,
   runtime_profile_name: custom ? profileName : null, custom_inbound_port: custom ? 2080 : null,
   error: scenario === "error" ? "模拟内核启动失败" : null,
@@ -118,9 +133,9 @@ mockIPC((command, payload) => {
     case "plugin:window|inner_size": return { width: window.innerWidth * devicePixelRatio, height: window.innerHeight * devicePixelRatio };
     case "get_settings": return copy(settings);
     case "get_proxy_status": state.statusReads++; return copy(status);
-    case "list_all_nodes": return copy(nodes);
+    case "list_all_nodes": return copy(chainScenario ? [...nodes, chainExitNode, chainVirtualNode] : nodes);
     case "list_subscriptions": return copy(subscriptions);
-    case "list_chains": return [];
+    case "list_chains": return copy(chains);
     case "list_pools": return [];
     case "list_chain_usage": return {};
     // 代理链页候选全量节点（含 enabled 标记）。

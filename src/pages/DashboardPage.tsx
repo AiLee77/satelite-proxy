@@ -809,9 +809,10 @@ function coreDisplayName(kind: string | null | undefined): string {
           ? t("mihomoGroups.dashboardNotice")
           : currentNode && isChainEntry(currentNode)
             ? [
-                t("nodes.chainBadge"),
-                t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 }),
-                chainExitNode?.protocol.toUpperCase(),
+                // 返修 C-2：去「链」字头；跳数与出口协议以 ♢ 相连，延迟以 · 相连。
+                chainExitNode
+                  ? `${t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 })} ♢ ${chainExitNode.protocol.toUpperCase()}`
+                  : t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 }),
                 chainExitNode?.latency_ms != null && chainExitNode.latency_ms >= 0
                   ? fmtLatency(chainExitNode.latency_ms)
                   : "",

@@ -681,6 +681,16 @@ try {
     }
     assert.doesNotMatch(await page.locator('.ip-info-badges').innerText(), /推测/);
   }
+  // 返修 C-2：链激活时 hero 信息行「2 跳 ♢ HTTP · 2054 ms」——无「链」字头，
+  // 跳数与出口协议以 ♢ 相连，协议与延迟以 · 相连；节点名标题为链名。
+  for (const [locale, hops, badge] of [["zh", "2 跳", "链"], ["en", "2 hops", "Chain"]]) {
+    currentCase = `chain-hero-${locale}`;
+    await open(1280, 900, locale, "aerospace", "running", "classic", "business", "long", { chain: "1" });
+    assert.equal(await page.locator(".dash-hero-title").textContent(), "演示链 Fixture Chain", `${currentCase} 标题为链名`);
+    const desc = await page.locator(".dash-hero-desc").textContent();
+    assert.equal(desc, `${hops} ♢ HTTP · 2054 ms`, `${currentCase} 链行格式`);
+    assert.ok(!desc.includes(badge), `${currentCase} 无「链」字头`);
+  }
   await clean();
   console.log("概览回归通过：指定配置菜单12组中英/960与1280/zoom 1与1.5与2，默认与右侧触发、双向展开、hover配置切换、Esc回焦、resize/滚动；真实侧栏、IP、服务、动效、启停与全屏。");
 } catch (error) {
