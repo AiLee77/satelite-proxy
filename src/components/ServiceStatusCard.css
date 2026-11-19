@@ -7,7 +7,9 @@ button.instrument.service-status-card {
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 140px;
+  /* 批次 8：服务卡进六卡网格后，min-height 沿用仪表网格行高（9.5rem）——
+     收密度后两排卡等高（行高 152px）、底边成线；4 服务时行高经
+     minmax(9.5rem, auto) 增长（既有约定，服务带场景回归锁）。 */
   border-radius: var(--radius);
   padding: .9rem 1rem;
   color: var(--text);
@@ -43,12 +45,16 @@ button.instrument.service-status-card:focus-visible,
   stroke-linejoin: round;
 }
 .service-status-card > .instrument-head > .service-status-glyph { color: var(--muted); }
-.service-status-card-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.service-status-card-row { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; min-width: 0; min-height: 36px; padding: 6px 10px; border-radius: 14px; background: var(--surface-2); box-sizing: border-box; }
+/* 批次 8 六卡密度：行间距 8→6，为行内收高让路。 */
+.service-status-card-rows { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+/* 批次 8 六卡密度：行 36px→28px（10px 字×1.5 行高 + 8px 内边距），
+   两行服务 145px 收进 152px 卡高（卡 padding 14.4×2 + head 18 + gap 10
+   + rows 28+6+28 + hint 12.2）。内容（服务名/状态/出口 IP）一条不删。 */
+.service-status-card-row { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; min-width: 0; min-height: 28px; padding: 4px 8px; border-radius: 10px; background: var(--surface-2); box-sizing: border-box; }
 .service-status-name { display: flex; align-items: center; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
 .service-status-card-row .service-status-name { flex: 1 1 78px; font-size: .76rem; font-weight: 600; }
 .service-status-card-row .service-status-glyph { width: 17px; height: 17px; flex-basis: 17px; color: var(--muted); }
-.service-status-card-exit { flex: 0 1 100%; min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: .68rem; line-height: 1.5; color: var(--muted); font-variant-numeric: tabular-nums; }
+.service-status-card-exit { flex: 0 1 100%; min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: .68rem; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; }
 .service-status-card-row .service-status-state { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .service-status-available { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 .service-status-card-row .service-status-state[data-status]::before { content: ""; width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: currentColor; }
@@ -71,7 +77,7 @@ button.instrument.service-status-card:focus-visible,
 .service-status-state[data-status="network_error"] { color: var(--danger); }
 .service-status-state[data-status="failed"] { color: var(--muted); }
 .service-status-error-mark { color: var(--danger); margin-inline-end: 4px; font-weight: 700; }
-.service-status-card-hint { color: var(--muted); font-size: .65rem; margin-top: 2px; }
+.service-status-card-hint { color: var(--muted); font-size: .65rem; margin-top: 0; }
 .service-status-error { color: var(--danger); font-size: .72rem; margin: 0; }
 
 .modal.service-status-modal {
