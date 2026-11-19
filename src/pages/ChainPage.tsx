@@ -50,7 +50,6 @@ import { waitForCoreRestart } from "../coreBusy";
 import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
-import { GlassSwitch } from "../components/GlassSwitch";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
 import {
@@ -998,7 +997,6 @@ function ChainFlowEditor({
   busy,
   onClose,
   autoName,
-  onSaveActivate,
   onShareText,
   onShareYaml,
 }: {
@@ -1016,17 +1014,11 @@ function ChainFlowEditor({
   /** New-chain mode: receives "A → B → C" derived from the live graph order,
    *  so the name field can auto-follow the hops being placed. */
   autoName?: (label: string) => void;
-  /** G1: "Save & activate" footer switch (sing-box only). When toggled
-   *  on, Save also queues the same activation handler the card uses —
-   *  the parent resolves the chain id after saving (by id for existing
-   *  chains, by name for freshly created ones). */
-  onSaveActivate?: (() => void) | null;
   /** G2: share/export actions pulled from the card menu into the footer —
    *  null for new chains (nothing to share yet) or non-exportable ones. */
   onShareText?: (() => void) | null;
   onShareYaml?: (() => void) | null;
 }) {
-  const [saveActivate, setSaveActivate] = useState(false);
   const { t, locale } = useI18n();
   const { screenToFlowPosition, fitView, getZoom, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1711,24 +1703,10 @@ function ChainFlowEditor({
           </span>
         )}
         <GlassButton onClick={onClose}>{t("common.cancel")}</GlassButton>
-        {onSaveActivate && (
-          <GlassSwitch
-            checked={saveActivate}
-            onChange={setSaveActivate}
-            label={t("chain.saveAndActivate")}
-            title={t("chain.saveAndActivateHint")}
-            disabled={busy}
-            capsule
-            size="sm"
-          />
-        )}
         <GlassButton
           variant="primary"
           disabled={busy}
-          onClick={() => {
-            if (saveActivate) onSaveActivate?.();
-            onSubmit(flowNodes, edges);
-          }}
+          onClick={() => onSubmit(flowNodes, edges)}
         >
           {t("common.save")}
         </GlassButton>
@@ -1918,7 +1896,6 @@ function ChainEditorModal({
   onShareYaml,
   onClose,
   onSaved,
-  onSaveActivate,
 }: {
   /** `null` = creating a new chain. */
   chain: ProxyChain | null;
@@ -1931,12 +1908,8 @@ function ChainEditorModal({
   onShareText: (() => void) | null;
   onShareYaml: (() => void) | null;
   onClose: () => void;
-  /** Saved chain's trimmed name — the caller uses it to resolve the id of
-   *  a freshly created chain when "Save & activate" was queued. */
-  onSaved: (savedName?: string) => void;
-  /** G1: "Save & activate" — queues the same activation handler the card
-   *  uses (E2 liveness checks + restart semantics) to run after save. */
-  onSaveActivate?: (() => void) | null;
+  /** Save-completed signal — the caller closes the editor and reloads. */
+  onSaved: () => void;
 }) {
   const { t } = useI18n();
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -2002,7 +1975,7 @@ function ChainEditorModal({
       } else {
         await createChain(trimmed, hops, nameManual);
       }
-      onSaved(trimmed);
+      onSaved();
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
@@ -2057,7 +2030,6 @@ function ChainEditorModal({
                 ? handleAutoName
                 : undefined
             }
-            onSaveActivate={onSaveActivate}
             onShareText={onShareText}
             onShareYaml={onShareYaml}
           />
@@ -2108,12 +2080,6 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     info?: ExitIpInfo;
     error?: string;
   } | null>(null);
-  /** Chain identity queued by "Save & activate". The editor passes the
-   *  saved chain's identity back through its onSaved callback. */
-  const [activateOnSave, setActivateOnSave] = useState<
-    { kind: "name"; name: string } | { kind: "id"; id: string } | null
-  >(null);
-
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
   const [chainEditor, setChainEditor] = useState<{ chain: ProxyChain | null } | null>(null);
   /** Chain currently being edited, if any — hoisted so closure props keep
@@ -2332,8 +2298,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
    *  checks and error text live in the backend (`select_chain_exit`), and
    *  chain outbounds only exist after a rebuild, so a running core always
    *  goes through the restart wait (no hot-swap in v1). Stopped cores just
-   *  get the config written. Shared by the card control and the editor's
-   *  "Save & activate" (one handler, one semantics). */
+   *  get the config written. Owned by the card's “启用为出口” control. */
   async function activateChainById(chainId: string) {
     if (activating) return;
     setActivating(chainId);
@@ -2416,16 +2381,6 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         busy: false,
       });
     }
-  }
-
-  /** New chains have no id until saved — "Save & activate" resolves the
-   *  freshly created chain by name from the reloaded list. */
-  async function activateChainByName(name: string) {
-    if (activating) return;
-    const fresh = await listChains().catch(() => null);
-    const target = fresh?.find((c) => c.name === name);
-    if (!target) return;
-    await activateChainById(target.id);
   }
 
   async function onConfirmDelete() {
@@ -2739,30 +2694,12 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
           nodes={nodes}
           keywordNodes={enabledNodes}
           pools={pools}
-          onClose={() => {
-            setChainEditor(null);
-            setActivateOnSave(null);
-          }}
-          onSaveActivate={
-            active.coreType === "singbox"
-              ? () =>
-                  setActivateOnSave(
-                    chainEditor.chain
-                      ? { kind: "id", id: chainEditor.chain.id }
-                      : { kind: "name", name: "" },
-                  )
-              : null
-          }
+          onClose={() => setChainEditor(null)}
           onShareText={editingChain ? () => void copyChainText(editingChain) : null}
           onShareYaml={editingChain ? () => void copyChainMihomoYaml(editingChain) : null}
-          onSaved={(savedName) => {
-            const pending = activateOnSave;
+          onSaved={() => {
             setChainEditor(null);
-            setActivateOnSave(null);
             void reload();
-            if (!pending) return;
-            if (pending.kind === "id") void activateChainById(pending.id);
-            else if (savedName) void activateChainByName(savedName);
           }}
         />
       )}

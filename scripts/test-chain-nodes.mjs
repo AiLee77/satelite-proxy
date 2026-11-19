@@ -366,9 +366,8 @@ test("G1 链页启用控件：setCurrentNode 走 chain:<id>，非 sing-box 隐�
   assert.match(page, /"chain\.inUse"/);
   assert.match(page, /"chain\.exitSingboxOnly"/);
   assert.match(page, /active\.coreType === "singbox"/);
-  // 编辑器保存并启用开关只在 sing-box 下出现，新建链按名回查 id。
-  assert.match(page, /onSaveActivate/);
-  assert.match(page, /activateChainByName/);
+  // 「启用为出口」卡面控件复用 E2 通道；编辑器仅保存
+  // （保存并启用已删除：启用统一走链列表卡「启用为出口」）。
   assert.match(page, /activateChainById/);
 });
 
@@ -479,11 +478,9 @@ test("G1 双语文案与源码同步", () => {
   has("chain.useAsExit", "Use as exit");
   has("chain.inUse", "In use");
   has("chain.activating", "Switching…");
-  has("chain.saveAndActivate", "Save & activate");
   has("chain.useAsExit", "启用为出口");
   has("chain.inUse", "使用中");
   has("chain.activating", "切换中…");
-  has("chain.saveAndActivate", "保存并启用");
 });
 
 // ── G5 订阅整池（PoolMode::Subscription）────────────────────────────────
