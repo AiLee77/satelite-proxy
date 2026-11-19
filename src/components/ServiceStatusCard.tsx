@@ -208,7 +208,7 @@ export function ServiceStatusCard({ sessionKey }: { sessionKey: string }) {
           <span className="service-status-state" data-status={pending.includes(id) ? undefined : results[id]?.status} title={statusText(id)}>
             {errors[id] && <span className="service-status-error-mark" aria-label={t("serviceStatus.failed")}>!</span>}{cardStatus(id)}
           </span>
-          {exitIp && <span className="service-status-card-exit">{t("serviceStatus.exitIp")}: {exitIp}</span>}
+          {exitIp && <span className="service-status-card-exit" title={`${t("serviceStatus.exitIp")}: ${exitIp}`}>{t("serviceStatus.exitIp")}: {exitIp}</span>}
         </span>;
         })}
       </span>

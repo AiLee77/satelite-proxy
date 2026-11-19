@@ -329,6 +329,11 @@ async function structure(locale) {
   assert.ok(badge.svgOffset < 2 && badge.textOffset < 2, '国家图形与代码在按钮内部居中');
   assert.equal(await page.locator(".dash-side-rail").count(), 1);
   assert.equal(await page.locator(".instrument-grid-6 > *").count(), 6, "六卡网格：核心/实时活动/流量统计/服务/订阅/端口");
+  // 返修 B：六卡逐卡回原版 9.5rem=152px（±2），两排等高、底边成线；
+  // 服务行/未知分类行增多时 minmax(9.5rem, auto) 照旧增长（回归锁不动）。
+  const cardHeights = await page.locator(".instrument-grid-6 > *").evaluateAll(els => els.map(el => Math.round(el.getBoundingClientRect().height)));
+  assert.ok(cardHeights.every(h => Math.abs(h - 152) <= 2), `六卡逐卡 152px±2（实测 ${cardHeights.join("/")}）`);
+  assert.equal(new Set(cardHeights).size, 1, "六卡两排等高，底边成线");
   assert.equal(await page.locator(".dash-hero > .orbit").count(), 1, "hero 左列保留轨道动效");
   assert.equal(await page.locator(".instrument-grid-6 > .traffic-stats-card").count(), 1, "流量统计合卡位于六卡内");
   assert.equal(await page.locator(".instrument-grid-6 > .simple-spark").count(), 1, "实时活动位于六卡内");

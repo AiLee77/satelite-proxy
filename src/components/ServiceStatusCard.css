@@ -54,7 +54,9 @@ button.instrument.service-status-card:focus-visible,
 .service-status-name { display: flex; align-items: center; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
 .service-status-card-row .service-status-name { flex: 1 1 78px; font-size: .76rem; font-weight: 600; }
 .service-status-card-row .service-status-glyph { width: 17px; height: 17px; flex-basis: 17px; color: var(--muted); }
-.service-status-card-exit { flex: 0 1 100%; min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: .68rem; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* 返修 B：出口 IP 与服务名/状态同行（不再 flex 100% 强占一整行换行，行高
+   43→28），长 IPv6 单行省略号截断、title 悬浮全文，内容一条不删。 */
+.service-status-card-exit { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .68rem; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; }
 .service-status-card-row .service-status-state { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .service-status-available { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 .service-status-card-row .service-status-state[data-status]::before { content: ""; width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: currentColor; }
