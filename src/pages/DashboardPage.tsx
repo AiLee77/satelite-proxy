@@ -1018,7 +1018,8 @@ function coreDisplayName(kind: string | null | undefined): string {
               {/* 批次 8-C：「出口IP」小字标签行删除；直连标记并入大号 IP 行尾，
                   组织小字迁往「IP 信息 ↗」标签行末尾（单行截断）。 */}
               <strong className={`dashboard-exit-ip${exitIp?.ip.includes(":") ? " is-ipv6" : ""}`} title={exitIp?.ip}>
-                {exitIp?.ip ?? "—"}
+                <span className="dashboard-exit-ip-address">{exitIp?.ip ?? "—"}</span>
+                <span className="dashboard-exit-ip-origin" aria-label={t("dashboard.exitIpOrigin")}>{t("dashboard.exitIpOrigin")}</span>
                 {exitIp && !exitIp.viaProxy && (
                   <span className="dashboard-exit-ip-direct">{t("dashboard.exitIpDirect")}</span>
                 )}
