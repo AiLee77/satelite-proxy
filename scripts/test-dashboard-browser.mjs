@@ -867,6 +867,20 @@ try {
     return { results, referenceColors, stopped };
   });
   for (const result of chainSurface.results) {
+    // 批次12-2：检测出口改为样板B（rgba半透明底 + --text色系），不再与协议标签一致
+    if (result.label === "链卡检测出口") {
+      checkBatch10(`${result.label} computed background-color 等于样板B`,
+        !result.missing && result.background === "rgba(255, 255, 255, 0.06)",
+        JSON.stringify({ actual: result.background ?? null, expected: "rgba(255, 255, 255, 0.06)", viewport: "1280x900" }));
+      checkBatch10(`${result.label} computed border-color 等于样板B`,
+        !result.missing && result.border === "rgba(255, 255, 255, 0.09)",
+        JSON.stringify({ actual: result.border ?? null, expected: "rgba(255, 255, 255, 0.09)", viewport: "1280x900" }));
+      checkBatch10(`${result.label} computed color 等于样板B`,
+        !result.missing && result.color === "rgba(255, 255, 255, 0.92)",
+        JSON.stringify({ actual: result.color ?? null, expected: "rgba(255, 255, 255, 0.92)", viewport: "1280x900" }));
+      continue;
+    }
+    // 其他按钮保持与协议标签一致
     for (const [property, actual, expected] of [
       ["background-color", result.background, result.referenceColors?.background],
       ["border-color", result.border, result.referenceColors?.border],
@@ -899,12 +913,13 @@ try {
   ]) checkBatch10(`展开态池按钮 computed ${property} 等于节点协议标签`, actual === expected,
     JSON.stringify({ actual, expected, viewport: "1280x900" }));
   await poolExpand.click();
+  // 批次12-2：停用改为 transparent 背景（样板A）
   const expectedStopBaseline = {
-    background: "rgba(255, 255, 255, 0.055)",
+    background: "rgba(0, 0, 0, 0)",
     border: "rgba(214, 139, 88, 0.35)",
     color: "rgb(214, 139, 88)",
   };
-  checkBatch10("停用 computed 值保持批次10基线", JSON.stringify(chainSurface.stopped) === JSON.stringify(expectedStopBaseline),
+  checkBatch10("停用 computed 值符合批次12-2样板A", JSON.stringify(chainSurface.stopped) === JSON.stringify(expectedStopBaseline),
     JSON.stringify({ actual: chainSurface.stopped, expected: expectedStopBaseline, viewport: "1280x900" }));
   checkBatch10("链页仅一个使用中出口标记", await page.locator(".chain-page .chain-exit-btn.current").count() === 1,
     String(await page.locator(".chain-page .chain-exit-btn.current").count()));
