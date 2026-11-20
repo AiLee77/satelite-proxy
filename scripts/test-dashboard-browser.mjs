@@ -826,6 +826,7 @@ try {
   currentCase = "chain-style-computed-parity";
   await open(1280, 900, "zh", "aerospace", "running", "classic", "business", "long", { chain: "1", page: "chain" });
   await page.locator(".chain-page .chain-card").first().waitFor();
+  await page.waitForFunction(() => document.querySelector(".node-proto-tags code"));
   await page.waitForFunction(() => document.querySelector(".chain-exit-btn.current"));
   const editorCard = page.locator(".chain-card").filter({ hasText: "编辑器指定池 Fixture editor" });
   await editorCard.getByRole("button", { name: "操作", exact: true }).click();
@@ -833,49 +834,79 @@ try {
   await page.locator(".chain-editor-sidebar .glass-seg-btn").nth(1).click();
   await page.locator(".chain-editor-sidebar .chain-pool-expand").waitFor();
   const chainSurface = await page.evaluate(() => {
-    const quick = document.querySelector(".dash-side-rail .glass-seg");
-    const reference = quick ? getComputedStyle(quick).backgroundColor : null;
-    const primarySample = document.createElement("span");
-    primarySample.style.backgroundColor = "var(--primary)";
-    document.body.append(primarySample);
-    const primary = getComputedStyle(primarySample).backgroundColor;
-    primarySample.remove();
+    const reference = document.querySelector(".node-proto-tags code");
+    const refStyle = reference ? getComputedStyle(reference) : null;
+    const referenceColors = refStyle ? {
+      background: refStyle.backgroundColor,
+      border: refStyle.borderColor,
+      color: refStyle.color,
+    } : null;
     const selectors = [
-      ["链卡停用按钮", ".chain-card .chain-exit-btn.chain-exit-stop"],
-      ["链卡检测出口按钮", ".chain-card .chain-exit-btn.chain-exit-probe"],
-      ["链卡启用为出口按钮", ".chain-card .chain-exit-btn:not(.current):not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead)"],
-      ["链卡已失效态", ".chain-card .chain-exit-btn.chain-exit-dead"],
+      ["链卡使用中出口", ".chain-card .chain-exit-btn.current"],
+      ["链卡检测出口", ".chain-card .chain-exit-btn.chain-exit-probe"],
+      ["链卡启用为出口", ".chain-card .chain-exit-btn:not(.current):not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead)"],
       ["节点池卡指定节点标记", ".chain-pool-row .pill.target-node"],
-      ["链卡指定节点标记", ".chain-hop-node.pool-card .chain-hop-explicit-pill"],
       ["编辑器节点池行尾展开按钮", ".chain-editor-sidebar .chain-pool-expand"],
     ];
     const results = selectors.map(([label, selector]) => {
       const element = document.querySelector(selector);
-      if (!element) return { label, missing: true };
+      if (!element || !refStyle) return { label, missing: true, referenceColors };
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      return { label, background: style.backgroundColor, reference, primary,
-        matchesQuickCapsule: style.backgroundColor === reference,
-        avoidsPrimary: style.backgroundColor !== primary,
-        pillRadius: selector.includes("target-node") || selector.includes("explicit-pill")
-          ? parseFloat(style.borderTopLeftRadius) >= rect.height / 2 : true };
+      return { label, background: style.backgroundColor, border: style.borderColor, color: style.color,
+        referenceColors,
+        matches: style.backgroundColor === refStyle.backgroundColor &&
+          style.borderColor === refStyle.borderColor && style.color === refStyle.color,
+        pillRadius: selector.includes("target-node") ? parseFloat(style.borderTopLeftRadius) >= rect.height / 2 : true };
     });
-    const current = document.querySelector(".chain-card .chain-exit-btn.current");
-    const inUseBackground = current ? getComputedStyle(current).backgroundColor : null;
-    return { results, inUseBackground, reference, primary };
+    const stop = document.querySelector(".chain-card .chain-exit-btn.chain-exit-stop");
+    const stopStyle = stop ? getComputedStyle(stop) : null;
+    const stopped = stopStyle ? {
+      background: stopStyle.backgroundColor, border: stopStyle.borderColor, color: stopStyle.color,
+    } : null;
+    return { results, referenceColors, stopped };
   });
   for (const result of chainSurface.results) {
-    checkBatch10(`${result.label} computed 底色等于 hero 快捷胶囊`, !result.missing && result.matchesQuickCapsule,
-      JSON.stringify(result));
-    checkBatch10(`${result.label} computed 底色不等于亮绿主色`, !result.missing && result.avoidsPrimary,
-      JSON.stringify(result));
+    for (const [property, actual, expected] of [
+      ["background-color", result.background, result.referenceColors?.background],
+      ["border-color", result.border, result.referenceColors?.border],
+      ["color", result.color, result.referenceColors?.color],
+    ]) {
+      checkBatch10(`${result.label} computed ${property} 等于节点协议标签`,
+        !result.missing && actual === expected,
+        JSON.stringify({ actual: actual ?? null, expected: expected ?? null, viewport: "1280x900" }));
+    }
     if (result.label.includes("指定节点")) {
-      checkBatch10(`${result.label} 圆角为 pill`, !result.missing && result.pillRadius, JSON.stringify(result));
+      checkBatch10(`${result.label} 保持 pill 圆角`, !result.missing && result.pillRadius, JSON.stringify(result));
     }
   }
-  checkBatch10("使用中保留 --primary 亮色实底", chainSurface.inUseBackground === chainSurface.primary,
-    JSON.stringify({ active: chainSurface.inUseBackground, primary: chainSurface.primary }));
-  checkBatch10("链页仅一个使用中亮色出口标记", await page.locator(".chain-page .chain-exit-btn.current").count() === 1,
+  const poolExpand = page.locator(".chain-editor-sidebar .chain-pool-expand");
+  await poolExpand.click();
+  await page.waitForFunction(() => document.querySelector(".chain-editor-sidebar .chain-pool-expand")?.getAttribute("aria-expanded") === "true");
+  const expandedArrow = await poolExpand.evaluate(element => {
+    const sample = document.querySelector(".node-proto-tags code");
+    const sampleStyle = getComputedStyle(sample);
+    const style = getComputedStyle(element);
+    return {
+      background: style.backgroundColor, border: style.borderColor, color: style.color,
+      expected: { background: sampleStyle.backgroundColor, border: sampleStyle.borderColor, color: sampleStyle.color },
+    };
+  });
+  for (const [property, actual, expected] of [
+    ["background-color", expandedArrow.background, expandedArrow.expected.background],
+    ["border-color", expandedArrow.border, expandedArrow.expected.border],
+    ["expanded arrow color", expandedArrow.color, expandedArrow.expected.color],
+  ]) checkBatch10(`展开态池按钮 computed ${property} 等于节点协议标签`, actual === expected,
+    JSON.stringify({ actual, expected, viewport: "1280x900" }));
+  await poolExpand.click();
+  const expectedStopBaseline = {
+    background: "rgba(255, 255, 255, 0.055)",
+    border: "rgba(214, 139, 88, 0.35)",
+    color: "rgb(214, 139, 88)",
+  };
+  checkBatch10("停用 computed 值保持批次10基线", JSON.stringify(chainSurface.stopped) === JSON.stringify(expectedStopBaseline),
+    JSON.stringify({ actual: chainSurface.stopped, expected: expectedStopBaseline, viewport: "1280x900" }));
+  checkBatch10("链页仅一个使用中出口标记", await page.locator(".chain-page .chain-exit-btn.current").count() === 1,
     String(await page.locator(".chain-page .chain-exit-btn.current").count()));
   await clean();
 
@@ -885,8 +916,8 @@ try {
   checkBatch10("默认概览视口无纵向滚动溢出", overviewOverflow.scrollHeight <= overviewOverflow.clientHeight,
     `${overviewOverflow.scrollHeight - overviewOverflow.clientHeight}px (${overviewOverflow.scrollHeight}/${overviewOverflow.clientHeight})`);
   await clean();
-  console.log(`批次10断言（本次运行）：${JSON.stringify(batch10Checks)}`);
-  assert.deepEqual(batch10Checks.filter(check => check.result === "红"), [], "批次10新断言必须全绿；改前红项与改后绿项均逐项记录");
+  console.log(`批次11-2 配色断言（本次运行）：${JSON.stringify(batch10Checks)}`);
+  assert.deepEqual(batch10Checks.filter(check => check.result === "红"), [], "批次11配色新断言必须全绿；改前红项与改后绿项均逐项记录");
   console.log("概览回归通过：指定配置菜单12组中英/960与1280/zoom 1与1.5与2，默认与右侧触发、双向展开、hover配置切换、Esc回焦、resize/滚动；真实侧栏、IP、服务、动效、启停与全屏；新增链池样式、标签单行、出口上标、链格式与溢出断言全部通过。");
 } catch (error) {
   console.error("概览夹具失败场景", currentCase);

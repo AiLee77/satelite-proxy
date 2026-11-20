@@ -140,7 +140,7 @@ test("池候选可展开，点成员行直接入链尾（B 回归，勾选暂存
   assert.match(page, /preview\.length - liveMembers\.length/);
 });
 
-test("链卡出口胶囊样式 B：停用/已失效/检测出口深色底描边低饱和，使用中整行唯一亮色（返修 A）", () => {
+test("链卡出口胶囊：使用中/检测/启用与协议标签三色一致，停用/失效保留危险态", () => {
   const css = readFileSync(
     new URL("../src/pages/ChainPage.css", import.meta.url),
     "utf8",
@@ -171,27 +171,25 @@ test("链卡出口胶囊样式 B：停用/已失效/检测出口深色底描边�
     assert.match(r, /color: var\(--danger\)/);
     assert.match(r, /border-color: var\(--danger-border\)/);
   }
-  // 使用中：唯一亮色 = 主色实底 --primary + --on-primary 字。
-  const cur = rule(".chain-exit-btn.current");
-  assert.match(cur, /background: var\(--primary\)/);
-  assert.match(cur, /color: var\(--on-primary\)/);
-  // 整行唯一亮色：链出口胶囊全规则面里，只有 .current 允许携带
-  // --primary/--success 亮底（hover 洗色不算亮色）。
-  const pills = [...css.matchAll(/\.chain-exit-btn[^{},]*\{[^}]*\}/g)].map((m) => m[0]);
-  assert.ok(pills.length >= 5, "链出口胶囊规则面应含 基类/使用中/停用/失效/不可用");
-  for (const p of pills) {
-    if (/\.current/.test(p)) continue;
-    assert.ok(!/var\(--primary\)/.test(p), `使用中之外不得使用主色亮底：${p}`);
-    assert.ok(!/var\(--success\)/.test(p), `使用中之外不得使用亮绿底：${p}`);
+  // 使用中/检测/启用与节点协议标签共享主题胶囊三色；停用/失效不受影响。
+  const accent = css.match(/\.chain-exit-btn\.current,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(accent, /background: var\(--primary-muted\)/);
+  assert.match(accent, /border-color: var\(--primary-border\)/);
+  assert.match(accent, /color: var\(--primary\)/);
+  assert.match(css, /\.chain-exit-btn\.current\s*\{[^}]*font-weight: 600;/s);
+  for (const sel of [".chain-exit-btn.chain-exit-probe", ".chain-exit-btn:not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead)"]) {
+    assert.ok(css.includes(sel), `${sel} 纳入协议胶囊颜色`);
   }
   // 链池行/规则集共用的「指定节点」pill（App.css）：同款三件套
   // （深色底 + 低透明蓝描边 + 低饱和蓝字）。
   const appCss = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
   const targetNode = appCss.match(/\.pill\.target-node \{[^}]*\}/s)?.[0] ?? "";
   assert.ok(targetNode, "App.css 缺 .pill.target-node 规则");
-  assert.match(targetNode, /background: var\(--surface-2\)/);
-  assert.match(targetNode, /border-color: color-mix\(in srgb, var\(--accent-blue\) 45%, transparent\)/);
-  assert.match(targetNode, /color: var\(--accent-blue\)/);
+  // 只在 ChainPage 中把节点池指定节点 pill 对齐协议标签；规则页 pill 不受此局部规则影响。
+  const chainPoolPill = css.match(/\.chain-page \.chain-pool-row \.pill\.target-node \{[^}]*\}/s)?.[0] ?? "";
+  assert.match(chainPoolPill, /background: var\(--primary-muted\)/);
+  assert.match(chainPoolPill, /border-color: var\(--primary-border\)/);
+  assert.match(chainPoolPill, /color: var\(--primary\)/);
 });
 
 
@@ -1250,35 +1248,15 @@ test("F 返修：池展开按钮与快捷面板胶囊同源（GlassSeg 族）", 
     new URL("../src/pages/ChainPage.css", import.meta.url),
     "utf8",
   );
-  // 形态（返修 F）：与 hero 快捷面板胶囊同源 GlassSeg 族三件套——surface-2
-  // 深色底 + 1px 细描边 + radius-pill 圆角，不再透明无底。
+  // 池展开按钮与节点协议标签共享深色主题底、主题绿描边与绿箭头。
   const rule = css.match(/\.chain-pool-expand \{[^}]*\}/s)?.[0] ?? "";
-  assert.match(rule, /background: var\(--surface-2\)/);
-  assert.match(rule, /border: 1px solid var\(--border\)/);
+  assert.match(rule, /background: var\(--primary-muted\)/);
+  assert.match(rule, /border: 1px solid var\(--primary-border\)/);
+  assert.match(rule, /color: var\(--primary\)/);
   assert.match(rule, /border-radius: var\(--radius-pill\)/);
   assert.match(rule, /width: 24px;/);
-  // 同源口径补齐：高度 24px + 居中布局，且不再存在尾部覆写块。
   assert.match(rule, /height: 24px;/);
-  assert.match(rule, /display: inline-flex;/);
-  assert.doesNotMatch(css, /\.chain-pool-expand \{[^}]*width: 20px;/);
-  // hover：洗色克制（不再主色淡底）。
-  assert.match(
-    css,
-    new RegExp(
-      "\\.chain-pool-expand:hover \\{\\s*background: var\\(--hover-wash\\);",
-    ),
-  );
-  // 展开态：图标收进链页既有主语义 --accent-purple，不再叠边框。
-  assert.match(
-    css,
-    new RegExp(
-      "\\.chain-candidate-pool\\.expanded \\.chain-pool-expand \\{\\s*color: var\\(--accent-purple\\);",
-    ),
-  );
-  assert.doesNotMatch(
-    css,
-    /\.chain-candidate-pool\.expanded \.chain-pool-expand \{[^}]*border-color/,
-  );
+  assert.match(css, /\.chain-candidate-pool\.expanded \.chain-pool-expand \{\s*color: var\(--primary\);/);
 });
 
 test("H：画布 fit view 手动复位入口与视口策略单源", () => {

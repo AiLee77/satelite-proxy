@@ -163,6 +163,13 @@
   cursor: pointer;
 }
 
+/* Chain page scope only: keep non-chain target-node badges unchanged. */
+.chain-page .chain-pool-row .pill.target-node {
+  background: var(--primary-muted);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
 .chain-pool-node-item:last-child {
   border-bottom: none;
 }
@@ -365,13 +372,8 @@
   gap: 0.5rem;
 }
 
-/* G1: exit-activation control in the chain card header. `current` reads as
- *  the live-exit badge (the chain already is the outbound), `unavailable`
- *  explains the sing-box-only gating without an interactive affordance.
- *  返修 A 胶囊样式 B：克制三件套（深色底 --surface-2 + 细描边 + 低饱和语义
- *  字色，循 .pill.target-* 先例，零新造色）归「启用/停用/已失效/检测出口/
- *  不可用」；「使用中」独占主色实底胶囊（--primary 填充 + --on-primary 字），
- *  同卡并排时整行唯一亮色，状态优先级一眼可辨。 */
+/* G1: chain-exit controls use the same token triple as the node protocol tag.
+ * Stop/dead/unavailable states override this accent treatment below. */
 .chain-exit-btn {
   padding: 0.28rem 0.7rem;
   border-radius: 999px;
@@ -396,12 +398,17 @@
   cursor: default;
 }
 
-/* 使用中：主色实底 + 描边 + --on-primary 字——整行唯一的实底胶囊，非
- *  交互徽标（不可点），同卡并存时必须是最醒目的一个。 */
+/* The live state, probe action, and usable activation control share the
+ * node-list protocol tag's dark surface + theme-accent border/text. */
+.chain-exit-btn.current,
+.chain-exit-btn.chain-exit-probe,
+.chain-exit-btn:not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead) {
+  color: var(--primary);
+  border-color: var(--primary-border);
+  background: var(--primary-muted);
+}
+
 .chain-exit-btn.current {
-  color: var(--on-primary);
-  border-color: var(--primary);
-  background: var(--primary);
   font-weight: 600;
   cursor: default;
   pointer-events: none;
@@ -432,7 +439,7 @@
   pointer-events: none;
 }
 
-/* 出口探测：同款中性胶囊并置；结果行在卡头下方，失败红字。 */
+/* 出口探测沿用协议标签强调色；结果行在卡头下方，失败红字。 */
 .chain-exit-btn.chain-exit-probe {
   margin-left: 0.4rem;
 }
@@ -1068,9 +1075,6 @@
   white-space: nowrap;
 }
 
-/* F 返修：池展开按钮与 hero 快捷面板胶囊同源克制样式（GlassSeg 族）——
-   surface-2 深色底 + 1px 细描边 + radius-pill 圆角，不再透明悬浮；
-   hover 洗色，展开态图标收进链页既有主语义 --accent-purple。 */
 .chain-pool-expand {
   flex: none;
   width: 24px;
@@ -1078,10 +1082,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--primary-border);
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--primary-muted);
+  color: var(--primary);
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
@@ -1090,13 +1094,13 @@
 }
 
 .chain-pool-expand:hover {
-  background: var(--hover-wash);
-  border-color: var(--border-strong);
-  color: var(--text);
+  background: var(--primary-muted);
+  border-color: var(--primary-border);
+  color: var(--primary);
 }
 
 .chain-candidate-pool.expanded .chain-pool-expand {
-  color: var(--accent-purple);
+  color: var(--primary);
 }
 
 .chain-pool-members {

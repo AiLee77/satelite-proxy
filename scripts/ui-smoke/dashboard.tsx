@@ -258,6 +258,7 @@ mockWindows("main");
 
 const { DashboardPage } = await import("../../src/pages/DashboardPage");
 const { ChainPage } = await import("../../src/pages/ChainPage");
+const { NodesPage } = await import("../../src/pages/NodesPage");
 const { LocaleProvider } = await import("../../src/i18n");
 const { ThemeProvider } = await import("../../src/theme");
 const { UiModeProvider } = await import("../../src/ui/UiModeContext");
@@ -273,6 +274,7 @@ function DashboardFixture() {
           <DashboardPage onGoTraffic={() => { state.trafficOpens++; }} />
         </div>
         {chainPageFixture && nav === "chains" && <ChainPage />}
+        {chainPageFixture && <div style={{ position: "fixed", left: "-10000px", visibility: "hidden", pointerEvents: "none" }}><NodesPage /></div>}
       </main>
     </div>
   );
