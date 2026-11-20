@@ -3298,6 +3298,7 @@ button.node-card:disabled,
   border-radius: 50%;
   display: inline-block;
   flex-shrink: 0;
+  margin-right: 0.4rem;
 }
 
 .status-dot.on {
