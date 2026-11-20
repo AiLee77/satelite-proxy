@@ -997,7 +997,7 @@
 }
 
 .chain-candidate-group-head:hover {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  background: var(--primary-muted);
 }
 
 .chain-candidate-group-arrow {
@@ -1208,7 +1208,7 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
   background: var(--surface);
-  border: 1px solid var(--accent-purple);
+  border: 1px solid var(--primary-border);
   border-radius: 999px;
   padding: 0.25rem 0.75rem;
   font-size: 0.8rem;
