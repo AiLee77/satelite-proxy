@@ -788,6 +788,14 @@ function coreDisplayName(kind: string | null | undefined): string {
         ? "error"
         : "stopped";
 
+  const dotClass = running
+    ? "on"
+    : switching
+      ? "busy"
+      : isError
+        ? "off"
+        : "off";
+
   const heroTitle = !detailsReady && running
     ? null // skeleton
     : customRuntime
@@ -1036,7 +1044,10 @@ function coreDisplayName(kind: string | null | undefined): string {
             {heroSub == null ? (
               <span className="skel skel-inline skel-w-30" aria-hidden />
             ) : (
-              heroSub
+              <>
+                <span className={`status-dot ${dotClass}`} />
+                {heroSub}
+              </>
             )}
           </p>
 
