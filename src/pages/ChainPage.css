@@ -175,19 +175,30 @@
 }
 
 .chain-pool-node-item .chain-pool-select-dot {
+  position: relative;
   flex: none;
   appearance: none;
   width: 8px;
   height: 8px;
   margin: 0;
   border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 使用 ::before 伪元素完全覆盖 input 默认渲染，确保尺寸与状态不受浏览器默认样式影响 */
+.chain-pool-node-item .chain-pool-select-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--muted) 65%, transparent);
-  cursor: pointer;
   transition: background-color 0.12s ease;
 }
 
-.chain-pool-node-item .chain-pool-select-dot:checked {
+.chain-pool-node-item .chain-pool-select-dot:checked::before {
   background: var(--primary);
 }
 
