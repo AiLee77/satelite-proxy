@@ -60,7 +60,6 @@
 /* 组织名样式：迁移后由 IpInfoPanel.css 承载（返修 C-1：与商业/质量优同款
    描边胶囊 .ip-info-tag 底，单行截断）。 */
 /* 直连标记并入大号 IP 行尾；出口来源以弱化上标贴着 IP 显示。 */
-.dashboard-exit-ip-origin { margin-left: 0.28em; font-size: 0.48em; font-weight: 500; line-height: 0; color: var(--muted); opacity: 0.72; vertical-align: super; letter-spacing: 0; white-space: nowrap; }
 .dashboard-exit-ip-direct { font-size: 0.7rem; font-weight: 500; color: var(--muted); margin-left: 0.5rem; }
 /* 批次 8-C：删标签行后 IP 顶格，块间距收紧。 */
 .dashboard-exit-copy { gap: 0; }

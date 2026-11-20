@@ -815,10 +815,8 @@ try {
     JSON.stringify({ text: heroRepairMetrics.qualityText, lines: heroRepairMetrics.qualityLines }));
   checkBatch10("标签整行高度等于单个胶囊高度", Math.abs(heroRepairMetrics.rowHeight - heroRepairMetrics.maxChipHeight) < 1,
     JSON.stringify({ row: heroRepairMetrics.rowHeight, chip: heroRepairMetrics.maxChipHeight }));
-  checkBatch10("IP 出口上标存在且同行弱化小字", heroRepairMetrics.ipLabelText === "出口" && heroRepairMetrics.ipLabelSameParent &&
-    heroRepairMetrics.ipLabelSameLine && heroRepairMetrics.ipLabelVerticalAlign === "super" && heroRepairMetrics.ipLabelFontSize < heroRepairMetrics.ipFontSize,
-    JSON.stringify({ text: heroRepairMetrics.ipLabelText, parent: heroRepairMetrics.ipLabelSameParent, sameLine: heroRepairMetrics.ipLabelSameLine,
-      verticalAlign: heroRepairMetrics.ipLabelVerticalAlign, font: heroRepairMetrics.ipLabelFontSize, ipFont: heroRepairMetrics.ipFontSize }));
+  checkBatch10("批次11-1 IP 出口上标不存在", !heroRepairMetrics.ipLabelText,
+    JSON.stringify({ actual: heroRepairMetrics.ipLabelText ?? null, expected: null, viewport: "1280x900" }));
   checkBatch10("IP 行高保持改前 28.08px", heroRepairMetrics.ipLineHeight === "28.08px" && Math.abs(heroRepairMetrics.ipRectHeight - 28.08) < 1,
     JSON.stringify({ lineHeight: heroRepairMetrics.ipLineHeight, rectHeight: heroRepairMetrics.ipRectHeight }));
   checkBatch10("普通节点行格式不变", await page.locator(".dash-hero-desc").textContent() === "VLESS · 42 ms",
