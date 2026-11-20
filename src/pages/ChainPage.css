@@ -443,24 +443,22 @@
 }
 
 .chain-exit-btn.current {
-  font-weight: 600;
+  /* 批次12项目2：改为常规字重（与样板 B 一致）*/
   cursor: default;
   pointer-events: none;
 }
 
-/* 停用：同款克制三件套——深色底 --surface-2 + danger 细描边 + 低饱和 danger
- *  字（不再染彩 danger-bg 底），可点（回落救生通道）。 */
+/* 批次12项目2：「停用」改为样板 A（首页「停止代理」btn-pill.danger）完全一致 */
 .chain-exit-btn.chain-exit-stop {
   margin-left: 0.4rem;
-  color: var(--danger);
-  border-color: var(--danger-border);
-  background: var(--surface-2);
+  background: transparent !important;
+  color: var(--danger) !important;
+  border-color: var(--danger-border) !important;
 }
 
 .chain-exit-btn.chain-exit-stop:hover:not(:disabled) {
-  color: var(--danger-hover);
-  border-color: var(--danger-hover);
-  background: var(--hover-wash);
+  background: var(--danger-bg) !important;
+  box-shadow: none !important;
 }
 
 /* 已失效：引用的节点/池已删除——同停用三件套（深色底+描边+低饱和 danger 字，
@@ -473,9 +471,17 @@
   pointer-events: none;
 }
 
-/* 出口探测沿用协议标签强调色；结果行在卡头下方，失败红字。 */
+/* 批次12项目2：「检测出口」改为样板 B（首页「切换节点」btn-pill.secondary）完全一致 */
 .chain-exit-btn.chain-exit-probe {
   margin-left: 0.4rem;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+.chain-exit-btn.chain-exit-probe:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: none !important;
 }
 
 .chain-exit-probe-result {
