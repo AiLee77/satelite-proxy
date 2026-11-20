@@ -961,28 +961,34 @@ try {
   const beforeChoice = searchChoiceCount ? await searchChoice.isChecked() : false;
   const dot = page.locator(".rules-form-modal .chain-pool-select-dot").first();
   const dotCount = await page.locator(".rules-form-modal .chain-pool-select-dot").count();
-  const dotBefore = dotCount ? await dot.evaluate(element => ({
-    selected: element.checked,
-    background: getComputedStyle(element).backgroundColor,
-    border: getComputedStyle(element).borderColor,
-    radius: getComputedStyle(element).borderRadius,
-  })) : null;
+  const dotBefore = dotCount ? await dot.evaluate(element => {
+    const beforeStyle = getComputedStyle(element, "::before");
+    return {
+      selected: element.checked,
+      background: beforeStyle.backgroundColor,
+      border: getComputedStyle(element).borderColor,
+      radius: beforeStyle.borderRadius,
+    };
+  }) : null;
   if (searchChoiceCount) await page.locator(".rules-form-modal .chain-pool-node-item").first().click();
   const afterChoice = searchChoiceCount ? await page.locator('.rules-form-modal .chain-pool-node-item input[type="checkbox"]').first().isChecked() : false;
   if (searchChoiceCount && dotCount) await page.waitForFunction(() => {
     const input = document.querySelector(".rules-form-modal .chain-pool-select-dot");
     const sample = document.querySelector(".node-proto-tags code");
-    return input instanceof HTMLInputElement && input.checked && getComputedStyle(input).backgroundColor === getComputedStyle(sample).color;
+    if (!(input instanceof HTMLInputElement && input.checked)) return false;
+    const beforeStyle = getComputedStyle(input, "::before");
+    return beforeStyle.backgroundColor === getComputedStyle(sample).color;
   });
   const dotAfter = dotCount ? await dot.evaluate(element => {
     const style = getComputedStyle(element);
+    const beforeStyle = getComputedStyle(element, "::before");
     const sample = document.querySelector(".node-proto-tags code");
     return {
-      background: style.backgroundColor,
+      background: beforeStyle.backgroundColor,
       border: style.borderColor,
       selected: element.checked,
       expectedColor: getComputedStyle(sample).color,
-      radius: style.borderRadius,
+      radius: beforeStyle.borderRadius,
     };
   }) : null;
   checkBatch10("指定节点圆点可选中并切换", beforeChoice === false && afterChoice === true && dotCount > 0 &&
