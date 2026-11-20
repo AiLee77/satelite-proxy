@@ -151,32 +151,39 @@ test("链卡出口胶囊：使用中/检测/启用与协议标签三色一致，
     assert.ok(m, `缺规则 ${sel}`);
     return m[1];
   };
-  // 检测出口（复用基类，含「启用」）：深色底 --surface-2 + 细描边 +
+  // 基类（含「启用」）：深色底 --surface-2 + 细描边 +
   // 低饱和 --muted 字色，不再用 --text 主文字色。
   const base = rule(".chain-exit-btn");
   assert.match(base, /background: var\(--surface-2\)/);
   assert.match(base, /border: 1px solid var\(--border\)/);
   assert.match(base, /color: var\(--muted\)/);
   assert.ok(!base.includes("var(--text)"));
+  // 检测出口：批次12-2 改为样板B（rgba 半透明底 + --text 字色）。
+  const probe = rule(".chain-exit-btn.chain-exit-probe");
+  assert.match(probe, /background: rgba\(255,\s*255,\s*255,\s*0\.06\)/);
+  assert.match(probe, /color: var\(--text\)/);
   // 不可用：同款克制三件套 + 低饱和 muted。
   const unavailable = rule(".chain-exit-btn.unavailable");
   assert.match(unavailable, /background: var\(--surface-2\)/);
   assert.match(unavailable, /color: var\(--muted\)/);
-  // 停用/已失效：深色底 + danger 细描边 + 低饱和 danger 字，不染彩
-  // danger-bg 底（否则整行不止一处亮色，压过「使用中」）。
-  for (const sel of [".chain-exit-btn.chain-exit-stop", ".chain-exit-btn.chain-exit-dead"]) {
-    const r = rule(sel);
-    assert.match(r, /background: var\(--surface-2\)/);
-    assert.ok(!r.includes("danger-bg"), `${sel} 不得再染彩 danger-bg 底`);
-    assert.match(r, /color: var\(--danger\)/);
-    assert.match(r, /border-color: var\(--danger-border\)/);
-  }
-  // 使用中/检测/启用与节点协议标签共享主题胶囊三色；停用/失效不受影响。
+  // 停用：批次12-2 改为 transparent 背景（样板A）+ danger 细描边 + danger 字。
+  const stop = rule(".chain-exit-btn.chain-exit-stop");
+  assert.match(stop, /background: transparent/);
+  assert.ok(!stop.includes("danger-bg"), "停用不染彩 danger-bg 底");
+  assert.match(stop, /color: var\(--danger\)/);
+  assert.match(stop, /border-color: var\(--danger-border\)/);
+  // 已失效：保持 --surface-2 深色底 + danger 细描边 + danger 字。
+  const dead = rule(".chain-exit-btn.chain-exit-dead");
+  assert.match(dead, /background: var\(--surface-2\)/);
+  assert.match(dead, /color: var\(--danger\)/);
+  assert.match(dead, /border-color: var\(--danger-border\)/);
+  // 使用中/检测/启用与节点协议标签共享主题胶囊三色；批次12-2 去掉粗体；停用/失效不受影响。
   const accent = css.match(/\.chain-exit-btn\.current,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.match(accent, /background: var\(--primary-muted\)/);
   assert.match(accent, /border-color: var\(--primary-border\)/);
   assert.match(accent, /color: var\(--primary\)/);
-  assert.match(css, /\.chain-exit-btn\.current\s*\{[^}]*font-weight: 600;/s);
+  // 批次12-2 已移除 font-weight:600，使用常规字重。
+  assert.ok(!css.includes(".chain-exit-btn.current") || !css.match(/\.chain-exit-btn\.current\s*\{[^}]*font-weight:\s*600;/s), "使用中已改为常规字重");
   for (const sel of [".chain-exit-btn.chain-exit-probe", ".chain-exit-btn:not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead)"]) {
     assert.ok(css.includes(sel), `${sel} 纳入协议胶囊颜色`);
   }
