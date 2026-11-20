@@ -157,10 +157,44 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  position: relative;
+  min-width: 0;
   padding: 0.4rem 0.6rem;
   font-size: 0.85rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+}
+
+/* Pool editor groups reuse the chain editor's shared group-header component. */
+.chain-pool-node-group {
+  gap: 0.15rem;
+}
+
+.chain-pool-node-group .chain-pool-node-item {
+  border-radius: 5px;
+}
+
+.chain-pool-node-item .chain-pool-select-dot {
+  flex: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.chain-pool-node-item .chain-pool-select-dot:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.chain-pool-node-item:focus-within .chain-pool-select-dot {
+  outline: 2px solid var(--primary-border);
+  outline-offset: 2px;
 }
 
 /* Chain page scope only: keep non-chain target-node badges unchanged. */

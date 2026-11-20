@@ -46,6 +46,10 @@ const chainExitNode: ProxyNode = {
   id: "fixture-exit", name: "美国 US Exit 01", protocol: "http", server: "192.0.2.9", port: 8080,
   latency_ms: 2054, latency_method: "singbox_http", subscription_id: "fixture-sub", subscription_name: profileName,
 };
+const poolPickNode: ProxyNode = {
+  id: "fixture-pool-node", name: "Second subscription Node", protocol: "trojan", server: "198.51.100.12", port: 443,
+  latency_ms: 88, latency_method: "singbox_http", subscription_id: "fixture-sub-two", subscription_name: "第二订阅 Second subscription",
+};
 const chainVirtualNode: ProxyNode = {
   id: "chain:fixture-chain", name: "演示链 Fixture Chain", protocol: "unknown", server: "", port: 0,
   latency_ms: null, subscription_id: "", subscription_name: "", chain_hops: 2,
@@ -71,6 +75,11 @@ const subscriptions: SubscriptionView[] = [{
   node_count: 1, skipped_count: 0, last_update: 1_700_000_000,
   traffic: { upload: 2 ** 30, download: 5 * 2 ** 30, total: 100 * 2 ** 30 },
 }];
+if (chainPageFixture) subscriptions.push({
+  id: "fixture-sub-two", name: "第二订阅 Second subscription", enabled: true, source_kind: "url",
+  custom_kind: null, source_display: "https://example.test/sub-two", node_count: 1, skipped_count: 0,
+  last_update: 1_700_000_000, traffic: { upload: 0, download: 0, total: 0 },
+});
 // 菜单场景独立追加完整配置，不改变既有概览/服务场景的数据。
 if (menuScenario) subscriptions.push({
   id: "fixture-menu-profile", name: "菜单配置 Menu profile · Complete long name 0123456789",
@@ -106,6 +115,7 @@ const connections: ConnectionView[] = ["node-fixture", "direct"].map((tag, i) =>
 }));
 const state = {
   settings, status, nodes, subscriptions, ipv6, organization, short, commands: [] as { command: string; payload: unknown }[],
+  poolWrites: [] as unknown[],
   unexpected: [] as string[], statusReads: 0, connectionReads: 0, trafficOpens: 0,
   holdStart: false, releaseStart: null as null | (() => void),
   serviceFailures: 0,
@@ -146,13 +156,22 @@ mockIPC((command, payload) => {
     case "plugin:window|inner_size": return { width: window.innerWidth * devicePixelRatio, height: window.innerHeight * devicePixelRatio };
     case "get_settings": return copy(settings);
     case "get_proxy_status": state.statusReads++; return copy(status);
-    case "list_all_nodes": return copy(chainScenario ? [...nodes, chainExitNode, chainVirtualNode] : nodes);
+    case "list_all_nodes": return copy(chainScenario
+      ? [...nodes, chainExitNode, ...(chainPageFixture ? [poolPickNode, chainVirtualNode] : [chainVirtualNode])]
+      : nodes);
     case "list_subscriptions": return copy(subscriptions);
     case "list_chains": return copy(chains);
     case "list_pools": return copy(chainScenario ? [poolFixture] : []);
     case "list_chain_usage": return {};
+    case "update_pool": {
+      state.poolWrites.push(copy(args.mode));
+      poolFixture.mode = copy(args.mode as NodePool["mode"]);
+      return { pool: copy(poolFixture), pruned: 0 };
+    }
     // 代理链页候选全量节点（含 enabled 标记）。
-    case "list_chain_nodes": return copy(chainScenario ? [...nodes, chainExitNode] : nodes);
+    case "list_chain_nodes": return copy(chainScenario
+      ? [...nodes, chainExitNode, ...(chainPageFixture ? [poolPickNode] : [])]
+      : nodes);
     case "get_subscription": return { ...copy(subscriptions[0]), content: "{}" };
     case "get_core_info": return {
       kind: args.kind, name: args.kind === "singbox" ? "sing-box" : args.kind === "xray" ? "Xray" : "mihomo",

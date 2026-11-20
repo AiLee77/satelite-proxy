@@ -464,8 +464,15 @@ test("G4 候选列表：groupNodes sub 分组、单 map 手动开关、已上画
     "utf8",
   );
   // 复用既有 sub 分组口径（与节点页同源），而非另写一套分组。
-  assert.match(page, /groupNodes\(candidateNodes, "sub", locale/);
-  assert.match(page, /import \{ groupNodes \} from "\.\.\/nodeGroups";/);
+  assert.match(page, /function SubscriptionNodeGroup\(/);
+  assert.match(page, /groupNodes\(filteredNodes, "sub", locale/);
+  assert.match(page, /className="chain-candidate-group chain-pool-node-group"/);
+  assert.match(page, /className="chain-pool-select-dot"/);
+  assert.match(page, /className="chain-candidate-group chain-pool-node-group"[\s\S]*?onToggle=\{\(\) => setManualOpenGroups/);
+  assert.match(page, /manualOpenGroups\[group\.key\][\s\S]*?hasPoolQuery/);
+  assert.match(page, /className="chain-pool-node-item"[\s\S]*?checked=\{nodeIds\.has\(n\.id\)\}[\s\S]*?onChange=\{\(\) => toggleNode\(n\.id\)\}/);
+  assert.match(page, /mode === "explicit"\s*\? \{ mode: "explicit", node_ids: Array\.from\(nodeIds\) \}/);
+  assert.match(page, /import \{ groupNodes, type NodeGroup \} from "\.\.\/nodeGroups";/);
   // 单 map 手动开关：缺省 = 无搜索时折叠 / 有搜索时展开，用户最后点击优先。
   assert.match(page, /manualOpenGroups\[g\.key\] : hasQuery;/);
   assert.match(page, /setManualOpenGroups\(\(cur\) => \(\{ \.\.\.cur, \[g\.key\]: !open \}\)\)/);

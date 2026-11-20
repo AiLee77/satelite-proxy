@@ -45,7 +45,7 @@ import {
   updatePool,
 } from "../api";
 import { chainVirtualNodeId } from "../chainVirtualNode";
-import { groupNodes } from "../nodeGroups";
+import { groupNodes, type NodeGroup } from "../nodeGroups";
 import { waitForCoreRestart } from "../coreBusy";
 import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
@@ -684,6 +684,36 @@ function PoolRow({
   );
 }
 
+function SubscriptionNodeGroup({
+  group,
+  open,
+  onToggle,
+  children,
+  className = "chain-candidate-group",
+}: {
+  group: NodeGroup;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        className="chain-candidate-group-head"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="chain-candidate-group-arrow" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span className="chain-candidate-group-name">{group.label}</span>
+        <span className="chain-candidate-group-count">{group.nodes.length}</span>
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
 function PoolEditorModal({
   pool,
   nodes,
@@ -710,7 +740,7 @@ function PoolEditorModal({
    *  自愈），0 = 无剔除；调用方据此提示「已剔除 N 个」。 */
   onSaved: (pruned: number) => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [name, setName] = useState(pool?.name ?? "");
   const [mode, setMode] = useState<"explicit" | "keyword" | "subscription">(
     pool?.mode.mode ?? "explicit",
@@ -727,6 +757,7 @@ function PoolEditorModal({
   const [subscriptionId, setSubscriptionId] = useState(
     pool?.mode.mode === "subscription" ? pool.mode.subscription_id : "",
   );
+  const [manualOpenGroups, setManualOpenGroups] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -736,6 +767,15 @@ function PoolEditorModal({
     if (!q) return nodes;
     return nodes.filter((n) => n.name.toLowerCase().includes(q));
   }, [nodes, query]);
+  const hasPoolQuery = query.trim().length > 0;
+  const poolNodeGroups = useMemo(
+    () => groupNodes(filteredNodes, "sub", locale, {
+      other: t("nodes.groupOther"),
+      noSub: t("nodes.groupNoSub"),
+      chains: t("nodes.groupChains"),
+    }),
+    [filteredNodes, locale, t],
+  );
 
   function toggleNode(id: string) {
     setNodeIds((cur) => {
@@ -860,28 +900,49 @@ function PoolEditorModal({
                     placeholder={t("rules.pickNodePh")}
                   />
                   <div className="chain-pool-node-list">
-                    {filteredNodes.map((n) => (
-                      <label
-                        key={n.id}
-                        className="chain-pool-node-item"
-                        data-disabled={n.enabled === false ? "" : undefined}
-                        title={
-                          n.enabled === false && n.subscription_name
-                            ? `${n.subscription_name} · ${t("chain.subDisabled")}`
-                            : n.subscription_name || undefined
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={nodeIds.has(n.id)}
-                          onChange={() => toggleNode(n.id)}
-                        />
-                        <span>{n.name}</span>
-                        {n.subscription_name && (
-                          <span className="chain-node-sub">{n.subscription_name}</span>
-                        )}
-                      </label>
-                    ))}
+                    {poolNodeGroups.map((group) => {
+                      const open = group.key in manualOpenGroups
+                        ? manualOpenGroups[group.key]
+                        : hasPoolQuery;
+                      return (
+                        <SubscriptionNodeGroup
+                          key={group.key}
+                          group={group}
+                          open={open}
+                          className="chain-candidate-group chain-pool-node-group"
+                          onToggle={() => setManualOpenGroups((cur) => ({ ...cur, [group.key]: !open }))}
+                        >
+                          {group.nodes.map((n) => (
+                            <label
+                              key={n.id}
+                              className="chain-pool-node-item"
+                              data-node-id={n.id}
+                              data-disabled={n.enabled === false ? "" : undefined}
+                              title={
+                                n.enabled === false && n.subscription_name
+                                  ? `${n.subscription_name} · ${t("chain.subDisabled")}`
+                                  : n.subscription_name || undefined
+                              }
+                            >
+                              <input
+                                className="chain-pool-select-dot"
+                                type="checkbox"
+                                value={n.id}
+                                checked={nodeIds.has(n.id)}
+                                onChange={() => toggleNode(n.id)}
+                              />
+                              <span>{n.name}</span>
+                              {n.subscription_name && (
+                                <span className="chain-node-sub">{n.subscription_name}</span>
+                              )}
+                            </label>
+                          ))}
+                        </SubscriptionNodeGroup>
+                      );
+                    })}
+                    {filteredNodes.length === 0 && (
+                      <p className="muted" style={{ margin: "6px", fontSize: 12 }}>{t("chain.noMatch")}</p>
+                    )}
                   </div>
                   <p className="muted" style={{ margin: "6px 0 0", fontSize: 12 }}>
                     {t("chain.poolSelectedCount", { n: nodeIds.size })}
@@ -1471,26 +1532,16 @@ function ChainFlowEditor({
                     const open =
                       g.key in manualOpenGroups ? manualOpenGroups[g.key] : hasQuery;
                     return (
-                      <div key={g.key} className="chain-candidate-group">
-                        <button
-                          type="button"
-                          className="chain-candidate-group-head"
-                          aria-expanded={open}
-                          onClick={() =>
-                            setManualOpenGroups((cur) => ({ ...cur, [g.key]: !open }))
-                          }
-                        >
-                          <span className="chain-candidate-group-arrow" aria-hidden="true">
-                            {open ? "▾" : "▸"}
-                          </span>
-                          <span className="chain-candidate-group-name">{g.label}</span>
-                          <span className="chain-candidate-group-count">{g.nodes.length}</span>
-                        </button>
-                        {open &&
-                          g.nodes.map((n) => {
-                            const onCanvas = onCanvasNodeIds.has(n.id);
-                            return (
-                              <div
+                      <SubscriptionNodeGroup
+                        key={g.key}
+                        group={g}
+                        open={open}
+                        onToggle={() => setManualOpenGroups((cur) => ({ ...cur, [g.key]: !open }))}
+                      >
+                        {g.nodes.map((n) => {
+                          const onCanvas = onCanvasNodeIds.has(n.id);
+                          return (
+                            <div
                                 key={n.id}
                                 onPointerDown={(e) =>
                                   onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
@@ -1512,8 +1563,8 @@ function ChainFlowEditor({
                                 <EllipsisTail text={n.name} />
                               </div>
                             );
-                          })}
-                      </div>
+                        })}
+                      </SubscriptionNodeGroup>
                     );
                   })
                 : candidatePools.map((p) => {

@@ -910,6 +910,76 @@ try {
     String(await page.locator(".chain-page .chain-exit-btn.current").count()));
   await clean();
 
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  const poolRow = page.locator(".chain-pool-row").filter({ hasText: "指定节点池 Fixture pool" });
+  await poolRow.getByRole("button", { name: "操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "编辑", exact: true }).click();
+  await page.getByRole("heading", { name: "编辑节点池", exact: true }).waitFor();
+  const groupCounts = await page.locator(".rules-form-modal .chain-candidate-group").evaluateAll(groups => groups.map(group => ({
+    name: group.querySelector(".chain-candidate-group-name")?.textContent,
+    count: group.querySelector(".chain-candidate-group-count")?.textContent,
+    expanded: group.querySelector(".chain-candidate-group-head")?.getAttribute("aria-expanded"),
+  })));
+  checkBatch10("指定节点池按订阅分组并显示组头计数", groupCounts.length === 2 && groupCounts.map(group => group.count).sort().join(",") === "1,2",
+    JSON.stringify({ groups: groupCounts, expectedCounts: ["1", "2"], viewport: "1280x900" }));
+  const firstPoolGroup = page.locator(".rules-form-modal .chain-candidate-group").filter({ hasText: "演示订阅 Subscription-Long-Name-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ" });
+  const firstPoolGroupExists = await firstPoolGroup.count();
+  const firstPoolGroupCount = firstPoolGroupExists ? await firstPoolGroup.locator(".chain-candidate-group-count").textContent() : null;
+  checkBatch10("指定节点池订阅组默认可收起", groupCounts.length > 0 && groupCounts.every(group => group.expanded === "false"),
+    JSON.stringify({ groups: groupCounts, viewport: "1280x900" }));
+  if (firstPoolGroupExists > 0) await firstPoolGroup.locator(".chain-candidate-group-head").click();
+  const expandedGroupRows = firstPoolGroupExists ? await firstPoolGroup.locator(".chain-pool-node-item").count() : -1;
+  checkBatch10("指定节点池分组可展开且计数匹配", String(expandedGroupRows) === firstPoolGroupCount,
+    JSON.stringify({ count: firstPoolGroupCount, rows: expandedGroupRows, viewport: "1280x900" }));
+  if (firstPoolGroupExists > 0) await firstPoolGroup.locator(".chain-candidate-group-head").click();
+  const collapsedRows = firstPoolGroupExists ? await firstPoolGroup.locator(".chain-pool-node-item").count() : -1;
+  checkBatch10("指定节点池订阅组可折叠", groupCounts.length > 0 && collapsedRows === 0,
+    JSON.stringify({ collapsedRows, viewport: "1280x900" }));
+  const poolSearch = page.locator(".rules-form-modal input.search");
+  await poolSearch.fill("Second subscription");
+  const searchGroups = await page.locator(".rules-form-modal .chain-candidate-group").count();
+  const searchRows = await page.locator(".rules-form-modal .chain-pool-node-item").allTextContents();
+  checkBatch10("池内搜索按分组过滤并展开命中", searchGroups === 1 && searchRows.length === 1 && searchRows[0].includes("Second subscription Node"),
+    JSON.stringify({ groups: searchGroups, rows: searchRows, expected: ["Second subscription Node"], viewport: "1280x900" }));
+  const searchChoice = page.locator('.rules-form-modal .chain-pool-node-item input[type="checkbox"]').first();
+  const searchChoiceCount = await page.locator('.rules-form-modal .chain-pool-node-item input[type="checkbox"]').count();
+  const beforeChoice = searchChoiceCount ? await searchChoice.isChecked() : false;
+  const dot = page.locator(".rules-form-modal .chain-pool-select-dot").first();
+  const dotCount = await page.locator(".rules-form-modal .chain-pool-select-dot").count();
+  const dotBefore = dotCount ? await dot.evaluate(element => ({
+    selected: element.checked,
+    background: getComputedStyle(element).backgroundColor,
+    border: getComputedStyle(element).borderColor,
+    radius: getComputedStyle(element).borderRadius,
+  })) : null;
+  if (searchChoiceCount) await page.locator(".rules-form-modal .chain-pool-node-item").first().click();
+  const afterChoice = searchChoiceCount ? await page.locator('.rules-form-modal .chain-pool-node-item input[type="checkbox"]').first().isChecked() : false;
+  if (searchChoiceCount && dotCount) await page.waitForFunction(() => {
+    const input = document.querySelector(".rules-form-modal .chain-pool-select-dot");
+    const sample = document.querySelector(".node-proto-tags code");
+    return input instanceof HTMLInputElement && input.checked && getComputedStyle(input).backgroundColor === getComputedStyle(sample).color;
+  });
+  const dotAfter = dotCount ? await dot.evaluate(element => {
+    const style = getComputedStyle(element);
+    const sample = document.querySelector(".node-proto-tags code");
+    return {
+      background: style.backgroundColor,
+      border: style.borderColor,
+      selected: element.checked,
+      expectedColor: getComputedStyle(sample).color,
+      radius: style.borderRadius,
+    };
+  }) : null;
+  checkBatch10("指定节点圆点可选中并切换", beforeChoice === false && afterChoice === true && dotCount > 0 &&
+    dotBefore?.selected === false && dotAfter?.selected === true && dotAfter?.background === dotAfter?.expectedColor && dotAfter?.border === dotAfter?.expectedColor &&
+    dotBefore?.radius === "50%" && dotAfter?.radius === "50%",
+    JSON.stringify({ before: beforeChoice, after: afterChoice, dotBefore, dotAfter, viewport: "1280x900" }));
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.waitForFunction(() => window.dashboardFixture.poolWrites.length === 1);
+  const savedPoolIds = await page.evaluate(() => window.dashboardFixture.poolWrites[0]);
+  checkBatch10("保存的池内节点集合与选中标记集合一致", JSON.stringify(savedPoolIds) === JSON.stringify({ mode: "explicit", node_ids: ["fixture-node", "fixture-pool-node"] }),
+    JSON.stringify({ actual: savedPoolIds, expected: { mode: "explicit", node_ids: ["fixture-node", "fixture-pool-node"] }, viewport: "1280x900" }));
+
   currentCase = "overview-default-viewport-overflow";
   await open(1280, 900, "zh", "aerospace", "running", "classic", "business", "long");
   const overviewOverflow = await page.locator("main").evaluate(el => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
