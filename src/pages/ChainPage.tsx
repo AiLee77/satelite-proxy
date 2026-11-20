@@ -1016,6 +1016,7 @@ function PoolEditorModal({
                         }
                       >
                         <input
+                          className="chain-pool-select-dot"
                           type="radio"
                           name="chain-pool-subscription"
                           checked={subscriptionId === s.id}
