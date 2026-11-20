@@ -34,6 +34,7 @@ import type {
   NodePool,
   PoolMode,
   ProxyChain,
+  UpdatePoolResult,
 } from "./types";
 import { trackCoreBusy } from "./coreBusy";
 
@@ -1002,12 +1003,19 @@ export function listPools() {
   return invoke<NodePool[]>("list_pools");
 }
 
+/** 池/链编辑器专用全量节点：含未启用订阅的节点，带 `enabled` 标记（后端
+ *  list_chain_nodes）。keyword 池的语义保持只匹配启用订阅节点，前端用
+ *  `chainNodeUniverse.enabledUniverse` 过滤后再做关键词匹配。 */
+export function listChainNodes() {
+  return invoke<ProxyNode[]>("list_chain_nodes");
+}
+
 export function createPool(name: string, mode: PoolMode) {
   return invoke<NodePool>("create_pool", { name, mode });
 }
 
 export function updatePool(id: string, name: string, mode: PoolMode) {
-  return invoke<NodePool>("update_pool", { id, name, mode });
+  return invoke<UpdatePoolResult>("update_pool", { id, name, mode });
 }
 
 export function deletePool(id: string) {
@@ -1022,16 +1030,95 @@ export function listChainUsage() {
   return invoke<Record<string, string[]>>("list_chain_usage");
 }
 
-export function createChain(name: string, hops: ChainHop[]) {
-  return invoke<ProxyChain>("create_chain", { name, hops });
+export function createChain(
+  name: string,
+  hops: ChainHop[],
+  nameManual?: boolean | null,
+) {
+  return invoke<ProxyChain>("create_chain", {
+    name,
+    hops,
+    nameManual: nameManual ?? null,
+  });
 }
 
-export function updateChain(id: string, name: string, hops: ChainHop[]) {
-  return invoke<ProxyChain>("update_chain", { id, name, hops });
+export function updateChain(
+  id: string,
+  name: string,
+  hops: ChainHop[],
+  nameManual?: boolean | null,
+) {
+  return invoke<ProxyChain>("update_chain", {
+    id,
+    name,
+    hops,
+    nameManual: nameManual ?? null,
+  });
+}
+
+/** 自动命名链的跟随改名：仅 name_manual=false 的链会改名；手动名/撞名/
+ *  空名一律不动（返回 null）。后端不重启——生成配置按 id 引用链。 */
+export function renameChainAuto(id: string, name: string) {
+  return invoke<ProxyChain | null>("rename_chain_auto", { id, name });
 }
 
 export function deleteChain(id: string) {
   return invoke<void>("delete_chain", { id });
+}
+
+/** 手动停用当前链出口（F 根因修复）：回落优先级在后端单源维护
+ *  （与 ensure_current_node_valid 同源），运行中是热 PUT 不重启。返回
+ *  `{ nodeId, restartNeeded }`，或 null 表示当前出口本就不是链。 */
+export function deactivateChainExit() {
+  return invoke<{ nodeId: string; restartNeeded: boolean } | null>(
+    "deactivate_chain_exit",
+  );
+}
+
+/** E：后端自动停用了当前链出口（某跳存活条件被破坏）时的事件载荷。
+ *  reason 为后端中文文案（如「第 2 跳的节点不可用…」）。 */
+export interface ChainAutoDeactivated {
+  chainId: string;
+  chainName: string;
+  reason: string;
+}
+
+type ChainAutoDeactivatedListener = (payload: ChainAutoDeactivated) => void;
+const chainAutoDeactivatedListeners = new Set<ChainAutoDeactivatedListener>();
+let chainAutoDeactivatedListening = false;
+
+function ensureChainAutoDeactivatedListener(): void {
+  if (chainAutoDeactivatedListening) return;
+  chainAutoDeactivatedListening = true;
+  void listen<ChainAutoDeactivated>("chain-auto-deactivated", (event) => {
+    const payload = event.payload;
+    if (!payload) return;
+    for (const listener of chainAutoDeactivatedListeners) listener(payload);
+  });
+}
+
+/** 订阅链出口被自动停用事件；返回退订函数（同 onNodeLatencyChanged 模式）。 */
+export function onChainAutoDeactivated(
+  listener: ChainAutoDeactivatedListener,
+): () => void {
+  ensureChainAutoDeactivatedListener();
+  chainAutoDeactivatedListeners.add(listener);
+  return () => {
+    chainAutoDeactivatedListeners.delete(listener);
+  };
+}
+
+/** 导出单条链的独立 mihomo 配置：hop[i≥1].`dialer-proxy` = hop[i-1]，
+ * 复现本应用 detour 接线的另一客户端可运行 YAML。池跳/失效引用/单跳/
+ * mihomo 不支持协议在后端硬报错，不静默降级。 */
+export function exportChainMihomoYaml(id: string) {
+  return invoke<string>("export_chain_mihomo_yaml", { id });
+}
+
+/** 链的可分享文本（「链名: [入口] a → [出口] b」），失效引用以
+ * `[missing: <id8>]` 现形而非空跳。 */
+export function exportChainText(id: string) {
+  return invoke<string>("export_chain_text", { id });
 }
 
 export function diagnoseChain(chainId: string) {
