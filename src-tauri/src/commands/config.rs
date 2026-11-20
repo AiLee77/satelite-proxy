@@ -39,14 +39,63 @@ pub struct ListedNode {
     /// separate store set (`AppStore::favorite_nodes`) so they survive a
     /// subscription refresh that rebuilds every `ProxyNode` instance.
     pub favorite: bool,
+    /// Present ONLY on virtual chain entries (v2rayN-style "chain as
+    /// exit"): the chain's hop count. The frontend must branch on this
+    /// explicit marker, never on the placeholder protocol/server fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_hops: Option<u8>,
 }
 
 /// Strip the verbatim raw body before flattening a node onto the wire —
 /// listings would otherwise carry hundreds of KB of YAML the UI never uses
 /// (generation reads the store directly, not the wire copy).
-fn wire_node(mut node: ProxyNode) -> ProxyNode {
+pub(crate) fn wire_node(mut node: ProxyNode) -> ProxyNode {
     node.raw = None;
     node
+}
+
+/// Virtual chain entries (v2rayN-style "chain as exit"), one per stored
+/// chain: id `chain:<chain_id>`, name = chain name, `chain_hops` set as the
+/// explicit wire marker. The placeholder protocol/server/port fields carry
+/// no meaning and must never be displayed. Surfaced only when the primary
+/// core is sing-box AND the runtime source is generated — chains have no
+/// semantics under Xray/mihomo or custom configs. `query` (lowercased)
+/// matches the chain name only.
+fn chain_virtual_listed_nodes(store: &crate::storage::AppStore, query: &str) -> Vec<ListedNode> {
+    if crate::core::CoreKind::parse(store.settings.core_type.as_str())
+        != crate::core::CoreKind::SingBox
+        || store.settings.runtime_source().is_custom()
+    {
+        return Vec::new();
+    }
+    store
+        .chains
+        .iter()
+        .filter(|chain| query.is_empty() || chain.name.to_lowercase().contains(query))
+        .map(|chain| ListedNode {
+            node: wire_node(ProxyNode {
+                id: crate::domain::chain_virtual_node_id(&chain.id),
+                name: chain.name.clone(),
+                protocol: crate::domain::Protocol::Unknown,
+                server: String::new(),
+                port: 0,
+                tls: None,
+                transport: None,
+                udp: None,
+                config: crate::domain::ProtocolConfig::Unknown,
+                source: None,
+                raw: None,
+                latency_ms: None,
+                latency_at: None,
+            }),
+            subscription_id: String::new(),
+            subscription_name: String::new(),
+            latency_method: None,
+            latency_error: None,
+            favorite: false,
+            chain_hops: Some(chain.hops.len() as u8),
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -674,6 +723,10 @@ pub fn delete_node(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
             Ok((node, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): deleting a hop node breaks the current chain exit —
+    // before the restart decisions below so any queued rebuild already
+    // targets the fallback node.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",
@@ -728,6 +781,9 @@ pub fn delete_nodes(
             Ok((deleted, enabled, store.enabled_nodes().is_empty()))
         })
         .map_err(|e| e.to_string())?;
+    // E (链毕业批): batch delete can hit a hop node of the current chain
+    // exit — same hook as the single delete above.
+    crate::state::auto_deactivate_dead_chain_exit(&state);
     if state.is_core_running() && no_enabled_nodes {
         crate::app_log::info(
             "subscription",
@@ -772,7 +828,7 @@ pub fn list_all_nodes(state: State<'_, AppState>) -> Result<Vec<ListedNode>, Str
             // selects an AnyTLS/TUIC node while Xray is active,
             // select_current_node_serialized performs the safe sing-box
             // handoff instead of making the node disappear from the UI.
-            Ok(store
+            let mut nodes: Vec<ListedNode> = store
                 .ordered_nodes()
                 .into_iter()
                 .filter(|n| enabled.contains(n.subscription_id.as_str()))
@@ -787,8 +843,12 @@ pub fn list_all_nodes(state: State<'_, AppState>) -> Result<Vec<ListedNode>, Str
                     latency_method: n.latency_method.clone(),
                     latency_error: n.latency_error.clone(),
                     favorite: store.favorite_nodes.contains(&n.node.id),
+                    chain_hops: None,
                 })
-                .collect())
+                .collect();
+            // Unsorted listing: chain entries append at the end.
+            nodes.extend(chain_virtual_listed_nodes(store, ""));
+            Ok(nodes)
         })
         .map_err(|e| e.to_string())
 }
@@ -813,19 +873,27 @@ pub fn reorder_nodes(state: State<'_, AppState>, ids: Vec<String>) -> Result<(),
 }
 
 fn sort_listed_nodes(nodes: &mut [ListedNode], sort_mode: Option<&str>) {
+    // G3(c): chain virtual entries always sort before real nodes in every
+    // mode — they carry no latency and would otherwise interleave by name or
+    // sink to the bottom of the latency view. Among chains (and among real
+    // nodes) the pre-existing per-mode order is preserved.
+    let is_chain = |n: &ListedNode| n.chain_hops.is_some();
     match sort_mode {
-        Some("name") => nodes.sort_by_cached_key(|n| n.node.name.to_lowercase()),
+        Some("name") => {
+            nodes.sort_by_cached_key(|n| (!is_chain(n) as u8, n.node.name.to_lowercase()))
+        }
         Some("latency") => nodes.sort_by(|a, b| {
             let score = |n: &ListedNode| match n.node.latency_ms {
                 Some(ms) => (0u8, ms as u64),
                 None if n.node.latency_at.is_some() => (1, 0),
                 None => (2, 0),
             };
-            score(a)
-                .cmp(&score(b))
+            (!is_chain(a) as u8)
+                .cmp(&(!is_chain(b) as u8))
+                .then_with(|| score(a).cmp(&score(b)))
                 .then_with(|| a.node.name.to_lowercase().cmp(&b.node.name.to_lowercase()))
         }),
-        _ => {}
+        _ => nodes.sort_by_key(|n| !is_chain(n)),
     }
 }
 
@@ -875,8 +943,12 @@ pub fn list_nodes_page(
                     latency_method: n.latency_method.clone(),
                     latency_error: n.latency_error.clone(),
                     favorite: store.favorite_nodes.contains(&n.node.id),
+                    chain_hops: None,
                 })
                 .collect();
+            // Chains merge before sorting; sort_listed_nodes then pins them
+            // ahead of real nodes in every mode (G3(c)).
+            nodes.extend(chain_virtual_listed_nodes(store, &query));
             sort_listed_nodes(&mut nodes, sort_mode.as_deref());
             let total = nodes.len();
             let offset = offset.unwrap_or(0).min(total);
@@ -938,8 +1010,10 @@ pub fn list_node_ids(
                     latency_method: n.latency_method.clone(),
                     latency_error: n.latency_error.clone(),
                     favorite: store.favorite_nodes.contains(&n.node.id),
+                    chain_hops: None,
                 })
                 .collect();
+            nodes.extend(chain_virtual_listed_nodes(store, &query));
             sort_listed_nodes(&mut nodes, sort_mode.as_deref());
             Ok(nodes.into_iter().map(|n| n.node.id).collect())
         })
@@ -969,6 +1043,7 @@ fn extract_custom_nodes(
                 // body, never stored in `AppStore.nodes` — there's no store
                 // access here and no id they could match in `favorite_nodes`.
                 favorite: false,
+                chain_hops: None,
             })
             .collect()
     };
@@ -1073,6 +1148,8 @@ pub async fn generate_singbox_config(
 
     let (
         mut nodes,
+        keyword_eligible_count,
+        subscription_members,
         settings,
         rules,
         remote_rule_sets,
@@ -1082,8 +1159,26 @@ pub async fn generate_singbox_config(
         auto_candidates,
     ) = state
         .with_store(|store| {
+            // sing-box builds keep chain/explicit-pool referenced nodes from
+            // disabled subscriptions alive; the mihomo/Xray branches below
+            // share this tuple but have no chain-pool emission, so they keep
+            // the plain enabled list and never see disabled nodes.
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1163,6 +1258,8 @@ pub async fn generate_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1227,10 +1324,37 @@ pub fn get_active_config_path(state: State<'_, AppState>) -> Result<Option<Strin
 pub async fn preview_singbox_config(
     state: State<'_, AppState>,
 ) -> Result<GenerateConfigResult, String> {
-    let (mut nodes, settings, rules, remote_rule_sets, mihomo_configs, dns, chains) = state
+    let (
+        mut nodes,
+        keyword_eligible_count,
+        subscription_members,
+        settings,
+        rules,
+        remote_rule_sets,
+        mihomo_configs,
+        dns,
+        chains,
+    ) = state
         .with_store(|store| {
+            // Same node-source split as `generate_singbox_config`: sing-box
+            // carries chain-referenced nodes from disabled subscriptions,
+            // mihomo/Xray keep the plain enabled list.
+            let (nodes, keyword_count) = if crate::core::CoreKind::parse(&store.settings.core_type)
+                == crate::core::CoreKind::SingBox
+            {
+                (
+                    store.enabled_nodes_with_chain_refs(),
+                    store.enabled_nodes().len(),
+                )
+            } else {
+                let n = store.enabled_nodes();
+                let count = n.len();
+                (n, count)
+            };
             Ok((
-                store.enabled_nodes(),
+                nodes,
+                keyword_count,
+                store.enabled_subscription_member_ids(),
                 store.settings.clone(),
                 store.enabled_rules_sorted(),
                 store.enabled_rule_sets(),
@@ -1304,6 +1428,8 @@ pub async fn preview_singbox_config(
                         &nodes,
                         &opts,
                         settings.close_connections_on_switch,
+                        keyword_eligible_count,
+                        &subscription_members,
                     )
                 }
                 .map_err(|e| e.to_string())?;
@@ -1551,5 +1677,104 @@ mod tests {
         let names: Vec<&str> = nodes.iter().map(|n| n.node.name.as_str()).collect();
         // Wrong shape ("short") and unknown 16-hex prefix stay untouched.
         assert_eq!(names, ["node-short", "node-aabbccddeeff0011"]);
+    }
+
+    #[test]
+    fn chain_virtual_entries_follow_core_and_runtime_gates() {
+        use crate::domain::{ChainHop, ProxyChain};
+        use crate::storage::AppStore;
+        let mut store = AppStore::default();
+        store.chains.push(ProxyChain {
+            id: "chain-ab12".to_string(),
+            name: "美转港".to_string(),
+            hops: vec![
+                ChainHop::Node {
+                    node_id: "n1".to_string(),
+                },
+                ChainHop::Node {
+                    node_id: "n2".to_string(),
+                },
+            ],
+            name_manual: None,
+        });
+        // Default store = sing-box + generated: one virtual entry.
+        let listed = chain_virtual_listed_nodes(&store, "");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].node.id, "chain:chain-ab12");
+        assert_eq!(listed[0].node.name, "美转港");
+        assert_eq!(listed[0].chain_hops, Some(2));
+        assert!(listed[0].node.raw.is_none());
+        assert!(listed[0].node.server.is_empty());
+        // Query matches the chain name.
+        assert_eq!(chain_virtual_listed_nodes(&store, "美转").len(), 1);
+        assert!(chain_virtual_listed_nodes(&store, "欧").is_empty());
+        // Xray / mihomo primary core: chains have no semantics, hidden.
+        store.settings.core_type = "xray".to_string();
+        assert!(chain_virtual_listed_nodes(&store, "").is_empty());
+        store.settings.core_type = "mihomo".to_string();
+        assert!(chain_virtual_listed_nodes(&store, "").is_empty());
+        // Custom runtime source: hidden even under sing-box.
+        store.settings.core_type = "singbox".to_string();
+        store
+            .settings
+            .set_runtime_source(crate::domain::RuntimeSource::Singbox {
+                id: "sub-1".to_string(),
+            });
+        assert!(chain_virtual_listed_nodes(&store, "").is_empty());
+    }
+
+    #[test]
+    fn sort_listed_nodes_pins_chain_entries_first_in_latency_mode() {
+        use crate::domain::{ChainHop, ProxyChain};
+        use crate::storage::AppStore;
+        let real = |id: &str, name: &str, latency_ms: Option<u32>| ListedNode {
+            node: wire_node(ProxyNode {
+                id: id.to_string(),
+                name: name.to_string(),
+                protocol: crate::domain::Protocol::Shadowsocks,
+                server: "s.example.com".to_string(),
+                port: 8388,
+                tls: None,
+                transport: None,
+                udp: None,
+                config: crate::domain::ProtocolConfig::Unknown,
+                source: None,
+                raw: None,
+                latency_ms,
+                latency_at: None,
+            }),
+            subscription_id: "sub1".to_string(),
+            subscription_name: "Sub".to_string(),
+            latency_method: None,
+            latency_error: None,
+            favorite: false,
+            chain_hops: None,
+        };
+        let mut store = AppStore::default();
+        store.chains.push(ProxyChain {
+            id: "chain-ab12".to_string(),
+            name: "美转港".to_string(),
+            hops: vec![
+                ChainHop::Node {
+                    node_id: "n1".to_string(),
+                },
+                ChainHop::Node {
+                    node_id: "n2".to_string(),
+                },
+            ],
+            name_manual: None,
+        });
+        let chain = chain_virtual_listed_nodes(&store, "").remove(0);
+        // Fast real node first, chain entry last: latency mode must still
+        // pull the chain ahead of every real node (it carries no latency).
+        let mut nodes = vec![
+            real("r1", "Alpha", Some(10)),
+            real("r2", "Beta", Some(20)),
+            chain,
+        ];
+        sort_listed_nodes(&mut nodes, Some("latency"));
+        assert_eq!(nodes[0].node.id, "chain:chain-ab12");
+        assert_eq!(nodes[1].node.id, "r1");
+        assert_eq!(nodes[2].node.id, "r2");
     }
 }

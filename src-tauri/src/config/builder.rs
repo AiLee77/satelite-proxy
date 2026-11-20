@@ -11,6 +11,61 @@ use crate::error::{AppError, AppResult};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+/// Node-matching scope for one sing-box build. `all` is the full node list
+/// driving explicit ID references (chain node hops, explicit pool members,
+/// node pins) and outbound emission; `keyword` is the slice every
+/// name-keyword match (pool Keyword mode, Filter/smart rule sets, per-rule
+/// smart pools) scans — always a prefix of `all`.
+///
+/// Runtime builds with chain-referenced nodes collected from disabled
+/// subscriptions (`AppStore::enabled_nodes_with_chain_refs`) restrict
+/// `keyword` to the enabled-subscription prefix while `all` keeps the
+/// collected nodes alive, so keyword pools do NOT silently absorb nodes
+/// from subscriptions the user turned off. Every other builder keeps the
+/// historic `keyword == all` behavior (`PoolScope::full`).
+#[derive(Clone, Copy)]
+pub struct PoolScope<'a> {
+    pub all: &'a [ProxyNode],
+    pub keyword: &'a [ProxyNode],
+    /// subscription_id → member node ids for subscription pools
+    /// (`crate::domain::PoolMode::Subscription`), gathered from the store by
+    /// the build entry points — `ProxyNode` itself carries no subscription
+    /// id, so the builder cannot derive ownership on its own. `None` = this
+    /// context knows no membership (tests / callers without any
+    /// subscription pool); such pools always resolve empty, never error.
+    pub subscription_members: Option<&'a std::collections::BTreeMap<String, Vec<String>>>,
+}
+
+impl<'a> PoolScope<'a> {
+    pub fn full(nodes: &'a [ProxyNode]) -> Self {
+        Self {
+            all: nodes,
+            keyword: nodes,
+            subscription_members: None,
+        }
+    }
+    /// Restrict keyword matches to the first `keyword_count` entries of
+    /// `all` (clamped). `keyword_count == all.len()` equals [`Self::full`].
+    pub fn restricted(all: &'a [ProxyNode], keyword_count: usize) -> Self {
+        Self {
+            all,
+            keyword: &all[..keyword_count.min(all.len())],
+            subscription_members: None,
+        }
+    }
+    /// Attach the subscription membership map. Leaves `all`/`keyword`
+    /// untouched; `None` keeps the empty-resolution default.
+    pub fn with_subscriptions(
+        self,
+        members: Option<&'a std::collections::BTreeMap<String, Vec<String>>>,
+    ) -> Self {
+        Self {
+            subscription_members: members,
+            ..self
+        }
+    }
+}
+
 /// Loopback-only endpoint used for a chain diagnostic's real exit-IP query.
 /// It is emitted only when at least one complete chain resolves.
 pub const DIAG_INBOUND_PORT: u16 = 26486;
@@ -275,8 +330,21 @@ pub fn apply_udp_node_compatibility(nodes: &mut [ProxyNode], allow_insecure: boo
 }
 
 /// Convert nodes into a complete sing-box config document.
-pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResult<BuiltConfig> {
-    build_singbox_config_with_connection_policy(nodes, opts, true)
+pub fn build_singbox_config(
+    nodes: &[ProxyNode],
+    opts: &BuildOptions,
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
+) -> AppResult<BuiltConfig> {
+    build_singbox_config_with_connection_policy(
+        nodes,
+        opts,
+        true,
+        usize::MAX,
+        // No pools are surfaced by this entry — callers pass the store's
+        // resolver map (or an empty one in tests); a subscription pool can
+        // never be reached here unless the caller handed its ids over.
+        subscription_members,
+    )
 }
 
 /// Build a generated config while preserving the user's connection policy.
@@ -286,8 +354,23 @@ pub fn build_singbox_config_with_connection_policy(
     nodes: &[ProxyNode],
     opts: &BuildOptions,
     interrupt_exist_connections: bool,
+    // How many leading entries of `nodes` are keyword-match-eligible —
+    // see `PoolScope`. Pass `usize::MAX` for the historic whole-list
+    // keyword behavior. (Doc comments are not allowed on fn params.)
+    keyword_eligible_count: usize,
+    // Subscription-pool membership (empty when the caller surfaces no
+    // pools at all — this wrapper's popover always passes `&[]` pools).
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> AppResult<BuiltConfig> {
-    build_singbox_config_with_chain_context(nodes, opts, interrupt_exist_connections, &[], &[])
+    build_singbox_config_with_chain_context(
+        nodes,
+        opts,
+        interrupt_exist_connections,
+        &[],
+        &[],
+        keyword_eligible_count,
+        subscription_members,
+    )
 }
 
 /// Generated sing-box config with the optional named node pools/chains used
@@ -299,6 +382,13 @@ pub fn build_singbox_config_with_chain_context(
     interrupt_exist_connections: bool,
     pools: &[crate::domain::NodePool],
     chains: &[crate::domain::ProxyChain],
+    // How many leading entries of `nodes` are keyword-match-eligible (the
+    // enabled-subscription universe — see `PoolScope`).
+    keyword_eligible_count: usize,
+    // subscription_id → enabled member node ids for subscription pools, from
+    // `AppStore::enabled_subscription_member_ids()`. An empty map is legal —
+    // every subscription pool then resolves empty (disabled/missing/absent).
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> AppResult<BuiltConfig> {
     if nodes.is_empty() {
         return Err(AppError::Config(
@@ -317,13 +407,24 @@ pub fn build_singbox_config_with_chain_context(
         );
     }
     let nodes: &[ProxyNode] = &normalized_nodes;
+    // Keyword pools / Filter & smart sets only match the enabled universe
+    // (prefix); explicit ID references (chain hops, explicit pool members)
+    // keep scanning the full list. `usize::MAX` clamps to the whole list
+    // (historic behavior for every caller without chain-ref collection).
+    let scope = PoolScope::restricted(nodes, keyword_eligible_count)
+        .with_subscriptions(Some(subscription_members));
 
     let mut node_outbounds = Vec::new();
     let mut node_endpoints = Vec::new();
     let mut tags = Vec::new();
+    // Selector/urltest members and the default selection stay pinned to the
+    // enabled universe: collected nodes (chain hops / explicit pool members
+    // from disabled subscriptions) get outbounds but are NOT user-selectable
+    // in the main group — mirror of the keyword-pool red line.
+    let mut proxy_member_tags = Vec::new();
     let mut errors = Vec::new();
 
-    for node in nodes {
+    for (node_idx, node) in nodes.iter().enumerate() {
         // Sidecar-delegated node: keep the same tag but emit a plain socks
         // outbound pointing at the node's dedicated sidecar inbound, so
         // selectors / rule pins / smart pools / Clash hot-switch all keep
@@ -337,6 +438,9 @@ pub fn build_singbox_config_with_chain_context(
         {
             let tag = outbound_tag(node);
             tags.push(tag.clone());
+            if node_idx < scope.keyword.len() {
+                proxy_member_tags.push(tag.clone());
+            }
             node_outbounds.push(json!({
                 "type": "socks",
                 "tag": tag,
@@ -347,7 +451,10 @@ pub fn build_singbox_config_with_chain_context(
         }
         match node_to_outbound(node) {
             Ok((tag, outbound, extra_outbounds)) => {
-                tags.push(tag);
+                tags.push(tag.clone());
+                if node_idx < scope.keyword.len() {
+                    proxy_member_tags.push(tag);
+                }
                 // Detour outbounds (e.g. shadowtls) aren't user-selectable
                 // nodes, so they're appended to the outbounds list but kept
                 // out of `tags`. They must precede the outbound that
@@ -378,7 +485,25 @@ pub fn build_singbox_config_with_chain_context(
         crate::app_log::warn("singbox_config", format!("filtered node: {reason}"));
     }
 
-    let selected_tag = resolve_selected_tag(nodes, &tags, opts.current_node_id.as_deref());
+    // Chains build before the main selector: a live chain's exit tag joins
+    // the manual-selection group as a v2rayN-style virtual entry (selected
+    // via `current_node_id = "chain:<id>"`). Emission order is unchanged —
+    // `chain_outbounds` is still appended after the pool selectors below.
+    let (chain_outbounds, chain_entry_tags) = build_chain_outbounds(chains, pools, &scope, &tags);
+    let selected_tag = match opts
+        .current_node_id
+        .as_deref()
+        .and_then(crate::domain::chain_id_from_virtual_node_id)
+    {
+        // A chain whose hops went stale never reaches `chain_entry_tags`,
+        // so an unresolvable virtual selection falls back to the first node
+        // instead of pointing the group at a nonexistent outbound.
+        Some(chain_id) => chain_entry_tags
+            .get(chain_id)
+            .cloned()
+            .unwrap_or_else(|| resolve_selected_tag(nodes, &proxy_member_tags, None)),
+        None => resolve_selected_tag(nodes, &proxy_member_tags, opts.current_node_id.as_deref()),
+    };
     let effective_rules = effective_route_rules(&opts.rule_sets, &opts.rules);
     // Build this before outbounds: direct's modern domain resolver shares the
     // same safe resolver choice. Under TUN that is dns-cn, not the local
@@ -397,7 +522,7 @@ pub fn build_singbox_config_with_chain_context(
         outbounds.push(json!({
             "type": "urltest",
             "tag": "proxy",
-            "outbounds": tags.clone(),
+            "outbounds": proxy_member_tags.clone(),
             "url": url,
             "interval": "1m",
             "tolerance": 50,
@@ -405,7 +530,15 @@ pub fn build_singbox_config_with_chain_context(
             "interrupt_exist_connections": interrupt_exist_connections,
         }));
     } else {
-        let mut selector_outbounds = tags.clone();
+        let mut selector_outbounds = proxy_member_tags.clone();
+        // Virtual chain entries sit after real nodes and before direct —
+        // only chains that resolved (broken chains never reach
+        // `chain_entry_tags`), in the user's chain order.
+        for chain in chains {
+            if let Some(tag) = chain_entry_tags.get(&chain.id) {
+                selector_outbounds.push(tag.clone());
+            }
+        }
         selector_outbounds.push("direct".into());
         outbounds.push(json!({
             "type": "selector",
@@ -418,19 +551,18 @@ pub fn build_singbox_config_with_chain_context(
     // Per-rule smart selectors (keyword-filtered node pools).
     outbounds.extend(build_smart_rule_selectors(
         &effective_rules,
-        nodes,
+        &scope,
         &tags,
         interrupt_exist_connections,
     ));
     // Whole-set keyword pools for Filter-strategy sets (local + remote).
     outbounds.extend(build_filter_set_selectors(
         &opts.rule_sets,
-        nodes,
+        &scope,
         &tags,
         interrupt_exist_connections,
     ));
-    outbounds.extend(build_pool_selectors(pools, nodes, &tags));
-    let (chain_outbounds, chain_entry_tags) = build_chain_outbounds(chains, pools, nodes, &tags);
+    outbounds.extend(build_pool_selectors(pools, &scope, &tags));
     outbounds.extend(chain_outbounds);
     let diag_members: Vec<String> = chains
         .iter()
@@ -502,7 +634,7 @@ pub fn build_singbox_config_with_chain_context(
     // DNS `final` is configured independently on the DNS page (local/domestic/
     // remote) and no longer follows the routing `final`.
     let (rule_set_defs, grouped_route_rules, grouped_dns_rules) =
-        build_grouped_rule_sets_with_chains(&opts.rule_sets, nodes, &tags, &chain_entry_tags);
+        build_grouped_rule_sets_with_chains(&opts.rule_sets, &scope, &tags, &chain_entry_tags);
     if let Some(dns_rules) = built_dns.dns.get_mut("rules").and_then(Value::as_array_mut) {
         for rule in grouped_dns_rules.into_iter().rev() {
             dns_rules.insert(0, rule);
@@ -595,7 +727,7 @@ pub fn build_singbox_config_with_chain_context(
         if opts.rule_sets.is_empty() {
             route_rules.extend(build_route_rules_with_chains(
                 &opts.rules,
-                nodes,
+                &scope,
                 &tags,
                 &chain_entry_tags,
             ));
@@ -831,12 +963,17 @@ fn build_grouped_rule_sets(
     nodes: &[ProxyNode],
     tags: &[String],
 ) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
-    build_grouped_rule_sets_with_chains(sets, nodes, tags, &std::collections::HashMap::new())
+    build_grouped_rule_sets_with_chains(
+        sets,
+        &PoolScope::full(nodes),
+        tags,
+        &std::collections::HashMap::new(),
+    )
 }
 
 fn build_grouped_rule_sets_with_chains(
     sets: &[RuleSet],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
@@ -900,14 +1037,14 @@ fn build_grouped_rule_sets_with_chains(
         if set.remote.is_none() {
             route_local_set_grouped(
                 set,
-                nodes,
+                scope,
                 tags,
                 chain_entry_tags,
                 &mut definitions,
                 &mut route_rules,
             );
         } else {
-            route_rules.push(remote_set_route_rule(set, nodes, tags, chain_entry_tags));
+            route_rules.push(remote_set_route_rule(set, scope, tags, chain_entry_tags));
         }
 
         if skip_dns_rule {
@@ -933,7 +1070,7 @@ fn build_grouped_rule_sets_with_chains(
 /// `build_filter_set_selectors`).
 fn remote_set_route_rule(
     set: &RuleSet,
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> Value {
@@ -943,16 +1080,16 @@ fn remote_set_route_rule(
     let outbound = match set.strategy {
         RuleSetStrategy::Direct => "direct".to_string(),
         RuleSetStrategy::Node if set.is_node_pool() => {
-            let pool = explicit_set_pool_tags(set, nodes, tags);
+            let pool = explicit_set_pool_tags(set, scope.all, tags);
             if pool.is_empty() {
                 "proxy".to_string()
             } else {
                 set.smart_set_outbound_tag()
             }
         }
-        RuleSetStrategy::Node => node_pin_outbound(set.node_id.as_deref(), nodes, tags),
+        RuleSetStrategy::Node => node_pin_outbound(set.node_id.as_deref(), scope.all, tags),
         RuleSetStrategy::Filter => {
-            let pool = filter_pool_tags(&set.smart_include, &set.smart_exclude, nodes, tags);
+            let pool = filter_pool_tags(&set.smart_include, &set.smart_exclude, scope.keyword, tags);
             if pool.is_empty() {
                 "proxy".to_string()
             } else {
@@ -1013,7 +1150,7 @@ pub fn explicit_set_pool_tags(set: &RuleSet, nodes: &[ProxyNode], tags: &[String
 /// with the same id.
 fn build_filter_set_selectors(
     sets: &[RuleSet],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     interrupt_exist_connections: bool,
 ) -> Vec<Value> {
@@ -1027,9 +1164,9 @@ fn build_filter_set_selectors(
             continue;
         }
         let pool = if set.is_node_pool() {
-            explicit_set_pool_tags(set, nodes, tags)
+            explicit_set_pool_tags(set, scope.all, tags)
         } else {
-            filter_pool_tags(&set.smart_include, &set.smart_exclude, nodes, tags)
+            filter_pool_tags(&set.smart_include, &set.smart_exclude, scope.keyword, tags)
         };
         if pool.is_empty() {
             continue;
@@ -1053,7 +1190,7 @@ fn build_filter_set_selectors(
 /// sets clamp to the set-level pin / keyword pool.
 fn route_local_set_grouped(
     set: &RuleSet,
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     chain_entry_tags: &std::collections::HashMap<String, String>,
     definitions: &mut Vec<Value>,
@@ -1064,9 +1201,9 @@ fn route_local_set_grouped(
     // explicit node-pool sets do the same with their hand-picked members.
     let pool_key = if set.strategy == RuleSetStrategy::Filter || set.is_node_pool() {
         let pool = if set.is_node_pool() {
-            explicit_set_pool_tags(set, nodes, tags)
+            explicit_set_pool_tags(set, scope.all, tags)
         } else {
-            filter_pool_tags(&set.smart_include, &set.smart_exclude, nodes, tags)
+            filter_pool_tags(&set.smart_include, &set.smart_exclude, scope.keyword, tags)
         };
         Some(format!(
             "route:{}",
@@ -1104,13 +1241,13 @@ fn route_local_set_grouped(
             } else {
                 format!(
                     "route:{}",
-                    resolve_rule_outbound(&rule, nodes, tags, chain_entry_tags)
+                    resolve_rule_outbound(&rule, scope, tags, chain_entry_tags)
                 )
             }
         } else {
             format!(
                 "route:{}",
-                resolve_rule_outbound(&rule, nodes, tags, chain_entry_tags)
+                resolve_rule_outbound(&rule, scope, tags, chain_entry_tags)
             )
         };
         if let Some((_, rules)) = groups.iter_mut().find(|(group, _)| group == &key) {
@@ -1251,12 +1388,17 @@ pub fn outbound_tag(node: &ProxyNode) -> String {
 }
 
 fn build_route_rules(rules: &[Rule], nodes: &[ProxyNode], tags: &[String]) -> Vec<Value> {
-    build_route_rules_with_chains(rules, nodes, tags, &std::collections::HashMap::new())
+    build_route_rules_with_chains(
+        rules,
+        &PoolScope::full(nodes),
+        tags,
+        &std::collections::HashMap::new(),
+    )
 }
 
 fn build_route_rules_with_chains(
     rules: &[Rule],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> Vec<Value> {
@@ -1274,7 +1416,7 @@ fn build_route_rules_with_chains(
             if matches!(r.rule_type, RuleType::Geoip) {
                 return None;
             }
-            let outbound = resolve_rule_outbound(r, nodes, tags, chain_entry_tags);
+            let outbound = resolve_rule_outbound(r, scope, tags, chain_entry_tags);
             // sing-box matches wire-format QNAME/SNI, which is always ASCII.
             // domain_keyword is a substring match — Punycode-encoding it
             // would break that semantic, so it's left as-is.
@@ -1303,7 +1445,7 @@ fn build_route_rules_with_chains(
 /// Map a rule to an outbound tag. Pinned node missing → fall back to main `proxy` selector.
 fn resolve_rule_outbound(
     r: &Rule,
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> String {
@@ -1314,9 +1456,9 @@ fn resolve_rule_outbound(
         }
         // Stale pins (subscription updated / node removed / sub disabled) fall
         // back to the main `proxy` group inside node_pin_outbound.
-        RuleTarget::Node => node_pin_outbound(r.node_id.as_deref(), nodes, tags),
+        RuleTarget::Node => node_pin_outbound(r.node_id.as_deref(), scope.all, tags),
         RuleTarget::Smart => {
-            let pool = smart_pool_tags(r, nodes, tags);
+            let pool = smart_pool_tags(r, scope.keyword, tags);
             if pool.is_empty() {
                 RuleTarget::Proxy.outbound_tag().into()
             } else {
@@ -1333,12 +1475,15 @@ fn resolve_rule_outbound(
 }
 
 /// Node outbound tags matching a smart rule's include/exclude name filters.
+/// `nodes` is the keyword-match universe (`PoolScope::keyword`) — collected
+/// nodes from disabled subscriptions never show up here.
 pub fn smart_pool_tags(r: &Rule, nodes: &[ProxyNode], tags: &[String]) -> Vec<String> {
     filter_pool_tags(&r.smart_include, &r.smart_exclude, nodes, tags)
 }
 
 /// Node outbound tags matching include/exclude keyword filters, preferring
-/// historically better latency as the selector default.
+/// historically better latency as the selector default. `nodes` is the
+/// keyword-match universe (`PoolScope::keyword`), NOT the full build list.
 pub fn filter_pool_tags(
     include: &[String],
     exclude: &[String],
@@ -1362,22 +1507,41 @@ pub fn filter_pool_tags(
 }
 
 /// Member outbound tags for one [`NodePool`], resolved against the current
-/// node list. `Explicit` keeps its configured order; `Keyword` re-filters
-/// every build (same semantics as `filter_pool_tags`, latency-sorted).
+/// build. `Explicit` keeps its configured order (matches across the FULL
+/// node list including chain-collected nodes from disabled subscriptions);
+/// `Keyword` re-filters every build on the keyword universe only (same
+/// semantics as `filter_pool_tags`, latency-sorted).
 fn pool_member_tags(
     pool: &crate::domain::NodePool,
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
 ) -> Vec<String> {
     use crate::domain::PoolMode;
     match &pool.mode {
         PoolMode::Explicit { node_ids } => node_ids
             .iter()
-            .filter_map(|nid| nodes.iter().find(|n| &n.id == nid))
+            .filter_map(|nid| scope.all.iter().find(|n| &n.id == nid))
             .map(outbound_tag)
             .filter(|tag| tags.iter().any(|t| t == tag))
             .collect(),
-        PoolMode::Keyword { include, exclude } => filter_pool_tags(include, exclude, nodes, tags),
+        PoolMode::Keyword { include, exclude } => {
+            filter_pool_tags(include, exclude, scope.keyword, tags)
+        }
+        // Dynamic whole-subscription membership: the map holds only
+        // enabled-subscription nodes in store order (no latency sorting);
+        // a missing entry (disabled / deleted subscription, or no map at
+        // all) means an EMPTY pool — tolerated everywhere, same as an empty
+        // keyword match.
+        PoolMode::Subscription { subscription_id } => scope
+            .subscription_members
+            .and_then(|members| members.get(subscription_id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|nid| scope.all.iter().find(|n| &n.id == nid))
+            .map(outbound_tag)
+            .filter(|tag| tags.iter().any(|t| t == tag))
+            .collect(),
     }
 }
 
@@ -1387,12 +1551,12 @@ fn pool_member_tags(
 /// resolution time, mirroring the empty-Smart-pool fallback.
 fn build_pool_selectors(
     pools: &[crate::domain::NodePool],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
 ) -> Vec<Value> {
     let mut out = Vec::new();
     for pool in pools {
-        let members = pool_member_tags(pool, nodes, tags);
+        let members = pool_member_tags(pool, scope, tags);
         if members.is_empty() {
             continue;
         }
@@ -1413,11 +1577,12 @@ fn build_pool_selectors(
 /// themselves (to mint per-member clones), not just their tags.
 fn pool_member_nodes<'a>(
     pool: &crate::domain::NodePool,
-    nodes: &'a [ProxyNode],
+    scope: &PoolScope<'a>,
     tags: &[String],
 ) -> Vec<&'a ProxyNode> {
     use crate::domain::PoolMode;
     let live = |n: &ProxyNode| tags.iter().any(|t| t == &outbound_tag(n));
+    let nodes = scope.all;
     match &pool.mode {
         PoolMode::Explicit { node_ids } => node_ids
             .iter()
@@ -1425,7 +1590,8 @@ fn pool_member_nodes<'a>(
             .filter(|n| live(n))
             .collect(),
         PoolMode::Keyword { include, exclude } => {
-            let mut members: Vec<&ProxyNode> = nodes
+            let mut members: Vec<&ProxyNode> = scope
+                .keyword
                 .iter()
                 .filter(|n| crate::domain::name_matches_keywords(&n.name, include, exclude))
                 .filter(|n| live(n))
@@ -1433,6 +1599,18 @@ fn pool_member_nodes<'a>(
             members.sort_by_key(|n| n.latency_ms.unwrap_or(u32::MAX / 4));
             members
         }
+        // Store-ordered members from the subscription map (mirrors
+        // [`pool_member_tags`]'s Subscription arm, including the empty
+        // fallback for a disabled / missing subscription).
+        PoolMode::Subscription { subscription_id } => scope
+            .subscription_members
+            .and_then(|members| members.get(subscription_id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|nid| nodes.iter().find(|n| &n.id == nid))
+            .filter(|n| live(n))
+            .collect(),
     }
 }
 
@@ -1470,11 +1648,88 @@ pub fn chain_hop_outbound_tag(chain: &crate::domain::ProxyChain, hop_index: usiz
 /// target — the previous hop — already precedes it). Returns `None` if any
 /// hop is unreachable (stale id / empty pool / member that can't map to an
 /// outbound) — a chain with a broken link can't route traffic, so the whole
-/// chain is treated as absent rather than silently truncated.
-fn build_chain_outbounds_for(
+/// Select-time mirror of [`build_chain_outbounds_for`]'s liveness semantics:
+/// a chain may only become the current exit when every hop resolves — `Node`
+/// hops must exist in the chain-aware universe AND map to a native outbound
+/// (hop clones are always emitted natively; the sidecar socks rewrite only
+/// applies to the node's main outbound), `Pool` hops must reference an
+/// existing pool with usable members (a hop[0] pool rides the shared
+/// selector so sidecar-delegated members count; pools at i ≥ 1 expand into
+/// native per-member clones, so every member must map natively). Failing
+/// loudly at selection time beats letting the build silently drop the chain
+/// and fall back to the first node.
+pub fn ensure_chain_selectable(
     chain: &crate::domain::ProxyChain,
     pools: &[crate::domain::NodePool],
     nodes: &[ProxyNode],
+    keyword_eligible_count: usize,
+    subscription_members: &std::collections::BTreeMap<String, Vec<String>>,
+    sidecar: Option<&SidecarPlan>,
+) -> AppResult<()> {
+    use crate::domain::ChainHop;
+
+    let scope = PoolScope::restricted(nodes, keyword_eligible_count)
+        .with_subscriptions(Some(subscription_members));
+    // Main-universe tags exactly as the builder's node loop collects them:
+    // sidecar-delegated nodes keep their tag (loopback socks outbound),
+    // everything else must map to a native outbound.
+    let main_tags: Vec<String> = nodes
+        .iter()
+        .filter_map(|node| {
+            if sidecar.and_then(|plan| plan.port_for(&node.id)).is_some() {
+                return Some(outbound_tag(node));
+            }
+            node_to_outbound(node).ok().map(|(tag, _, _)| tag)
+        })
+        .collect();
+    for (i, hop) in chain.hops.iter().enumerate() {
+        match hop {
+            ChainHop::Node { node_id } => {
+                let live = scope
+                    .all
+                    .iter()
+                    .find(|n| &n.id == node_id)
+                    .is_some_and(|n| node_to_outbound(n).is_ok());
+                if !live {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳的节点不可用（已删除或当前内核无法承载该协议/传输）",
+                        chain.name,
+                        i + 1
+                    )));
+                }
+            }
+            ChainHop::Pool { pool_id } => {
+                let Some(pool) = pools.iter().find(|p| &p.id == pool_id) else {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳引用的节点池不存在",
+                        chain.name,
+                        i + 1
+                    )));
+                };
+                let live = if i == 0 {
+                    !pool_member_tags(pool, &scope, &main_tags).is_empty()
+                } else {
+                    let members = pool_member_nodes(pool, &scope, &main_tags);
+                    !members.is_empty() && members.iter().all(|n| node_to_outbound(n).is_ok())
+                };
+                if !live {
+                    return Err(AppError::Config(format!(
+                        "链路「{}」第 {} 跳的节点池「{}」没有可用成员",
+                        chain.name,
+                        i + 1,
+                        pool.name
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_chain_outbounds_for(
+    chain: &crate::domain::ProxyChain,
+    pools: &[crate::domain::NodePool],
+    scope: &PoolScope,
     tags: &[String],
     live_pool_ids: &std::collections::HashSet<&str>,
 ) -> Option<(Vec<Value>, String)> {
@@ -1492,7 +1747,8 @@ fn build_chain_outbounds_for(
                 // exist in the node list — e.g. a node whose protocol config
                 // failed to map (see `node_to_outbound`'s Err path) is present
                 // in `nodes` but absent from `tags`.
-                let live = nodes
+                let live = scope
+                    .all
                     .iter()
                     .find(|n| &n.id == node_id)
                     .is_some_and(|n| tags.iter().any(|t| t == &outbound_tag(n)));
@@ -1532,7 +1788,7 @@ fn build_chain_outbounds_for(
                     .iter()
                     .find(|p| &p.id == pool_id)
                     .expect("liveness checked in the tag pass");
-                let members = pool_member_nodes(pool, nodes, tags);
+                let members = pool_member_nodes(pool, scope, tags);
                 let mut clone_tags = Vec::with_capacity(members.len());
                 for (j, node) in members.into_iter().enumerate() {
                     let clone_tag = format!("{}-m{j}", hop_tags[i]);
@@ -1564,7 +1820,8 @@ fn build_chain_outbounds_for(
             // `build_pool_selectors` and is dialed by the client directly.
             ChainHop::Pool { .. } => {}
             ChainHop::Node { node_id } => {
-                let node = nodes
+                let node = scope
+                    .all
                     .iter()
                     .find(|n| &n.id == node_id)
                     .expect("presence checked above");
@@ -1593,19 +1850,19 @@ fn build_chain_outbounds_for(
 fn build_chain_outbounds(
     chains: &[crate::domain::ProxyChain],
     pools: &[crate::domain::NodePool],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
 ) -> (Vec<Value>, std::collections::HashMap<String, String>) {
     let live_pool_ids: std::collections::HashSet<&str> = pools
         .iter()
-        .filter(|p| !pool_member_tags(p, nodes, tags).is_empty())
+        .filter(|p| !pool_member_tags(p, scope, tags).is_empty())
         .map(|p| p.id.as_str())
         .collect();
     let mut outbounds = Vec::new();
     let mut entry_tags = std::collections::HashMap::new();
     for chain in chains {
         if let Some((chain_outbounds, entry_tag)) =
-            build_chain_outbounds_for(chain, pools, nodes, tags, &live_pool_ids)
+            build_chain_outbounds_for(chain, pools, scope, tags, &live_pool_ids)
         {
             outbounds.extend(chain_outbounds);
             entry_tags.insert(chain.id.clone(), entry_tag);
@@ -1627,7 +1884,7 @@ pub fn smart_pool_nodes(r: &Rule, nodes: &[ProxyNode]) -> Vec<ProxyNode> {
 
 fn build_smart_rule_selectors(
     rules: &[Rule],
-    nodes: &[ProxyNode],
+    scope: &PoolScope,
     tags: &[String],
     interrupt_exist_connections: bool,
 ) -> Vec<Value> {
@@ -1647,7 +1904,7 @@ fn build_smart_rule_selectors(
         if !seen.insert(group.clone()) {
             continue;
         }
-        let pool = smart_pool_tags(r, nodes, tags);
+        let pool = smart_pool_tags(r, scope.keyword, tags);
         if pool.is_empty() {
             continue;
         }
@@ -2481,6 +2738,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let outbounds = built.value["outbounds"].as_array().unwrap();
@@ -2877,7 +3135,12 @@ mod tests {
             json!({ "rule_set": [tag], "action": "route", "outbound": group })
         );
 
-        let selectors = build_filter_set_selectors(&[set.clone()], &nodes, &tags, true);
+        let selectors = build_filter_set_selectors(
+            &[set.clone()],
+            &PoolScope::full(&nodes),
+            &tags,
+            true,
+        );
         assert_eq!(selectors.len(), 1);
         assert_eq!(selectors[0]["tag"], group);
         assert_eq!(selectors[0]["outbounds"], json!(tags));
@@ -2889,7 +3152,9 @@ mod tests {
         empty.smart_include = vec![" nonexistent ".into()];
         let (_, routes, _) = build_grouped_rule_sets(&[empty.clone()], &nodes, &tags);
         assert_eq!(routes[0]["outbound"], "proxy");
-        assert!(build_filter_set_selectors(&[empty], &nodes, &tags, true).is_empty());
+        assert!(
+            build_filter_set_selectors(&[empty], &PoolScope::full(&nodes), &tags, true).is_empty()
+        );
     }
 
     #[test]
@@ -2920,7 +3185,12 @@ mod tests {
             json!({ "rule_set": [tag], "action": "route", "outbound": group })
         );
 
-        let selectors = build_filter_set_selectors(&[set.clone()], &nodes, &tags, true);
+        let selectors = build_filter_set_selectors(
+            &[set.clone()],
+            &PoolScope::full(&nodes),
+            &tags,
+            true,
+        );
         assert_eq!(selectors.len(), 1);
         assert_eq!(selectors[0]["tag"], group);
         assert_eq!(selectors[0]["outbounds"], json!(tags));
@@ -2931,7 +3201,9 @@ mod tests {
         stale.node_ids = vec!["gone-1".into(), "gone-2".into()];
         let (_, routes, _) = build_grouped_rule_sets(&[stale.clone()], &nodes, &tags);
         assert_eq!(routes[0]["outbound"], "proxy");
-        assert!(build_filter_set_selectors(&[stale], &nodes, &tags, true).is_empty());
+        assert!(
+            build_filter_set_selectors(&[stale], &PoolScope::full(&nodes), &tags, true).is_empty()
+        );
     }
 
     #[test]
@@ -3005,7 +3277,7 @@ mod tests {
         // Selector is emitted exactly once, and per-rule smart selectors stay
         // out (effective_route_rules skips Filter sets entirely).
         assert_eq!(
-            build_filter_set_selectors(&[set], &nodes, &tags, true).len(),
+            build_filter_set_selectors(&[set], &PoolScope::full(&nodes), &tags, true).len(),
             1
         );
         let effective = effective_route_rules(&[RuleSet::new_user("本地过滤", vec![])], &[]);
@@ -3072,6 +3344,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -3189,6 +3462,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3239,7 +3513,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let localhost = build_singbox_config(&nodes, &base()).unwrap();
+        let localhost = build_singbox_config(&nodes, &base(), &std::collections::BTreeMap::new()).unwrap();
         assert_eq!(
             localhost.value["inbounds"][0]["listen"], "127.0.0.1",
             "main mixed inbound defaults to loopback"
@@ -3251,6 +3525,7 @@ mod tests {
                 allow_lan: true,
                 ..base()
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(
@@ -3290,7 +3565,7 @@ mod tests {
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
         };
-        let built = build_singbox_config(&nodes, &options).unwrap();
+        let built = build_singbox_config(&nodes, &options, &std::collections::BTreeMap::new()).unwrap();
         assert_eq!(built.outbound_tags.len(), 1);
         assert_eq!(built.selected_tag, "node-aabbccddeeff0011");
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3357,8 +3632,14 @@ mod tests {
         assert_eq!(proxy["type"], "selector");
         assert_eq!(proxy["interrupt_exist_connections"], true);
 
-        let keep_existing =
-            build_singbox_config_with_connection_policy(&nodes, &options, false).unwrap();
+        let keep_existing = build_singbox_config_with_connection_policy(
+            &nodes,
+            &options,
+            false,
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .unwrap();
         let proxy = keep_existing.value["outbounds"]
             .as_array()
             .unwrap()
@@ -3434,6 +3715,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -3479,6 +3761,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let proxy = built.value["outbounds"]
@@ -3505,7 +3788,7 @@ mod tests {
             ("replacement.example.net", RuleTarget::Proxy, "proxy"),
         ] {
             opts.rules = vec![Rule::new(RuleType::Domain, domain.into(), target, 0)];
-            let built = build_singbox_config(&nodes, &opts).unwrap();
+            let built = build_singbox_config(&nodes, &opts, &std::collections::BTreeMap::new()).unwrap();
             let rules = built.value["route"]["rules"].as_array().unwrap();
             let route = rules
                 .iter()
@@ -3551,6 +3834,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
 
@@ -3595,6 +3879,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let inbounds = built.value["inbounds"].as_array().unwrap();
@@ -3665,12 +3950,12 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let v4_only = build_singbox_config(&nodes, &base(false)).unwrap();
+        let v4_only = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let addrs = v4_only.value["inbounds"][2]["address"].as_array().unwrap();
         assert_eq!(addrs.len(), 1, "default must be IPv4-only: {addrs:?}");
         assert_eq!(addrs[0], "172.19.0.1/30");
 
-        let dual_stack = build_singbox_config(&nodes, &base(true)).unwrap();
+        let dual_stack = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let addrs = dual_stack.value["inbounds"][2]["address"]
             .as_array()
             .unwrap();
@@ -3714,6 +3999,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["experimental"]["cache_file"]["enabled"], true);
@@ -3755,7 +4041,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let off = build_singbox_config(&nodes, &base(false)).unwrap();
+        let off = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let rules = off.value["route"]["rules"].as_array().unwrap();
         assert!(
             !rules
@@ -3764,7 +4050,7 @@ mod tests {
             "block_quic off must not add a quic rule"
         );
 
-        let on = build_singbox_config(&nodes, &base(true)).unwrap();
+        let on = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let rules = on.value["route"]["rules"].as_array().unwrap();
         let sniff_idx = rules
             .iter()
@@ -3825,7 +4111,7 @@ mod tests {
             tls_fragment_xray: false,
         };
 
-        let off = build_singbox_config(&nodes, &base(false)).unwrap();
+        let off = build_singbox_config(&nodes, &base(false), &std::collections::BTreeMap::new()).unwrap();
         let rules = off.value["route"]["rules"].as_array().unwrap();
         assert!(
             !rules
@@ -3845,7 +4131,7 @@ mod tests {
 
         let mut ipv4_only = base(false);
         ipv4_only.direct_ip_strategy = DirectIpStrategy::Ipv4Only;
-        let built = build_singbox_config(&nodes, &ipv4_only).unwrap();
+        let built = build_singbox_config(&nodes, &ipv4_only, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -3857,7 +4143,7 @@ mod tests {
 
         let mut system = base(false);
         system.direct_ip_strategy = DirectIpStrategy::System;
-        let built = build_singbox_config(&nodes, &system).unwrap();
+        let built = build_singbox_config(&nodes, &system, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -3868,7 +4154,7 @@ mod tests {
 
         let mut tun = base(false);
         tun.tun_enabled = true;
-        let built = build_singbox_config(&nodes, &tun).unwrap();
+        let built = build_singbox_config(&nodes, &tun, &std::collections::BTreeMap::new()).unwrap();
         let direct = built.value["outbounds"]
             .as_array()
             .unwrap()
@@ -3878,7 +4164,7 @@ mod tests {
         assert_eq!(direct["domain_resolver"]["server"], json!("dns-cn"));
         assert_eq!(direct["domain_resolver"]["strategy"], json!("prefer_ipv4"));
 
-        let on = build_singbox_config(&nodes, &base(true)).unwrap();
+        let on = build_singbox_config(&nodes, &base(true), &std::collections::BTreeMap::new()).unwrap();
         let rules = on.value["route"]["rules"].as_array().unwrap();
         let set_idx = rules
             .iter()
@@ -3906,7 +4192,7 @@ mod tests {
         // Global mode proxies everything by choice: no bypass there.
         let mut global = base(true);
         global.outbound_mode = OutboundMode::Global;
-        let built = build_singbox_config(&nodes, &global).unwrap();
+        let built = build_singbox_config(&nodes, &global, &std::collections::BTreeMap::new()).unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
         assert!(!rules
             .iter()
@@ -3985,6 +4271,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("no nodes"));
@@ -4023,6 +4310,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["route"]["final"], "direct");
@@ -4062,6 +4350,7 @@ mod tests {
                     tls_fragment_singbox: false,
                     tls_fragment_xray: false,
                 },
+                &std::collections::BTreeMap::new(),
             )
             .unwrap();
             assert_eq!(built.value["route"]["final"], expect, "rf={rf}");
@@ -4107,6 +4396,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(built.value["route"]["final"], "proxy");
@@ -4158,6 +4448,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
@@ -4210,6 +4501,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
@@ -4266,6 +4558,7 @@ mod tests {
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
             },
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let group = rule.smart_outbound_tag();
@@ -4383,9 +4676,16 @@ mod tests {
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
         };
-        let built =
-            build_singbox_config_with_chain_context(&nodes, &options, true, &[], &[chain.clone()])
-                .expect("chain config");
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain.clone()],
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("chain config");
         let h0 = chain_hop_outbound_tag(&chain, 0);
         let h1 = chain_hop_outbound_tag(&chain, 1);
         let outbounds = built.value["outbounds"].as_array().expect("outbounds");
@@ -4407,6 +4707,483 @@ mod tests {
             .find(|item| item.get("domain_suffix") == Some(&json!(["example.com"])))
             .expect("chain route");
         assert_eq!(route["outbound"], json!(h1));
+    }
+
+    #[test]
+    fn chain_refs_survive_mix_off_and_keyword_pools_stay_enabled_only() {
+        use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+
+        // MIX off projected at the builder: `nodes` carries the enabled
+        // subscription (exit_b) in the prefix plus collected nodes held by
+        // chain hops / explicit pool members from a disabled subscription
+        // (hop_a). `keyword_eligible_count = 1` marks only the prefix as
+        // keyword-match universe, so keyword pools cannot silently re-admit
+        // disabled nodes even though their names would match.
+        let mut enabled_exit = sample_ss();
+        enabled_exit.id = "exit-b".into();
+        enabled_exit.name = "出口 B".into();
+        enabled_exit.server = "exit-b.example.test".into();
+        let mut collected_hop = sample_ss();
+        collected_hop.id = "hop-a".into();
+        collected_hop.name = "日本 前置".into();
+        collected_hop.server = "hop-a.example.test".into();
+        let nodes = vec![enabled_exit.clone(), collected_hop.clone()];
+
+        let chain = ProxyChain::new(
+            "A → B",
+            vec![
+                ChainHop::Node {
+                    node_id: collected_hop.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: enabled_exit.id.clone(),
+                },
+            ],
+        );
+        let explicit_pool = NodePool::new(
+            "Explicit",
+            PoolMode::Explicit {
+                node_ids: vec![collected_hop.id.clone()],
+            },
+        );
+        // Two keyword pools to prove the red line from both sides:
+        // `Keyword-JP` matches only the collected disabled-subscription node's
+        // name → with the enabled-only universe it has zero live members and
+        // no selector is emitted at all; `Keyword-Exit` matches the enabled
+        // node → its selector exists and contains ONLY the enabled node.
+        let keyword_pool_jp = NodePool::new(
+            "Keyword-JP",
+            PoolMode::Keyword {
+                include: vec!["日本".into()],
+                exclude: vec![],
+            },
+        );
+        let keyword_pool_exit = NodePool::new(
+            "Keyword-Exit",
+            PoolMode::Keyword {
+                include: vec!["出口".into()],
+                exclude: vec![],
+            },
+        );
+        let pools = vec![
+            explicit_pool.clone(),
+            keyword_pool_jp.clone(),
+            keyword_pool_exit.clone(),
+        ];
+
+        let options = BuildOptions {
+            mixed_port: 2080,
+            allow_lan: false,
+            api_port: 19090,
+            extra_inbounds: vec![],
+            api_secret: "test".into(),
+            current_node_id: None,
+            log_level: "info".into(),
+            rules: vec![],
+            rule_sets: vec![],
+            tun_enabled: false,
+            tun_stack: "mixed".into(),
+            dns: DnsSettings::default(),
+            outbound_mode: OutboundMode::Rule,
+            route_final: "proxy".into(),
+            auto_select: crate::domain::AutoSelectMode::Off,
+            probe_url: "https://www.gstatic.com/generate_204".into(),
+            find_process: true,
+            tun_ipv6: false,
+            block_quic: false,
+            bypass_lan: false,
+            direct_ip_strategy: DirectIpStrategy::PreferIpv4,
+            tun_interface_name: None,
+            mihomo_configs: Vec::new(),
+            sidecar: None,
+            tls_fragment_singbox: false,
+            tls_fragment_xray: false,
+        };
+
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &pools,
+            &[chain.clone()],
+            // Only the enabled prefix is keyword-eligible.
+            1,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("chain config with collected nodes");
+
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let tags: Vec<&str> = outbounds
+            .iter()
+            .filter_map(|ob| ob["tag"].as_str())
+            .collect();
+
+        // 1. Chain outbounds for both hops exist and route hop1 → hop0:
+        //    the chain keeps working with its disabled-subscription prefix.
+        let h0 = chain_hop_outbound_tag(&chain, 0);
+        let h1 = chain_hop_outbound_tag(&chain, 1);
+        assert!(tags.contains(&h0.as_str()), "collected entry hop missing");
+        assert!(tags.contains(&h1.as_str()), "enabled exit hop missing");
+        let exit_outbound = outbounds
+            .iter()
+            .find(|ob| ob["tag"].as_str() == Some(h1.as_str()))
+            .expect("exit hop outbound");
+        assert_eq!(exit_outbound["detour"], json!(h0));
+
+        // 2. Explicit pool members can be collected from the disabled
+        //    subscription: the pool selector carries the collected node.
+        let explicit_tag = crate::domain::pool_outbound_tag_for_id(&explicit_pool.id);
+        let explicit_selector = outbounds
+            .iter()
+            .find(|ob| ob["tag"].as_str() == Some(explicit_tag.as_str()))
+            .expect("explicit pool selector emitted");
+        assert_eq!(
+            explicit_selector["outbounds"],
+            json!([format!("node-{}", collected_hop.id)])
+        );
+
+        // 3. Red line: keyword pools only match the enabled prefix. The pool
+        //    whose only would-be member is the collected disabled-subscription
+        //    node is dropped entirely (no empty selectors in sing-box), and
+        //    the pool matching the enabled node does NOT admit the collected
+        //    node even though both share the keyword universe data.
+        assert!(
+            !tags.contains(&crate::domain::pool_outbound_tag_for_id(&keyword_pool_jp.id).as_str()),
+            "keyword pool matching only disabled nodes must not emit a selector"
+        );
+        let exit_keyword_tag = crate::domain::pool_outbound_tag_for_id(&keyword_pool_exit.id);
+        let exit_keyword_selector = outbounds
+            .iter()
+            .find(|ob| ob["tag"].as_str() == Some(exit_keyword_tag.as_str()))
+            .expect("enabled-matching keyword pool selector emitted");
+        assert_eq!(
+            exit_keyword_selector["outbounds"],
+            json!([format!("node-{}", enabled_exit.id)]),
+            "keyword pool must contain enabled nodes only"
+        );
+    }
+
+    // ---- Virtual chain entries (chain:<id> selection) ---------------------
+
+    #[test]
+    fn chain_exit_joins_manual_selector_and_chain_selection_resolves() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.name = "SS-US".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+        let chain = ProxyChain::new(
+            "HK → US",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain.clone()],
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("chain config");
+        let exit_tag = chain_hop_outbound_tag(&chain, 1);
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy selector");
+        assert_eq!(proxy["type"], json!("selector"));
+        assert_eq!(proxy["default"], json!(exit_tag));
+        // Real nodes first, then virtual chain exits in chain order, direct
+        // last — mirrors the node listing the user picks from.
+        assert_eq!(
+            proxy["outbounds"],
+            json!([
+                outbound_tag(&entry),
+                outbound_tag(&exit),
+                exit_tag,
+                "direct"
+            ])
+        );
+    }
+
+    #[test]
+    fn chain_exit_stays_out_of_kernel_urltest() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+        let chain = ProxyChain::new(
+            "HK → US",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.auto_select = crate::domain::AutoSelectMode::Kernel;
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain.clone()],
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("chain config");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy group");
+        // Kernel auto-select owns the exit — virtual chain entries never join
+        // the urltest group (a chain must only be picked explicitly).
+        assert_eq!(proxy["type"], json!("urltest"));
+        assert_eq!(
+            proxy["outbounds"],
+            json!([outbound_tag(&entry), outbound_tag(&exit)])
+        );
+    }
+
+    #[test]
+    fn broken_chain_is_not_selectable_and_falls_back_to_first_node() {
+        use crate::domain::{chain_virtual_node_id, ChainHop, ProxyChain};
+
+        let entry = sample_ss();
+        let nodes = vec![entry.clone()];
+        let chain = ProxyChain::new(
+            "stale chain",
+            vec![
+                ChainHop::Node {
+                    node_id: "missing-a".into(),
+                },
+                ChainHop::Node {
+                    node_id: "missing-b".into(),
+                },
+            ],
+        );
+        let mut options = sidecar_opts(None);
+        options.current_node_id = Some(chain_virtual_node_id(&chain.id));
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &options,
+            true,
+            &[],
+            &[chain],
+            usize::MAX,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("config with stale chain");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let proxy = outbounds
+            .iter()
+            .find(|ob| ob["tag"] == "proxy")
+            .expect("proxy selector");
+        assert_eq!(proxy["outbounds"], json!([outbound_tag(&entry), "direct"]));
+        assert_eq!(proxy["default"], json!(outbound_tag(&entry)));
+    }
+
+    #[test]
+    fn ensure_chain_selectable_mirrors_build_liveness() {
+        use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+
+        let entry = sample_ss();
+        let mut exit = sample_ss();
+        exit.id = "1122334455667788".into();
+        exit.server = "us.example.com".into();
+        let nodes = vec![entry.clone(), exit.clone()];
+
+        // Live two-hop chain passes.
+        let chain = ProxyChain::new(
+            "live",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: exit.id.clone(),
+                },
+            ],
+        );
+        ensure_chain_selectable(&chain, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
+            .expect("live chain selectable");
+
+        // Stale node hop → rejected, naming the hop position.
+        let stale = ProxyChain::new(
+            "stale",
+            vec![
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: "gone".into(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&stale, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
+            .expect_err("stale hop rejected");
+        assert!(err.to_string().contains("第 2 跳"), "{err}");
+
+        // Keyword pool with zero matches → rejected as a pool without members.
+        let pool = NodePool::new(
+            "empty",
+            PoolMode::Keyword {
+                include: vec!["不存在".into()],
+                exclude: vec![],
+            },
+        );
+        let pool_chain = ProxyChain::new(
+            "pool chain",
+            vec![
+                ChainHop::Pool {
+                    pool_id: pool.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&pool_chain, &[pool], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
+            .expect_err("empty pool rejected");
+        assert!(err.to_string().contains("没有可用成员"), "{err}");
+
+        // Missing pool id → rejected.
+        let ghost = ProxyChain::new(
+            "ghost",
+            vec![
+                ChainHop::Pool {
+                    pool_id: "pool-gone".into(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err = ensure_chain_selectable(&ghost, &[], &nodes, usize::MAX, &std::collections::BTreeMap::new(), None)
+            .expect_err("missing pool rejected");
+        assert!(err.to_string().contains("节点池不存在"), "{err}");
+    }
+
+    // ---- Subscription pools ---------------------------------------------
+
+    #[test]
+    fn subscription_pool_members_follow_enabled_universe_in_store_order() {
+        use crate::domain::PoolMode;
+        use std::collections::BTreeMap;
+        let n1 = sample_node("n1", "香港 01");
+        let n2 = sample_node("n2", "美国 02"); // belongs to a disabled sub
+        let n3 = sample_node("n3", "香港 03");
+        let nodes = vec![n1.clone(), n2.clone(), n3.clone()];
+        let pool = crate::domain::NodePool::new(
+            "机场 A 整组",
+            PoolMode::Subscription {
+                subscription_id: "sub-a".into(),
+            },
+        );
+        // The map is the store-side truth: enabled members in store order;
+        // a node from a disabled subscription simply never appears in it.
+        let mut members = BTreeMap::new();
+        members.insert(
+            "sub-a".to_string(),
+            vec!["n1".to_string(), "n3".to_string()],
+        );
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &sidecar_opts(None),
+            true,
+            &[pool.clone()],
+            &[],
+            usize::MAX,
+            &members,
+        )
+        .expect("build with subscription pool");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let pool_tag = crate::domain::pool_outbound_tag_for_id(&pool.id);
+        let selector = outbounds
+            .iter()
+            .find(|o| o["tag"] == pool_tag.as_str())
+            .expect("subscription pool selector exists");
+        let selector_members = selector["outbounds"].as_array().expect("members");
+        assert_eq!(
+            selector_members
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![outbound_tag(&n1), outbound_tag(&n3)],
+            "store order preserved, disabled-subscription nodes never join"
+        );
+    }
+
+    #[test]
+    fn subscription_pool_resolves_empty_when_missing_or_disabled() {
+        use crate::domain::{ChainHop, PoolMode, ProxyChain};
+        use std::collections::BTreeMap;
+        let entry = sample_node("entry", "入口");
+        let nodes = vec![entry.clone()];
+        let pool = crate::domain::NodePool::new(
+            "悬空订阅池",
+            PoolMode::Subscription {
+                subscription_id: "sub-deleted".into(),
+            },
+        );
+        // No map entry (deleted / disabled subscription): the pool resolves
+        // empty — the build still succeeds, the selector is skipped, and
+        // selecting a chain whose hop resolves empty reports exactly the
+        // same "no live members" as an empty keyword pool.
+        let empty: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let built = build_singbox_config_with_chain_context(
+            &nodes,
+            &sidecar_opts(None),
+            true,
+            &[pool.clone()],
+            &[],
+            usize::MAX,
+            &empty,
+        )
+        .expect("empty subscription pool must not fail the build");
+        let outbounds = built.value["outbounds"].as_array().expect("outbounds");
+        let pool_tag = crate::domain::pool_outbound_tag_for_id(&pool.id);
+        assert!(
+            !outbounds.iter().any(|o| o["tag"] == pool_tag.as_str()),
+            "empty pool emits no selector (chain rules fall back to direct)"
+        );
+
+        let chain = ProxyChain::new(
+            "订阅池链",
+            vec![
+                ChainHop::Pool {
+                    pool_id: pool.id.clone(),
+                },
+                ChainHop::Node {
+                    node_id: entry.id.clone(),
+                },
+            ],
+        );
+        let err =
+            ensure_chain_selectable(&chain, &[pool], &nodes, usize::MAX, &BTreeMap::new(), None)
+                .expect_err("empty subscription pool chain rejected");
+        assert!(err.to_string().contains("没有可用成员"), "{err}");
     }
 
     // ---- Xray sidecar delegation -----------------------------------------
@@ -4452,7 +5229,7 @@ mod tests {
     #[test]
     fn sudoku_delegation_preserves_tag_and_never_builds_a_fake_native_outbound() {
         let node = crate::subscription::parse_clash_yaml("proxies:\n- {name: sudoku, type: sudoku, server: example.com, port: 443, key: test-key}").unwrap().nodes.remove(0);
-        assert!(build_singbox_config(&[node.clone()], &sidecar_opts(None)).is_err());
+        assert!(build_singbox_config(&[node.clone()], &sidecar_opts(None), &std::collections::BTreeMap::new()).is_err());
         let mut settings = crate::domain::AppSettings::default();
         settings.multi_core_enabled = true;
         settings.protocol_cores = vec![crate::domain::ProtocolCoreItem {
@@ -4463,7 +5240,7 @@ mod tests {
             .expect("Sudoku delegation");
         assert_eq!(plan.ports[0].kind, crate::core::CoreKind::Mihomo);
         let built =
-            build_singbox_config(&[node.clone()], &sidecar_opts(Some(plan.clone()))).unwrap();
+            build_singbox_config(&[node.clone()], &sidecar_opts(Some(plan.clone())), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&node);
         let outbound = built.value["outbounds"]
             .as_array()
@@ -4490,7 +5267,7 @@ mod tests {
                 kind: crate::core::CoreKind::Xray,
             }],
         };
-        let built = build_singbox_config(&nodes, &sidecar_opts(Some(plan))).unwrap();
+        let built = build_singbox_config(&nodes, &sidecar_opts(Some(plan)), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&nodes[1]);
         let outbounds = built.value["outbounds"].as_array().unwrap();
 
@@ -4525,7 +5302,7 @@ mod tests {
     #[test]
     fn sidecar_plan_none_keeps_everything_native() {
         let nodes = vec![sample_node("n1", "A")];
-        let built = build_singbox_config(&nodes, &sidecar_opts(None)).unwrap();
+        let built = build_singbox_config(&nodes, &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap();
         let tag = outbound_tag(&nodes[0]);
         let out = built.value["outbounds"]
             .as_array()
@@ -4549,7 +5326,7 @@ mod tests {
         };
         let mut opts = sidecar_opts(Some(plan));
         opts.tun_enabled = true;
-        let built = build_singbox_config(&[node.clone()], &opts).unwrap();
+        let built = build_singbox_config(&[node.clone()], &opts, &std::collections::BTreeMap::new()).unwrap();
         let rules = built.value["route"]["rules"].as_array().unwrap();
         assert_eq!(rules[1]["process_name"], json!(["xray", "xray.exe"]));
         assert_eq!(rules[1]["outbound"], "direct");
@@ -4565,7 +5342,7 @@ mod tests {
         assert!(diagnostic > 2 && diagnostic < subscription);
 
         opts.tun_enabled = false;
-        let without_tun = build_singbox_config(&[node], &opts).unwrap();
+        let without_tun = build_singbox_config(&[node], &opts, &std::collections::BTreeMap::new()).unwrap();
         assert!(without_tun.value["route"]["rules"]
             .as_array()
             .unwrap()
@@ -4584,7 +5361,7 @@ mod tests {
             mode: None,
             extra: None,
         });
-        let err = build_singbox_config(&[n], &sidecar_opts(None)).unwrap_err();
+        let err = build_singbox_config(&[n], &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap_err();
         assert!(err.to_string().contains("xhttp"), "got: {err}");
     }
 
@@ -4611,7 +5388,7 @@ mod tests {
     fn masque_node_never_generates_a_native_singbox_outbound() {
         // Same contract as xhttp: sing-box has no masque outbound at all —
         // reject with the mihomo delegation hint, never a silent fallback.
-        let err = build_singbox_config(&[sample_masque("m1")], &sidecar_opts(None)).unwrap_err();
+        let err = build_singbox_config(&[sample_masque("m1")], &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("masque"), "got: {msg}");
         assert!(msg.contains("mihomo"), "delegation hint: {msg}");
@@ -4632,6 +5409,7 @@ mod tests {
         let built = build_singbox_config(
             &[sample_node("n1", "A"), sample_masque("m1")],
             &sidecar_opts(Some(plan)),
+            &std::collections::BTreeMap::new(),
         )
         .unwrap();
         let tag = "node-m1";
@@ -4745,7 +5523,7 @@ mod tests {
             reality_short_id: None,
         });
         let nodes = [tls_node, sample_ss()];
-        let off = build_singbox_config(&nodes, &sidecar_opts(None)).unwrap();
+        let off = build_singbox_config(&nodes, &sidecar_opts(None), &std::collections::BTreeMap::new()).unwrap();
         assert!(off.value["outbounds"]
             .as_array()
             .unwrap()
@@ -4754,7 +5532,7 @@ mod tests {
 
         let mut opts = sidecar_opts(None);
         opts.tls_fragment_singbox = true;
-        let on = build_singbox_config(&nodes, &opts).unwrap();
+        let on = build_singbox_config(&nodes, &opts, &std::collections::BTreeMap::new()).unwrap();
         let marked: Vec<_> = on.value["outbounds"]
             .as_array()
             .unwrap()
