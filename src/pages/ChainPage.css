@@ -177,18 +177,17 @@
 .chain-pool-node-item .chain-pool-select-dot {
   flex: none;
   appearance: none;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   margin: 0;
-  border: 1px solid var(--border-strong);
+  border: none;
   border-radius: 50%;
-  background: transparent;
+  background: color-mix(in srgb, var(--muted) 65%, transparent);
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition: background-color 0.12s ease;
 }
 
 .chain-pool-node-item .chain-pool-select-dot:checked {
-  border-color: var(--primary);
   background: var(--primary);
 }
 
