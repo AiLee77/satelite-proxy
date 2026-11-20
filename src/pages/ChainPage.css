@@ -177,10 +177,10 @@
 .chain-pool-node-item .chain-pool-select-dot {
   flex: none;
   appearance: none;
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   margin: 0;
-  border: 1.5px solid var(--border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
