@@ -16,6 +16,16 @@ pub enum PoolMode {
         #[serde(default)]
         exclude: Vec<String>,
     },
+    /// Dynamic whole-subscription pool: the members are exactly the nodes of
+    /// the referenced subscription that are currently enabled — re-evaluated
+    /// on every build, in store order (no latency sorting). A disabled or
+    /// deleted subscription resolves to an EMPTY pool: creating/saving such
+    /// a pool stays legal (validation only requires a non-empty id), build
+    /// skips its selector and chain rules fall back to `direct` (same empty-
+    /// pool path as keyword pools), and selecting a chain whose hop resolves
+    /// empty reports "no live members". Subscriptions that produce nodes
+    /// (`contributes_nodes`) qualify — anything but custom profiles.
+    Subscription { subscription_id: String },
 }
 
 /// Named, reusable node pool. Referenced by [`ProxyChain`] hops and (later)
