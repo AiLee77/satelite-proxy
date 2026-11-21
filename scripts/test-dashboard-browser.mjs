@@ -516,17 +516,18 @@ try {
   await countryRefresh();
   await freshServicesOnResume();
   const sideButtons = page.locator('.side-nav-items .side-nav-item');
-  const selectedIcon = await sideButtons.nth(0).locator('svg path').getAttribute('d');
+  const iconMarkup = await sideButtons.locator('svg').evaluateAll(icons => icons.map(icon => icon.innerHTML));
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await sideButtons.nth(1).click();
   await page.waitForFunction(() => document.querySelector('.side-nav-indicator')?.getAnimations().some(animation => animation.playState === 'running'));
-  assert.equal(await sideButtons.nth(1).locator('svg path').getAttribute('fill'), 'currentColor', '选中图标切为实心');
-  assert.equal(await sideButtons.nth(0).locator('svg path').getAttribute('fill'), 'none', '未选中图标回到线框');
-  assert.notEqual(await sideButtons.nth(0).locator('svg path').getAttribute('d'), selectedIcon, '图标形态切换而非只换色');
+  assert.equal(await sideButtons.nth(1).locator('svg').getAttribute('fill'), 'none', '激活图标保持同图描边');
+  assert.equal(await sideButtons.nth(0).locator('svg').getAttribute('fill'), 'none', '普通图标同样保持描边');
+  assert.deepEqual(await sideButtons.locator('svg').evaluateAll(icons => icons.map(icon => icon.innerHTML)), iconMarkup, '普通/激活切换不改变 Lucide 图形');
   for (let index = 2; index < 6; index++) {
     await sideButtons.nth(index).click();
-    assert.equal(await sideButtons.nth(index).locator('svg path').getAttribute('fill'), 'currentColor');
-    assert.equal(await sideButtons.nth(index - 1).locator('svg path').getAttribute('fill'), 'none');
+    assert.equal(await sideButtons.nth(index).locator('svg').getAttribute('fill'), 'none');
+    assert.equal(await sideButtons.nth(index).getAttribute('aria-current'), 'page');
+    assert.equal(await sideButtons.nth(index - 1).getAttribute('aria-current'), null);
   }
   await page.evaluate(() => window.dashboardFixture.setMotion('reduced'));
   await sideButtons.nth(0).click();
