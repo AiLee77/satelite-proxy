@@ -202,16 +202,16 @@
   background: var(--primary);
 }
 
-.chain-pool-node-item:focus-within .chain-pool-select-dot {
-  outline: 2px solid var(--primary-border);
-  outline-offset: 2px;
-}
-
 /* Chain page scope only: keep non-chain target-node badges unchanged. */
 .chain-page .chain-pool-row .pill.target-node {
   background: var(--primary-muted);
   border-color: var(--primary-border);
   color: var(--primary);
+}
+
+.chain-pool-node-item:focus-within .chain-pool-select-dot {
+  outline: none;
+  outline-offset: 0;
 }
 
 .chain-pool-node-item:last-child {
