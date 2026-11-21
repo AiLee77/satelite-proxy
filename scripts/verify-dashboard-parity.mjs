@@ -50,6 +50,30 @@ export async function runDashboardParity() {
     await page.waitForFunction(() => window.dashboardFixture.status.capture_mode === "off");
     assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
     checks++;
+    await page.waitForFunction(() => document.querySelector(".dashboard-probe-card")?.getAttribute("aria-busy") === "false");
+    const beforeNetwork = await page.evaluate(() => ({
+      ip: window.dashboardFixture.exitIpReads,
+      latency: window.dashboardFixture.commands.filter(c => c.command === "test_nodes_latency").length,
+    }));
+    await page.evaluate(() => { window.dashboardFixture.holdExitIp = true; });
+    const probe = page.getByRole("button", { name: "网络探测", exact: true });
+    await probe.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => window.dashboardFixture.releaseExitIp !== null);
+    assert.equal(await probe.getAttribute("aria-busy"), "true");
+    await page.keyboard.press("Enter");
+    const duringNetwork = await page.evaluate(() => ({
+      ip: window.dashboardFixture.exitIpReads,
+      latency: window.dashboardFixture.commands.filter(c => c.command === "test_nodes_latency").length,
+    }));
+    assert.deepEqual(duringNetwork, { ip: beforeNetwork.ip + 1, latency: beforeNetwork.latency + 1 });
+    await page.evaluate(() => {
+      window.dashboardFixture.holdExitIp = false;
+      window.dashboardFixture.releaseExitIp();
+    });
+    await page.waitForFunction(() => document.querySelector(".dashboard-probe-card")?.getAttribute("aria-busy") === "false");
+    assert.match(await probe.textContent(), /42 ms/);
+    checks++;
     assert.deepEqual(errors, []);
     console.log(`Dashboard parity: ${checks} scenarios passed (mock IPC only)`);
   } finally {

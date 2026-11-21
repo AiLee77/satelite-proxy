@@ -743,6 +743,7 @@ function coreDisplayName(kind: string | null | undefined): string {
 
   /** Refresh latency and exit IP together from the network-probe card. */
   function onProbeNetwork() {
+    if (latencyProbing || exitIpProbing) return;
     void onProbeLatency();
     void onProbeExitIp();
   }
@@ -1004,7 +1005,9 @@ function coreDisplayName(kind: string | null | undefined): string {
           ? "warn"
           : "ok";
 
-  const currentLatency = currentNode?.latency_ms;
+  const currentLatency = currentNode && isChainEntry(currentNode)
+    ? chainExitNode?.latency_ms
+    : currentNode?.latency_ms;
   /** Core failure while stopped — surfaced as a modal unless dismissed. */
   const coreErrorText = proxy?.error && !running ? proxy.error : null;
 
@@ -1484,6 +1487,9 @@ function coreDisplayName(kind: string | null | undefined): string {
         <article
           className="instrument accent-cyan instrument-click dashboard-probe-card"
           role="button"
+          aria-label={t("dashboard.cardProbe")}
+          aria-busy={latencyProbing || exitIpProbing}
+          aria-disabled={latencyProbing || exitIpProbing}
           tabIndex={0}
           title={t("dashboard.probeNetworkHint")}
           onClick={onProbeNetwork}
