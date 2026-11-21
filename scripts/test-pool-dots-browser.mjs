@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-// Pool selection dots size & state regression test
-// Verifies that edit pool checkboxes/radios match chain station dots
-// and have proper checked/unchecked distinction
-
-if (process.env.CI !== "true") throw new Error("此浏览器测试仅允许在 CI 运行");
+// Real ChainPage pool-editor regression. This deliberately exercises the
+// complete production CSS surface and trusted pointer/keyboard input; its
+// mock result is not a substitute for the user's real-device verification.
+if (process.env.CI !== "true") throw new Error("此浏览器测试仅允许在 CI mock 路径运行");
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("缺少 PLAYWRIGHT_MODULE");
 const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
 await mkdir("test-results", { recursive: true });
-const browser = await chromium.launch({ headless: false, channel: "msedge" }); // Use Edge to match WebView2
+const browser = await chromium.launch({ headless: false, channel: "msedge" });
 const errors = [];
 let page;
 try {
@@ -23,248 +22,184 @@ try {
   });
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  
-  // Load fixture with chain station dots (reference) and edit pool controls
-  await page.goto("http://127.0.0.1:1440/scripts/ui-smoke/chain-dots.html");
-  await page.waitForSelector(".chain-station-dot", { timeout: 5000 });
-  await page.waitForTimeout(200); // Ensure styles applied
-  
-  // Measure reference: chain station dot
-  const refDot = page.locator(".chain-station-dot").first();
-  const refRect = await refDot.boundingBox();
-  if (!refRect) throw new Error("Reference chain-station-dot not found");
-  const refW = Math.round(refRect.width);
-  const refH = Math.round(refRect.height);
-  assert.equal(refW, 8, `Reference dot width should be 8px, got ${refW}`);
-  assert.equal(refH, 8, `Reference dot height should be 8px, got ${refH}`);
-  
-  // Measure checkbox (specified nodes mode)
-  const checkboxDot = page.locator('.chain-pool-select-dot[type="checkbox"]').first();
-  const checkboxRect = await checkboxDot.boundingBox();
-  if (!checkboxRect) throw new Error("Checkbox dot not found");
-  const cbW = Math.round(checkboxRect.width);
-  const cbH = Math.round(checkboxRect.height);
-  
-  // Measure radio (subscription mode)
-  const radioDot = page.locator('.chain-pool-select-dot[type="radio"]').first();
-  const radioRect = await radioDot.boundingBox();
-  if (!radioRect) throw new Error("Radio dot not found");
-  const radioW = Math.round(radioRect.width);
-  const radioH = Math.round(radioRect.height);
-  
-  // Assert size equality
-  assert.equal(cbW, refW, `Checkbox width ${cbW} should match reference ${refW}`);
-  assert.equal(cbH, refH, `Checkbox height ${cbH} should match reference ${refH}`);
-  assert.equal(radioW, refW, `Radio width ${radioW} should match reference ${refW}`);
-  assert.equal(radioH, refH, `Radio height ${radioH} should match reference ${refH}`);
-  
-  // Measure ::before pseudo-element styles for state distinction
-  const uncheckedCheckboxBg = await checkboxDot.evaluate(el => {
-    const beforeStyle = window.getComputedStyle(el, "::before");
-    return beforeStyle.backgroundColor;
-  });
-  
-  const checkedCheckbox = page.locator('.chain-pool-select-dot[type="checkbox"]:checked');
-  const checkedCheckboxBg = await checkedCheckbox.evaluate(el => {
-    const beforeStyle = window.getComputedStyle(el, "::before");
-    return beforeStyle.backgroundColor;
-  });
-  
-  const uncheckedRadioBg = await radioDot.evaluate(el => {
-    const beforeStyle = window.getComputedStyle(el, "::before");
-    return beforeStyle.backgroundColor;
-  });
-  
-  const checkedRadio = page.locator('.chain-pool-select-dot[type="radio"]:checked');
-  const checkedRadioBg = await checkedRadio.evaluate(el => {
-    const beforeStyle = window.getComputedStyle(el, "::before");
-    return beforeStyle.backgroundColor;
-  });
 
-  // Pool *node* picking uses checkboxes (the subscription picker below uses
-  // radios). Reproduce the real cancel-selection path with trusted row clicks,
-  // and independently reach focused+unchecked with the keyboard. Chromium can
-  // retain a non-zero UA outline-width even while outline-style is none, so
-  // every state must explicitly collapse all three outline components.
-  const firstCheckbox = page.locator('.chain-pool-select-dot[type="checkbox"]').first();
-  const firstCheckboxRow = firstCheckbox.locator("..");
-  const outlineSnapshot = async locator => locator.evaluate(el => {
-    const style = window.getComputedStyle(el);
+  await page.goto("http://127.0.0.1:1440/scripts/ui-smoke/chain-dots.html?locale=zh&theme=aerospace");
+  await page.waitForSelector(".chain-station-dot", { timeout: 10000 });
+  const loadedStyles = await page.evaluate(() => Array.from(document.styleSheets).map(sheet => ({
+    href: sheet.href,
+    source: sheet.ownerNode?.getAttribute?.("data-vite-dev-id") ?? null,
+  })));
+  const styleEvidence = loadedStyles.map(item => item.href || item.source || "").join("\n");
+  for (const required of [
+    "App.css", "ProAppearance.css", "ProMotion.css", "IpInfoPanel.css",
+    "ServiceStatusCard.css", "DashboardPage.css", "ChainPage.css", "xyflow",
+  ]) {
+    assert.ok(styleEvidence.includes(required), `夹具缺少生产样式 ${required}:\n${styleEvidence}`);
+  }
+
+  const refRect = await page.locator(".chain-station-dot").first().boundingBox();
+  assert.ok(refRect, "缺少链卡样板圆点");
+  assert.equal(Math.round(refRect.width), 8);
+  assert.equal(Math.round(refRect.height), 8);
+
+  // Open the pool through the real row menu and expand its real subscription
+  // group. There is no fixture-local copy of PoolEditorModal's DOM.
+  await page.locator(".chain-pool-row .rule-menu-trigger").click();
+  await page.locator(".chain-menu-pop [role='menuitem']").first().click();
+  await page.locator(".modal .chain-pool-select-dot").waitFor({ state: "attached" }).catch(() => {});
+  const groupHeads = page.locator(".modal .chain-pool-node-group .chain-candidate-group-head");
+  for (let i = 0; i < await groupHeads.count(); i++) {
+    if (await groupHeads.nth(i).getAttribute("aria-expanded") === "false") await groupHeads.nth(i).click();
+  }
+  const firstRow = page.locator(".modal .chain-pool-node-item[data-node-id='fixture-node']");
+  const input = firstRow.locator(".chain-pool-select-dot[type='checkbox']");
+  await input.waitFor({ state: "visible" });
+  assert.equal(await input.isChecked(), true, "真实池夹具的首节点应初始选中");
+
+  const snapshot = locator => locator.evaluate(el => {
+    const self = getComputedStyle(el);
+    const before = getComputedStyle(el, "::before");
+    const after = getComputedStyle(el, "::after");
+    const label = el.closest(".chain-pool-node-item");
+    const labelStyle = getComputedStyle(label);
+    const pick = style => ({
+      outline: style.outline,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineOffset: style.outlineOffset,
+      border: style.border,
+      boxShadow: style.boxShadow,
+    });
     return {
       checked: el.checked,
-      focused: el === document.activeElement,
-      focusVisible: el.matches(":focus-visible"),
-      outlineWidth: style.outlineWidth,
-      outlineStyle: style.outlineStyle,
-      outlineColor: style.outlineColor,
-      outlineOffset: style.outlineOffset,
+      focused: document.activeElement === el,
+      activeElement: document.activeElement?.outerHTML?.slice(0, 240) ?? null,
+      input: pick(self), before: pick(before), after: pick(after), label: pick(labelStyle),
+      beforeBackground: before.backgroundColor,
     };
   });
-  const assertNoOutline = (state, styles) => {
-    console.log(`${state}: ${JSON.stringify(styles)}`);
-    assert.equal(styles.outlineStyle, "none", `${state}: outline-style`);
-    assert.equal(styles.outlineWidth, "0px", `${state}: outline-width`);
-    assert.equal(styles.outlineOffset, "0px", `${state}: outline-offset`);
-  };
+  const initial = await snapshot(input);
 
-  const defaultStyles = await outlineSnapshot(firstCheckbox);
-  assert.equal(defaultStyles.checked, false);
-  assert.equal(defaultStyles.focused, false);
+  // Trusted row clicks: cancel and re-select exactly once each.
+  await firstRow.click();
+  const cancelled = await snapshot(input);
+  assert.equal(cancelled.checked, false, "可信点击应取消勾选");
 
-  await firstCheckboxRow.click();
-  const focusedCheckedClickStyles = await outlineSnapshot(firstCheckbox);
-  assert.equal(focusedCheckedClickStyles.checked, true);
-  assert.equal(focusedCheckedClickStyles.focused, true);
-
-  await firstCheckboxRow.click();
-  const focusedUncheckedClickStyles = await outlineSnapshot(firstCheckbox);
-  assert.equal(focusedUncheckedClickStyles.checked, false);
-  assert.equal(focusedUncheckedClickStyles.focused, true);
-  assertNoOutline("focused+unchecked (trusted cancel click)", focusedUncheckedClickStyles);
-  assertNoOutline("focused+checked (trusted row click)", focusedCheckedClickStyles);
-  assertNoOutline("default", defaultStyles);
-
-  await checkedCheckbox.focus();
-  await page.keyboard.press("Shift+Tab");
-  const focusedUncheckedTabStyles = await outlineSnapshot(firstCheckbox);
-  assert.equal(focusedUncheckedTabStyles.checked, false);
-  assert.equal(focusedUncheckedTabStyles.focused, true);
-  assert.equal(focusedUncheckedTabStyles.focusVisible, true);
-  assertNoOutline("focused+unchecked (Tab)", focusedUncheckedTabStyles);
-
-  await page.keyboard.press("Tab");
-  const focusedCheckedTabStyles = await outlineSnapshot(checkedCheckbox);
-  assert.equal(focusedCheckedTabStyles.checked, true);
-  assert.equal(focusedCheckedTabStyles.focused, true);
-  assert.equal(focusedCheckedTabStyles.focusVisible, true);
-  assertNoOutline("focused+checked (Tab)", focusedCheckedTabStyles);
-  
-  // 选中+失焦状态：移走焦点后，选中的圆点及其所有相关元素必须无环
-  await page.locator("h3").first().click(); // 点击中性区域移走焦点
-  await page.waitForTimeout(100); // 等待焦点状态更新
-  
-  const blurredCheckedStyles = await checkedCheckbox.evaluate(el => {
-    const itemContainer = el.closest(".chain-pool-node-item");
-    const dotBefore = window.getComputedStyle(el, "::before");
-    const dotAfter = window.getComputedStyle(el, "::after");
-    const dotSelf = window.getComputedStyle(el);
-    const labelSelf = window.getComputedStyle(itemContainer);
+  // Enumerate every element intersecting the 16×16px box around the dot.
+  // Include computed outline/border/shadow and the originating author rules.
+  const ringAudit = await input.evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    const size = 16;
+    const ring = {
+      left: rect.left + rect.width / 2 - size / 2,
+      top: rect.top + rect.height / 2 - size / 2,
+      right: rect.left + rect.width / 2 + size / 2,
+      bottom: rect.top + rect.height / 2 + size / 2,
+    };
+    const intersects = r => r.width > 0 && r.height > 0 &&
+      r.right >= ring.left && r.left <= ring.right && r.bottom >= ring.top && r.top <= ring.bottom;
+    const properties = [
+      "outline", "outline-style", "outline-width", "outline-color", "outline-offset",
+      "border", "border-top", "border-right", "border-bottom", "border-left", "box-shadow",
+    ];
+    const computed = style => Object.fromEntries(properties.map(property => [property, style.getPropertyValue(property)]));
+    const matchingRules = element => {
+      const found = [];
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try { rules = sheet.cssRules; } catch { continue; }
+        const source = sheet.href || sheet.ownerNode?.getAttribute?.("data-vite-dev-id") || "inline";
+        for (const rule of rules) {
+          if (!(rule instanceof CSSStyleRule)) continue;
+          const declarations = Object.fromEntries(properties
+            .map(property => [property, rule.style.getPropertyValue(property)])
+            .filter(([, value]) => value));
+          if (Object.keys(declarations).length === 0) continue;
+          for (const selector of rule.selectorText.split(",")) {
+            try {
+              if (element.matches(selector.trim())) {
+                found.push({ source, selector: selector.trim(), declarations });
+                break;
+              }
+            } catch { /* Selector lists containing pseudo-elements are not matches()-compatible. */ }
+          }
+        }
+      }
+      return found;
+    };
+    const elements = Array.from(document.querySelectorAll("*")).filter(element => intersects(element.getBoundingClientRect()));
     return {
+      state: { checked: el.checked, focused: document.activeElement === el, focusVisible: el.matches(":focus-visible") },
+      ring,
       input: {
-        outline: dotSelf.outline,
-        outlineStyle: dotSelf.outlineStyle,
-        outlineWidth: dotSelf.outlineWidth,
-        outlineColor: dotSelf.outlineColor,
-        outlineOffset: dotSelf.outlineOffset,
-        border: dotSelf.border,
-        borderWidth: dotSelf.borderWidth,
-        boxShadow: dotSelf.boxShadow
+        self: computed(getComputedStyle(el)),
+        before: computed(getComputedStyle(el, "::before")),
+        after: computed(getComputedStyle(el, "::after")),
       },
-      before: {
-        outline: dotBefore.outline,
-        outlineStyle: dotBefore.outlineStyle,
-        outlineWidth: dotBefore.outlineWidth,
-        border: dotBefore.border,
-        borderWidth: dotBefore.borderWidth,
-        boxShadow: dotBefore.boxShadow
-      },
-      after: {
-        outline: dotAfter.outline,
-        outlineStyle: dotAfter.outlineStyle,
-        outlineWidth: dotAfter.outlineWidth,
-        border: dotAfter.border,
-        borderWidth: dotAfter.borderWidth,
-        boxShadow: dotAfter.boxShadow
-      },
-      label: {
-        outline: labelSelf.outline,
-        outlineStyle: labelSelf.outlineStyle,
-        outlineWidth: labelSelf.outlineWidth,
-        border: labelSelf.border,
-        borderWidth: labelSelf.borderWidth,
-        boxShadow: labelSelf.boxShadow
-      },
+      elements: elements.map(element => ({
+        tag: element.tagName.toLowerCase(),
+        className: typeof element.className === "string" ? element.className : "",
+        rect: (() => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })(),
+        style: computed(getComputedStyle(element)),
+        rules: matchingRules(element),
+      })),
     };
   });
-  
-  assert.equal(await checkedCheckbox.evaluate(el => el === document.activeElement), false);
-  assertNoOutline("checked+blurred", blurredCheckedStyles.input);
 
-  // 输出详细诊断信息
-  console.log("\n=== 选中+失焦态详细样式 ===");
-  console.log("input 元素:");
-  console.log(`  outline: ${blurredCheckedStyles.input.outline}`);
-  console.log(`  outlineStyle: ${blurredCheckedStyles.input.outlineStyle}`);
-  console.log(`  outlineWidth: ${blurredCheckedStyles.input.outlineWidth}`);
-  console.log(`  outlineColor: ${blurredCheckedStyles.input.outlineColor}`);
-  console.log(`  outlineOffset: ${blurredCheckedStyles.input.outlineOffset}`);
-  console.log(`  border: ${blurredCheckedStyles.input.border}`);
-  console.log(`  borderWidth: ${blurredCheckedStyles.input.borderWidth}`);
-  console.log(`  boxShadow: ${blurredCheckedStyles.input.boxShadow}`);
-  console.log("\n::before 伪元素:");
-  console.log(`  outline: ${blurredCheckedStyles.before.outline}`);
-  console.log(`  border: ${blurredCheckedStyles.before.border}`);
-  console.log(`  boxShadow: ${blurredCheckedStyles.before.boxShadow}`);
-  console.log("\n::after 伪元素:");
-  console.log(`  outline: ${blurredCheckedStyles.after.outline}`);
-  console.log(`  border: ${blurredCheckedStyles.after.border}`);
-  console.log(`  boxShadow: ${blurredCheckedStyles.after.boxShadow}`);
-  console.log("\nlabel 容器:");
-  console.log(`  outline: ${blurredCheckedStyles.label.outline}`);
-  console.log(`  border: ${blurredCheckedStyles.label.border}`);
-  console.log(`  boxShadow: ${blurredCheckedStyles.label.boxShadow}`);
-  
-  // 测量选中点的外部边界，应该与内部圆点一致（8px），不应该有14-16px的外环
-  const blurredCheckedBox = await checkedCheckbox.boundingBox();
-  assert(
-    blurredCheckedBox && blurredCheckedBox.width <= 8.5 && blurredCheckedBox.height <= 8.5,
-    `选中+失焦的圆点外盒应为8px，实测 ${blurredCheckedBox?.width}×${blurredCheckedBox?.height}`
-  );
-  
-  // 所有元素都不应该有 outline/border/box-shadow 形成的环
-  assert(
-    blurredCheckedStyles.input.outline === "none" || blurredCheckedStyles.input.outline.includes("0px"),
-    `选中+失焦的input不应有outline: ${blurredCheckedStyles.input.outline}`
-  );
-  assert(
-    blurredCheckedStyles.input.boxShadow === "none",
-    `选中+失焦的input不应有box-shadow: ${blurredCheckedStyles.input.boxShadow}`
-  );
-  assert(
-    blurredCheckedStyles.before.outline === "none" || blurredCheckedStyles.before.outline.includes("0px"),
-    `选中+失焦的::before不应有outline: ${blurredCheckedStyles.before.outline}`
-  );
-  assert(
-    blurredCheckedStyles.before.boxShadow === "none",
-    `选中+失焦的::before不应有box-shadow: ${blurredCheckedStyles.before.boxShadow}`
-  );
-  assert(
-    blurredCheckedStyles.after.outline === "none" || blurredCheckedStyles.after.outline.includes("0px"),
-    `选中+失焦的::after不应有outline: ${blurredCheckedStyles.after.outline}`
-  );
-  assert(
-    blurredCheckedStyles.after.boxShadow === "none",
-    `选中+失焦的::after不应有box-shadow: ${blurredCheckedStyles.after.boxShadow}`
-  );
-  assert(
-    blurredCheckedStyles.label.outline === "none" || blurredCheckedStyles.label.outline.includes("0px"),
-    `选中+失焦的label容器不应有outline: ${blurredCheckedStyles.label.outline}`
-  );
+  await firstRow.click();
+  const selected = await snapshot(input);
+  assert.equal(selected.checked, true, "第二次可信点击应重新勾选");
 
-  // Assert state distinction
-  assert.notEqual(uncheckedCheckboxBg, checkedCheckboxBg, 
-    `Checkbox states must differ: unchecked=${uncheckedCheckboxBg}, checked=${checkedCheckboxBg}`);
-  assert.notEqual(uncheckedRadioBg, checkedRadioBg,
-    `Radio states must differ: unchecked=${uncheckedRadioBg}, checked=${checkedRadioBg}`);
-  
-  // Screenshot for visual verification
+  const report = { loadedStyles, initial, cancelled, selected, focusedUncheckedAudit: ringAudit };
+  await writeFile("test-results/pool-dots-ring-audit.json", JSON.stringify(report, null, 2));
+  console.log(`✓ 生产样式 ${loadedStyles.length} 份；16px 区域元素 ${ringAudit.elements.length} 个`);
+  console.log(`✓ 取证写入 test-results/pool-dots-ring-audit.json`);
+  const globalFocusRules = ringAudit.elements.find(item => item.tag === "input")?.rules
+    .filter(rule => rule.selector.includes(".field input:focus")) ?? [];
+  assert.ok(globalFocusRules.some(rule => rule.declarations["box-shadow"]), "未定位到 App.css 的 .field input:focus 环规则");
+  console.log(`✓ 环规则来源: ${globalFocusRules.map(rule => `${rule.source} :: ${rule.selector} :: ${rule.declarations["box-shadow"]}`).join(" | ")}`);
+
+  for (const [state, value] of [["cancelled", cancelled], ["selected", selected]]) {
+    for (const part of ["input", "before", "after", "label"]) {
+      assert.equal(value[part].boxShadow, "none", `${state} ${part} 不应有 box-shadow 环`);
+      assert.equal(value[part].outlineStyle, "none", `${state} ${part} 不应有 outline 环`);
+    }
+  }
+  assert.notEqual(cancelled.focused, true, "可信取消点击后 input 不应获得焦点");
+  assert.notEqual(selected.focused, true, "可信选中点击后 input 不应获得焦点");
+
+  // Keyboard modality remains intact: Tab from the real group header reaches
+  // the first input, and Space toggles twice without losing either behavior.
+  await firstRow.locator("..").locator(".chain-candidate-group-head").focus();
+  await page.keyboard.press("Tab");
+  assert.equal(await input.evaluate(el => document.activeElement === el), true, "Tab 应聚焦池选择 input");
+  assert.equal(await input.evaluate(el => el.matches(":focus-visible")), true, "Tab 后应为 focus-visible");
+  await page.keyboard.press("Space");
+  assert.equal(await input.isChecked(), false, "Space 应取消勾选");
+  await page.keyboard.press("Space");
+  assert.equal(await input.isChecked(), true, "第二次 Space 应重新勾选");
+
+  const checkboxRect = await input.boundingBox();
+  assert.ok(checkboxRect && Math.round(checkboxRect.width) === 8 && Math.round(checkboxRect.height) === 8);
+  const uncheckedBg = cancelled.beforeBackground;
+
+  // The subscription picker is also the production radio row implementation.
+  await page.locator(".modal .glass-seg-btn").nth(2).click();
+  const radioRows = page.locator(".modal .chain-pool-node-item");
+  const radio = radioRows.first().locator(".chain-pool-select-dot[type='radio']");
+  await radio.waitFor({ state: "visible" });
+  await radioRows.first().click();
+  assert.equal(await radio.isChecked(), true, "订阅 radio 点击应选中");
+  assert.notEqual(await radio.evaluate(el => document.activeElement === el), true, "radio 鼠标点击不应聚焦");
+  const radioRect = await radio.boundingBox();
+  assert.ok(radioRect && Math.round(radioRect.width) === 8 && Math.round(radioRect.height) === 8);
+  const checkedRadioBg = await radio.evaluate(el => getComputedStyle(el, "::before").backgroundColor);
+  const uncheckedRadioBg = await radioRows.nth(1).locator("input").evaluate(el => getComputedStyle(el, "::before").backgroundColor);
+  assert.notEqual(checkedRadioBg, uncheckedRadioBg, "radio 选中/未选必须可区分");
+  assert.notEqual(uncheckedBg, initial.beforeBackground, "checkbox 选中/未选必须可区分");
+
   await page.screenshot({ path: "test-results/pool-dots-comparison.png", fullPage: false });
-  
-  console.log(`✓ Pool dots size: checkbox=${cbW}×${cbH}, radio=${radioW}×${radioH} (ref=${refW}×${refH})`);
-  console.log(`✓ Checkbox state: unchecked=${uncheckedCheckboxBg}, checked=${checkedCheckboxBg}`);
-  console.log(`✓ Radio state: unchecked=${uncheckedRadioBg}, checked=${checkedRadioBg}`);
-  console.log(`✓ Screenshot saved to test-results/pool-dots-comparison.png`);
-  
+  console.log("✓ 鼠标/触控焦点隔离、Tab/Space、节点/订阅圆点尺寸与状态检查通过（mock）");
   assert.equal(errors.length, 0, `页面错误: ${errors.join(", ")}`);
 } finally {
   await page?.close();
