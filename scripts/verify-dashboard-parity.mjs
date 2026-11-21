@@ -74,6 +74,36 @@ export async function runDashboardParity() {
     await page.waitForFunction(() => document.querySelector(".dashboard-probe-card")?.getAttribute("aria-busy") === "false");
     assert.match(await probe.textContent(), /42 ms/);
     checks++;
+    // Speed cards consume the same status snapshot, with no extra polling.
+    const rate = direction => page.locator(`.dashboard-rate-card[data-direction="${direction}"]`);
+    assert.equal(await rate("up").locator(".dashboard-rate-card__rate").getAttribute("title"), "3.0 KB/s");
+    assert.equal(await rate("down").locator(".dashboard-rate-card__rate").getAttribute("title"), "12.0 KB/s");
+    await rate("up").getByRole("button").click();
+    await rate("down").getByRole("button").click();
+    assert.equal(await page.evaluate(() => window.dashboardFixture.trafficOpens), 2);
+    await page.evaluate(() => {
+      const s = window.dashboardFixture.status;
+      s.upload_speed = 1024 * 1024;
+      s.download_speed = 2 * 1024 * 1024;
+    });
+    await page.waitForFunction(() => document.querySelector('[data-direction="up"] .dashboard-rate-card__rate')?.title === "1.0 MB/s");
+    assert.match(await rate("up").locator(".dashboard-rate-card__stats").textContent(), /1\.0 MB\/s/);
+    await page.evaluate(() => {
+      const s = window.dashboardFixture.status;
+      s.core_started_at++;
+      s.upload_speed = 1024;
+      s.download_speed = 2048;
+    });
+    await page.waitForFunction(() => document.querySelector('[data-direction="up"] .dashboard-rate-card__rate')?.title === "1.0 KB/s");
+    assert.match(await rate("up").locator(".dashboard-rate-card__stats").textContent(), /1\.0 KB\/s/);
+    assert.doesNotMatch(await rate("up").locator(".dashboard-rate-card__stats").textContent(), /MB\/s/);
+    await page.getByRole("button", { name: "停止代理", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-direction="up"]')?.dataset.running === "false");
+    for (const direction of ["up", "down"]) {
+      assert.equal(await rate(direction).locator(".dashboard-rate-card__rate").getAttribute("title"), "0 B/s");
+    }
+    assert.deepEqual(await page.evaluate(() => window.dashboardFixture.unexpected), []);
+    checks++;
     assert.deepEqual(errors, []);
     console.log(`Dashboard parity: ${checks} scenarios passed (mock IPC only)`);
   } finally {
