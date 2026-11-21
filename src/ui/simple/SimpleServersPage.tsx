@@ -1,4 +1,3 @@
-import { confirmAction } from "../../confirmAction";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addSubscriptionFile,
@@ -353,13 +352,6 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
 
   async function deleteSelected(ids: string[]) {
     if (batchBusy || ids.length === 0) return;
-    const name = nodes.find((node) => node.id === ids[0])?.name ?? ids[0];
-    const confirmed = await confirmAction(
-      ids.length === 1
-        ? t("nodes.deleteConfirm", { name })
-        : t("nodes.deleteSelectedConfirm", { n: ids.length }),
-    );
-    if (!confirmed) return;
     setBatchBusy(true);
     setError(null);
     try {

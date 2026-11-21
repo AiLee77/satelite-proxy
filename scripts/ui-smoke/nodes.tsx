@@ -14,6 +14,7 @@ const count = grid ? (params.get("large") === "true" ? 603 : 9) : 3;
 const locale = params.get("locale") === "en" ? "en" : "zh";
 const theme = params.get("theme") === "aerospace" ? "aerospace" : "day";
 const zoom = params.get("zoom") === "1.5" ? 1.5 : 1;
+const failed = params.get("failed") === "true";
 document.documentElement.style.transition = "none";
 document.documentElement.style.zoom = String(zoom);
 document.documentElement.dataset.motionReduced = "true";
@@ -29,6 +30,7 @@ const nodes: ProxyNode[] = Array.from({ length: count }, (_, i) => ({
   protocol: grid ? ["shadowsocks", "hysteria2", "wireguard"][i % 3] : "hysteria2",
   server: "example.test", port: 443,
   subscription_id: "fixture", subscription_name: "测试配置 Synthetic Subscription 0123456789",
+  ...(failed ? { latency_at: 1, latency_method: "clash_api", latency_error: "timeout" } : {}),
 }));
 const settings: AppSettings = {
   mixed_port: 2080, api_port: 19090, probe_url: "https://example.test/204",
@@ -37,8 +39,7 @@ const settings: AppSettings = {
   multi_core_enabled: grid, protocol_cores: [{ protocol: "shadowsocks", core: "mihomo" }],
 };
 const state = {
-  nodes, settings, confirms: 0, deleted: [] as string[][], answer: "Cancel", hold: false,
-  release: null as null | ((answer: string) => void),
+  nodes, settings, confirms: 0, deleted: [] as string[][], answer: "Cancel",
   selected: [] as string[], reordered: [] as string[][], tested: [] as string[][],
   unexpected: [] as string[],
 };
@@ -51,7 +52,7 @@ mockIPC((command, payload) => {
   if (command === "list_node_ids") return state.nodes.map(node => node.id);
   if (command === "plugin:dialog|message") {
     state.confirms++;
-    return state.hold ? new Promise<string>(resolve => { state.release = resolve; }) : state.answer;
+    return state.answer;
   }
   if (command === "delete_nodes") {
     const ids = args.ids as string[];

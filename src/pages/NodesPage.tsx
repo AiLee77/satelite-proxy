@@ -1,4 +1,3 @@
-import { confirmAction } from "../confirmAction";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   appendClipboardNodes,
@@ -673,17 +672,10 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
     [nodes, customRuntime],
   );
 
-  async function deleteSelected(ids: string[], confirmText?: string) {
+  async function deleteSelected(ids: string[]) {
     if (customRuntime || batchBusy || deletePendingRef.current || ids.length === 0) return;
-    // Guard before opening the native confirmation, not just during IPC.
     deletePendingRef.current = true;
     try {
-      const confirmed = await confirmAction(
-        ids.length === 1
-          ? t("nodes.deleteConfirm", { name: nodes.find((node) => node.id === ids[0])?.name ?? ids[0] })
-          : confirmText ?? t("nodes.deleteSelectedConfirm", { n: ids.length }),
-      );
-      if (!confirmed) return;
       setBatchBusy(true);
       setError(null);
       await deleteNodes(ids);
@@ -722,10 +714,7 @@ function NodeManagementPage({ policyManaged = false, onCoreRefresh, onSelectionB
   /** One-click delete of the latest latency failures through the guarded batch path. */
   async function deleteTimedOutNodes() {
     if (timedOutIds.length === 0 || testing || batchBusy || loading) return;
-    await deleteSelected(
-      timedOutIds,
-      t("nodes.deleteTimeoutConfirm", { n: timedOutIds.length }),
-    );
+    await deleteSelected(timedOutIds);
   }
 
   async function copyShareLink(node: ProxyNode) {
