@@ -3529,6 +3529,7 @@ button.node-card:disabled,
 }
 
 .pill.target-smart {
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
   color: var(--accent-blue);
   max-width: 18rem;

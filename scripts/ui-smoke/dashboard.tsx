@@ -55,6 +55,9 @@ const chainVirtualNode: ProxyNode = {
   latency_ms: null, subscription_id: "", subscription_name: "", chain_hops: 2,
 };
 const poolFixture: NodePool = { id: "fixture-pool", name: "指定节点池 Fixture pool", mode: { mode: "explicit", node_ids: ["fixture-node"] } };
+const keywordPoolFixture: NodePool = { id: "fixture-keyword-pool", name: "关键词池 Fixture keyword pool", mode: { mode: "keyword", include: ["香港"], exclude: [] } };
+const subscriptionPoolFixture: NodePool = { id: "fixture-subscription-pool", name: "订阅池 Fixture subscription pool", mode: { mode: "subscription", subscription_id: "fixture-sub" } };
+const poolFixtures = [poolFixture, keywordPoolFixture, subscriptionPoolFixture];
 const chainHops: ChainHop[] = [
   { kind: "node", node_id: "fixture-node" },
   { kind: "node", node_id: "fixture-exit" },
@@ -161,7 +164,7 @@ mockIPC((command, payload) => {
       : nodes);
     case "list_subscriptions": return copy(subscriptions);
     case "list_chains": return copy(chains);
-    case "list_pools": return copy(chainScenario ? [poolFixture] : []);
+    case "list_pools": return copy(chainScenario ? poolFixtures : []);
     case "list_chain_usage": return {};
     case "update_pool": {
       state.poolWrites.push(copy(args.mode));

@@ -828,11 +828,31 @@ try {
   await page.locator(".chain-page .chain-card").first().waitFor();
   await page.waitForFunction(() => document.querySelector(".node-proto-tags code"));
   await page.waitForFunction(() => document.querySelector(".chain-exit-btn.current"));
+  const poolPillShapes = await page.locator(".chain-pool-row").evaluateAll(rows =>
+    ["指定节点", "关键字过滤", "整个订阅"].map(mode => {
+      const pill = rows.map(row => row.querySelector(".pill")).find(element => element?.textContent === mode);
+      if (!pill) return { mode, missing: true };
+      const style = getComputedStyle(pill);
+      return {
+        mode,
+        borderRadius: style.borderRadius,
+        padding: style.padding,
+        height: pill.getBoundingClientRect().height,
+      };
+    }));
+  console.log(`节点池三模式徽标 computed 形状：${JSON.stringify(poolPillShapes)}`);
+  const explicitPillShape = poolPillShapes[0];
+  for (const shape of poolPillShapes) {
+    checkBatch10(`${shape.mode}徽标 computed 圆角与内边距同指定节点`,
+      !shape.missing && !explicitPillShape.missing &&
+      shape.borderRadius === explicitPillShape.borderRadius && shape.padding === explicitPillShape.padding,
+      JSON.stringify({ actual: shape, reference: explicitPillShape, viewport: "1280x900" }));
+  }
   const editorCard = page.locator(".chain-card").filter({ hasText: "编辑器指定池 Fixture editor" });
   await editorCard.getByRole("button", { name: "操作", exact: true }).click();
   await page.getByRole("menuitem", { name: "编辑", exact: true }).click();
   await page.locator(".chain-editor-sidebar .glass-seg-btn").nth(1).click();
-  await page.locator(".chain-editor-sidebar .chain-pool-expand").waitFor();
+  await page.locator(".chain-editor-sidebar .chain-pool-expand").first().waitFor();
   const chainSurface = await page.evaluate(() => {
     const reference = document.querySelector(".node-proto-tags code");
     const refStyle = reference ? getComputedStyle(reference) : null;
@@ -894,7 +914,7 @@ try {
       checkBatch10(`${result.label} 保持 pill 圆角`, !result.missing && result.pillRadius, JSON.stringify(result));
     }
   }
-  const poolExpand = page.locator(".chain-editor-sidebar .chain-pool-expand");
+  const poolExpand = page.locator(".chain-editor-sidebar .chain-pool-expand").first();
   await poolExpand.click();
   await page.waitForFunction(() => document.querySelector(".chain-editor-sidebar .chain-pool-expand")?.getAttribute("aria-expanded") === "true");
   const expandedArrow = await poolExpand.evaluate(element => {
