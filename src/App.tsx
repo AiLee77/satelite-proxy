@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { refreshProxyStatus } from "./api";
+import { onChainAutoDeactivated, refreshProxyStatus } from "./api";
 import { SideNav } from "./components/SideNav";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ErrorModal } from "./components/ErrorModal";
@@ -103,6 +103,7 @@ function AppShell() {
   const { mode } = useUiMode();
   const { t } = useI18n();
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [chainNotice, setChainNotice] = useState<string | null>(null);
 
   // Maximize magnification: zoom the whole UI when the OS window exceeds
   // the design size (see hooks/useViewportScale.ts).
@@ -152,6 +153,21 @@ function AppShell() {
     };
   }, [t]);
 
+  // 当前链出口因某跳存活条件被破坏被后端自动停用时，弹全局 transient
+  // 通知。事件可能发生在任何页面（例如订阅在配置页被删除或刷新）。
+  useEffect(() => {
+    let timer = 0;
+    const dispose = onChainAutoDeactivated(({ chainName, reason }) => {
+      setChainNotice(t("chain.autoDeactivated", { name: chainName, reason }));
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setChainNotice(null), 8000);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      dispose();
+    };
+  }, [t]);
+
   // Paint immediately from localStorage mode (Rust already sized window on recreate).
   return (
     <>
@@ -160,6 +176,11 @@ function AppShell() {
           message={applyError}
           onClose={() => setApplyError(null)}
         />
+      )}
+      {chainNotice && (
+        <div className="chain-auto-toast" role="status" aria-live="polite">
+          {chainNotice}
+        </div>
       )}
       {/* Crash net: any render exception below would otherwise blank the
          whole window; the boundary reports it to the app log and offers a

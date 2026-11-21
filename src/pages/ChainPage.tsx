@@ -38,7 +38,6 @@ import {
   listSubscriptions,
   listPools,
   onProxySnapshot,
-  onChainAutoDeactivated,
   peekSettings,
   renameChainAuto,
   setCurrentNode,
@@ -2308,14 +2307,6 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
       dispose();
     };
   }, []);
-
-  // This branch still handles automatic deactivation locally on the chain page.
-  useEffect(() => {
-    return onChainAutoDeactivated(({ chainName, reason }) => {
-      showNotice(t("chain.autoDeactivated", { name: chainName, reason }), 5000);
-      void reload();
-    });
-  }, [reload, t]);
 
   /** I4: 逐跳收集链所需订阅并自动启用仍在禁用态的那些；返回被自动启用
    *  的订阅名（无需补齐时为空）。任一启用失败抛错中止。停用链出口不在此
