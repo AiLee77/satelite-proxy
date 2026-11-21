@@ -37,6 +37,19 @@ export async function runDashboardParity() {
     assert.equal(await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === "plugin:app|version").length), 1);
     assert.equal(await page.locator(".dashboard-heading .dashboard-app-version").isVisible(), true);
     checks++;
+    // The notice belongs only to a successful user switch into system capture.
+    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
+    const capture = page.locator(".dash-capture");
+    await capture.getByRole("button", { name: "系统", exact: true }).click();
+    await page.locator(".system-proxy-restart-modal").waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator(".system-proxy-restart-modal").waitFor({ state: "hidden" });
+    await capture.getByRole("button", { name: "系统", exact: true }).click();
+    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
+    await capture.getByRole("button", { name: "关闭", exact: true }).click();
+    await page.waitForFunction(() => window.dashboardFixture.status.capture_mode === "off");
+    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
+    checks++;
     assert.deepEqual(errors, []);
     console.log(`Dashboard parity: ${checks} scenarios passed (mock IPC only)`);
   } finally {
