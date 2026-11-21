@@ -81,30 +81,63 @@ try {
     return beforeStyle.backgroundColor;
   });
 
-  // A focused picker input must keep the dot itself at 8px without a focus
-  // halo. Read the computed values on the actual input: the historical halo
-  // came from this element's focus-within outline, not from either pseudo.
-  await checkedCheckbox.focus();
-  const focusedCheckboxStyles = await checkedCheckbox.evaluate(el => {
+  // Pool *node* picking uses checkboxes (the subscription picker below uses
+  // radios). Reproduce the real cancel-selection path with trusted row clicks,
+  // and independently reach focused+unchecked with the keyboard. Chromium can
+  // retain a non-zero UA outline-width even while outline-style is none, so
+  // every state must explicitly collapse all three outline components.
+  const firstCheckbox = page.locator('.chain-pool-select-dot[type="checkbox"]').first();
+  const firstCheckboxRow = firstCheckbox.locator("..");
+  const outlineSnapshot = async locator => locator.evaluate(el => {
     const style = window.getComputedStyle(el);
     return {
-      outline: style.outline,
-      outlineStyle: style.outlineStyle,
+      checked: el.checked,
+      focused: el === document.activeElement,
+      focusVisible: el.matches(":focus-visible"),
       outlineWidth: style.outlineWidth,
+      outlineStyle: style.outlineStyle,
+      outlineColor: style.outlineColor,
       outlineOffset: style.outlineOffset,
-      boxShadow: style.boxShadow,
-      borderWidth: style.borderWidth,
     };
   });
-  // assert.equal(
-  //   focusedCheckboxStyles.outlineStyle,
-  //   "none",
-  //   `Focused checkbox must have no outline; computed outline=${focusedCheckboxStyles.outline}`,
-  // );
-  // assert.equal(focusedCheckboxStyles.outlineWidth, "0px");
-  // assert.equal(focusedCheckboxStyles.outlineOffset, "0px");
-  // assert.equal(focusedCheckboxStyles.boxShadow, "none");
-  // assert.equal(focusedCheckboxStyles.borderWidth, "0px");
+  const assertNoOutline = (state, styles) => {
+    console.log(`${state}: ${JSON.stringify(styles)}`);
+    assert.equal(styles.outlineStyle, "none", `${state}: outline-style`);
+    assert.equal(styles.outlineWidth, "0px", `${state}: outline-width`);
+    assert.equal(styles.outlineOffset, "0px", `${state}: outline-offset`);
+  };
+
+  const defaultStyles = await outlineSnapshot(firstCheckbox);
+  assert.equal(defaultStyles.checked, false);
+  assert.equal(defaultStyles.focused, false);
+
+  await firstCheckboxRow.click();
+  const focusedCheckedClickStyles = await outlineSnapshot(firstCheckbox);
+  assert.equal(focusedCheckedClickStyles.checked, true);
+  assert.equal(focusedCheckedClickStyles.focused, true);
+
+  await firstCheckboxRow.click();
+  const focusedUncheckedClickStyles = await outlineSnapshot(firstCheckbox);
+  assert.equal(focusedUncheckedClickStyles.checked, false);
+  assert.equal(focusedUncheckedClickStyles.focused, true);
+  assertNoOutline("focused+unchecked (trusted cancel click)", focusedUncheckedClickStyles);
+  assertNoOutline("focused+checked (trusted row click)", focusedCheckedClickStyles);
+  assertNoOutline("default", defaultStyles);
+
+  await checkedCheckbox.focus();
+  await page.keyboard.press("Shift+Tab");
+  const focusedUncheckedTabStyles = await outlineSnapshot(firstCheckbox);
+  assert.equal(focusedUncheckedTabStyles.checked, false);
+  assert.equal(focusedUncheckedTabStyles.focused, true);
+  assert.equal(focusedUncheckedTabStyles.focusVisible, true);
+  assertNoOutline("focused+unchecked (Tab)", focusedUncheckedTabStyles);
+
+  await page.keyboard.press("Tab");
+  const focusedCheckedTabStyles = await outlineSnapshot(checkedCheckbox);
+  assert.equal(focusedCheckedTabStyles.checked, true);
+  assert.equal(focusedCheckedTabStyles.focused, true);
+  assert.equal(focusedCheckedTabStyles.focusVisible, true);
+  assertNoOutline("focused+checked (Tab)", focusedCheckedTabStyles);
   
   // 选中+失焦状态：移走焦点后，选中的圆点及其所有相关元素必须无环
   await page.locator("h3").first().click(); // 点击中性区域移走焦点
@@ -154,6 +187,9 @@ try {
     };
   });
   
+  assert.equal(await checkedCheckbox.evaluate(el => el === document.activeElement), false);
+  assertNoOutline("checked+blurred", blurredCheckedStyles.input);
+
   // 输出详细诊断信息
   console.log("\n=== 选中+失焦态详细样式 ===");
   console.log("input 元素:");
