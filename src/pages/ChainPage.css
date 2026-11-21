@@ -200,6 +200,20 @@
 
 .chain-pool-node-item .chain-pool-select-dot:checked {
   outline: none;
+  outline-width: 0;
+  box-shadow: none;
+}
+
+.chain-pool-node-item .chain-pool-select-dot:checked::before,
+.chain-pool-node-item .chain-pool-select-dot:checked::after {
+  outline: none;
+  outline-width: 0;
+  box-shadow: none;
+}
+
+.chain-pool-node-item:has(.chain-pool-select-dot:checked) {
+  outline: none;
+  outline-width: 0;
   box-shadow: none;
 }
 
