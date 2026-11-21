@@ -105,6 +105,61 @@ try {
   assert.equal(focusedCheckboxStyles.outlineOffset, "0px");
   assert.equal(focusedCheckboxStyles.boxShadow, "none");
   assert.equal(focusedCheckboxStyles.borderWidth, "0px");
+  
+  // 选中+失焦状态：移走焦点后，选中的圆点及其所有相关元素必须无环
+  await page.locator("h3").first().click(); // 点击中性区域移走焦点
+  await page.waitForTimeout(100); // 等待焦点状态更新
+  
+  const blurredCheckedStyles = await checkedCheckbox.evaluate(el => {
+    const itemContainer = el.closest(".chain-pool-node-item");
+    const dotBefore = window.getComputedStyle(el, "::before");
+    const dotAfter = window.getComputedStyle(el, "::after");
+    const dotSelf = window.getComputedStyle(el);
+    const labelSelf = window.getComputedStyle(itemContainer);
+    return {
+      input: { outline: dotSelf.outline, border: dotSelf.border, boxShadow: dotSelf.boxShadow },
+      before: { outline: dotBefore.outline, border: dotBefore.border, boxShadow: dotBefore.boxShadow },
+      after: { outline: dotAfter.outline, border: dotAfter.border, boxShadow: dotAfter.boxShadow },
+      label: { outline: labelSelf.outline, border: labelSelf.border, boxShadow: labelSelf.boxShadow },
+    };
+  });
+  
+  // 测量选中点的外部边界，应该与内部圆点一致（8px），不应该有14-16px的外环
+  const blurredCheckedBox = await checkedCheckbox.boundingBox();
+  assert(
+    blurredCheckedBox && blurredCheckedBox.width <= 8.5 && blurredCheckedBox.height <= 8.5,
+    `选中+失焦的圆点外盒应为8px，实测 ${blurredCheckedBox?.width}×${blurredCheckedBox?.height}`
+  );
+  
+  // 所有元素都不应该有 outline/border/box-shadow 形成的环
+  assert(
+    blurredCheckedStyles.input.outline === "none" || blurredCheckedStyles.input.outline.includes("0px"),
+    `选中+失焦的input不应有outline: ${blurredCheckedStyles.input.outline}`
+  );
+  assert(
+    blurredCheckedStyles.input.boxShadow === "none",
+    `选中+失焦的input不应有box-shadow: ${blurredCheckedStyles.input.boxShadow}`
+  );
+  assert(
+    blurredCheckedStyles.before.outline === "none" || blurredCheckedStyles.before.outline.includes("0px"),
+    `选中+失焦的::before不应有outline: ${blurredCheckedStyles.before.outline}`
+  );
+  assert(
+    blurredCheckedStyles.before.boxShadow === "none",
+    `选中+失焦的::before不应有box-shadow: ${blurredCheckedStyles.before.boxShadow}`
+  );
+  assert(
+    blurredCheckedStyles.after.outline === "none" || blurredCheckedStyles.after.outline.includes("0px"),
+    `选中+失焦的::after不应有outline: ${blurredCheckedStyles.after.outline}`
+  );
+  assert(
+    blurredCheckedStyles.after.boxShadow === "none",
+    `选中+失焦的::after不应有box-shadow: ${blurredCheckedStyles.after.boxShadow}`
+  );
+  assert(
+    blurredCheckedStyles.label.outline === "none" || blurredCheckedStyles.label.outline.includes("0px"),
+    `选中+失焦的label容器不应有outline: ${blurredCheckedStyles.label.outline}`
+  );
 
   // Assert state distinction
   assert.notEqual(uncheckedCheckboxBg, checkedCheckboxBg, 
