@@ -166,8 +166,6 @@ const en = {
   "chain.diagRunning": "Probing…",
   "chain.diagRealExit": "Real exit",
   "chain.hopsCount": "{n} hops",
-  "chain.usedByRuleSets": "Used by {n} rule sets",
-  "chain.notUsedByRules": "Not referenced by any rule set",
   "chain.usedByChains": "Used by {n} chains",
   "chain.editorHint":
     "Drag a node/pool from the left onto the canvas, or click one to append it to the chain. Drag between the handles to connect hops (left → right = client → internet); the chain must form a single straight line. Select an item and press Delete to remove it.",
@@ -1591,8 +1589,6 @@ const zh: Record<MessageKey, string> = {
   "chain.diagIdle": "点击「开始诊断」探测每跳延迟、定位断点并验证真实出口。",
   "chain.diagRealExit": "真实出口",
   "chain.hopsCount": "{n} 跳",
-  "chain.usedByRuleSets": "被 {n} 个规则集引用",
-  "chain.notUsedByRules": "未被规则集引用",
   "chain.usedByChains": "被 {n} 条代理链引用",
   "chain.confirmDeleteChain": "删除代理链「{name}」？引用它的规则会回退到 PROXY。",
   "chain.editorHint":

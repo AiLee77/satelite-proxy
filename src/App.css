@@ -2636,6 +2636,34 @@ button.node-card.active,
   background: var(--primary-muted) !important;
 }
 
+/* 链虚拟条目使用轻染 + 左缘细条，与普通节点的整行实底区分。 */
+.node-list-row:has(.sidecar-tag.chain).row-active {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.node-list-row:has(.sidecar-tag.chain).row-selected {
+  border-color: var(--primary-border);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
+}
+
+.node-card:has(.sidecar-tag.chain).selected {
+  border-color: var(--primary-border);
+  background:
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
+}
+
 .node-card.selected {
   border-color: var(--primary-border);
 }
@@ -9734,6 +9762,17 @@ button.simple-node-item:hover:not(:disabled) {
 .simple-node-item.selected {
   border-color: var(--primary-border);
   background: var(--primary-muted) !important;
+}
+
+/* 简洁模式同样使用轻染 + 左缘细条标识链虚拟条目。 */
+.simple-node-item:has(.sidecar-tag.chain).selected {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent) 0 3px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--primary) 16%, transparent) !important;
 }
 
 .simple-node-proto {
