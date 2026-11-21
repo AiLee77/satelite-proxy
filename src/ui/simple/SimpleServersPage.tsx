@@ -37,6 +37,7 @@ import { EditLocalNodesModal } from "../../components/EditLocalNodesModal";
 import { NodeContextMenu, type NodeContextMenuState } from "../../components/NodeContextMenu";
 import { NodeShareModal } from "../../components/NodeShareModal";
 import { useImportIntent } from "../../ImportIntentContext";
+import { isChainEntry, isChainVirtualId } from "../../chainVirtualNode";
 import { useI18n } from "../../i18n";
 import { ErrorModal } from "../../components/ErrorModal";
 import { waitForCoreRestart } from "../../coreBusy";
@@ -231,7 +232,7 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
       const selected = await setCurrentNode(id);
       const coreSwitched = (selected.core_type ?? "singbox") !== (before.core_type ?? "singbox");
       // Xray also rebuilds when selecting another node on the same core.
-      if (status.running && (leavingKernel || coreSwitched || before.core_type === "xray")) {
+      if (status.running && (leavingKernel || coreSwitched || before.core_type === "xray" || isChainVirtualId(id))) {
         setSwitching(true);
         const result = await waitForCoreRestart();
         if (result !== "ready") throw new Error(t("settings.coreSwitchWaitFailed"));
@@ -312,14 +313,15 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
   }
 
   async function onTestAll() {
+    // Chain entries are exits, not nodes — never probe them.
     const ids = customRuntime
-      ? nodes.map((n) => n.id)
-      : await listNodeIds("", sortMode);
+      ? nodes.filter((n) => !isChainEntry(n)).map((n) => n.id)
+      : (await listNodeIds("", sortMode)).filter((id) => !isChainVirtualId(id));
     await onTestNodes(ids);
   }
 
   function toggleSelected(id: string) {
-    if (customRuntime || batchBusy) return;
+    if (customRuntime || batchBusy || isChainVirtualId(id)) return;
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -331,7 +333,7 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
   const selectAllNodes = useCallback(async () => {
     if (customRuntime || batchBusy) return;
     try {
-      setSelectedIds(new Set(await listNodeIds()));
+      setSelectedIds(new Set((await listNodeIds()).filter((id) => !isChainVirtualId(id))));
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     }
@@ -529,6 +531,7 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
               const selectedBy = policySelections.get(n.id) ?? [];
               const active = policyManaged ? selectedBy.length > 0 : n.id === currentId;
               const selected = selectedIds.has(n.id);
+              const isChain = isChainEntry(n);
               return (
                 <li key={n.id}>
                   <div
@@ -538,7 +541,7 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
                       if (!customRuntime && (event.ctrlKey || event.metaKey)) toggleSelected(n.id);
                     }}
                     onContextMenu={(event) => {
-                      if (customRuntime) return;
+                      if (customRuntime || isChain) return;
                       event.preventDefault();
                       setContextMenu({ node: n, x: event.clientX, y: event.clientY });
                     }}
@@ -558,28 +561,36 @@ function SimpleNodeManagementPage({ policyManaged = false, onCoreRefresh, onSele
                       {active ? "●" : "○"}
                     </button>
                     <span className="simple-node-proto mono">
-                      {n.protocol.toUpperCase()}
+                      {isChain ? (
+                        <span className="sidecar-tag chain" title={t("nodes.chainEntryHint")}>
+                          {t("nodes.chainBadge")} · {t("nodes.chainHops", { n: n.chain_hops ?? 0 })}
+                        </span>
+                      ) : n.protocol.toUpperCase()}
                     </span>
                     <span className="simple-node-item-name">{n.name}
                       {policyManaged && selectedBy.length > 0 && <span className="node-policy-selection" title={selectedBy.join("、")}>{t("mihomoGroups.selectedBy", { groups: selectedBy.join("、") })}</span>}
                     </span>
-                    <button
-                      type="button"
-                      className="node-latency-action"
-                      title={t("nodes.testOneLatency")}
-                      aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
-                      disabled={testing || customRuntime || batchBusy}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onTestNodes([n.id]);
-                      }}
-                    >
-                      <NodeLatencyDisplay
-                        node={n}
-                        mono
-                        testing={testingIds.has(n.id)}
-                      />
-                    </button>
+                    {isChain ? (
+                      <span className="node-sub-label">—</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="node-latency-action"
+                        title={t("nodes.testOneLatency")}
+                        aria-label={`${t("nodes.testOneLatency")}：${n.name}`}
+                        disabled={testing || customRuntime || batchBusy}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onTestNodes([n.id]);
+                        }}
+                      >
+                        <NodeLatencyDisplay
+                          node={n}
+                          mono
+                          testing={testingIds.has(n.id)}
+                        />
+                      </button>
+                    )}
                   </div>
                 </li>
               );

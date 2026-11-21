@@ -190,7 +190,7 @@ export interface GroupLabels {
   noSub: string;
   /** Virtual chain entries get their own leading group in every grouped
    *  view — they are exits, not nodes of any subscription/protocol/region. */
-  chains?: string;
+  chains: string;
 }
 
 /** Group nodes by the chosen dimension; within-group order is preserved. */
@@ -208,7 +208,7 @@ export function groupNodes(
     nodes = nodes.filter((n) => !isChainEntry(n));
   }
   const chainGroup: NodeGroup[] = chains.length
-    ? [{ key: "__chains", label: labels.chains ?? labels.other, nodes: chains }]
+    ? [{ key: "__chains", label: labels.chains, nodes: chains }]
     : [];
   if (by === "sub") {
     const map = new Map<string, NodeGroup>();

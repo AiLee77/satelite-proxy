@@ -29,6 +29,14 @@ export function isRealLatencyMethod(method?: string | null): boolean {
   return method === "clash_api" || !!method?.endsWith("_http");
 }
 
+/** Nodes whose latest probe failed for a node-attributed reason. */
+export function isTimedOutNode(node: LatencyFields): boolean {
+  if (node.latency_at == null) return false;
+  const { kind } = latencyState(node);
+  return kind === "timeout" || kind === "connection" || kind === "http" ||
+    kind === "tls" || kind === "config" || kind === "failed";
+}
+
 /** 与 store 的 reachability_only 判定一致，精确匹配旧版可达性提示。
  * `unsupported:` 是本次节点参数探测的有效结果，必须正常接受。 */
 function isReachabilityOnly(update: LatencyFields): boolean {
