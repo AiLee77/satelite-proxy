@@ -1,5 +1,7 @@
 # AGENTS.md — Satelite Proxy 项目地图
 
+2026-11-21 仿 FlClash 收尾：feature-flclash-ui 的 Dashboard 恢复 listChains 与链尾固定节点协议/延迟，池尾跳/失效尾跳不猜出口，虚拟链节点禁止传入 test_nodes_latency；组合网络探测忙碌防重入。版本显示、系统代理成功切入提示、双向速率/60点趋势沿用现有 FlClash 排版。scripts/verify-dashboard-parity.mjs（7场景）与 verify-css-parity.mjs（真实组件7组×28属性）只走 mock IPC，需 PLAYWRIGHT_MODULE；后者对 cff1205 的 App.css 和 272dade 的链样式取证。链夹具位于 scripts/ui-smoke/chain-parity.*。用户明确授权本次本机 Rust/浏览器测试及 portable 构建，禁止启动真实客户端/内核；此授权不替代其他任务的 Actions 限制。验证与包摘要见 docs/flclash-final-validation.md，版本保持1.0.46。
+
 2026-11-13 节点网格与SOCKS导入：更多按钮必须使用icon-btn并参与卡片头部布局，不能被全局主按钮规则染色或绝对定位盖协议。网格列数按实际容器宽度计算并同步虚拟行，不再仅按window断点猜测。SOCKS的URI先分离userinfo再解析地址，兼容含/的标准Base64；有显式冒号按组件解码一次，无冒号仅对有效UTF-8且含冒号的Base64凭据对解码，内部凭据不再percent decode；普通用户名及空认证保留。SS2022本轮已取消，不夹带修改。新增合成导入/导出回归与真实节点网格浏览器检查，Rust/浏览器/打包仅Actions，版本1.0.46。
 
 2026-11-13 订阅收录手动节点：upsert_subscription在源ID稳定匹配后，根据完整protocol/server/port/config/TLS/transport/UDP及编辑前baseline匹配同订阅appended；完整快照双向唯一才接管，采用手动ID放回源位置、清appended、保留本地编辑及其他手动节点。旧版已有远端副本时迁移选点/收藏/选核/规则/池/链引用，池成员去重后同步单点。未知协议、歧义、源副本已有独立编辑、明确clone、链同时使用双方时保持独立。Rust测试仅Actions，保持1.0.46，本轮不直接修改活动store。
