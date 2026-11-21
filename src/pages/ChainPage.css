@@ -157,14 +157,92 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  position: relative;
+  min-width: 0;
   padding: 0.4rem 0.6rem;
   font-size: 0.85rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
 
+/* Pool editor groups reuse the chain editor's shared group-header component. */
+.chain-pool-node-group {
+  gap: 0.15rem;
+}
+
+.chain-pool-node-group .chain-pool-node-item {
+  border-radius: 5px;
+}
+
+.chain-pool-node-item .chain-pool-select-dot {
+  position: relative;
+  flex: none;
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 使用 ::before 伪元素完全覆盖 input 默认渲染，确保尺寸与状态不受浏览器默认样式影响 */
+.chain-pool-node-item .chain-pool-select-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 65%, transparent);
+  transition: background-color 0.12s ease;
+}
+
+.chain-pool-node-item .chain-pool-select-dot:checked::before {
+  background: var(--primary);
+}
+
+.chain-pool-node-item:focus-within .chain-pool-select-dot {
+  outline: 2px solid var(--primary-border);
+  outline-offset: 2px;
+}
+
+/* Chain page scope only: keep non-chain target-node badges unchanged. */
+.chain-page .chain-pool-row .pill.target-node {
+  background: var(--primary-muted);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
 .chain-pool-node-item:last-child {
   border-bottom: none;
+}
+
+/* Subscription tag on pool/editor/candidate rows — with the cross-subscription
+   node listing (list_chain_nodes) users need to tell which config a node came
+   from, and rows from a currently-disabled config dim slightly. */
+.chain-node-sub {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 9rem;
+  flex: none;
+}
+
+.chain-pool-node-item[data-disabled] > span:first-of-type,
+.chain-candidate-item[data-disabled] {
+  opacity: 0.55;
+}
+
+/* Transient feedback banner after copy/export menu actions (ChainPage). */
+.chain-page-notice {
+  font-size: 12px;
+  margin: 0;
+  padding: 0.2rem 0 0.8rem;
 }
 
 .chain-list {
@@ -781,6 +859,52 @@
   flex-direction: column;
   padding: 0.3rem;
   gap: 0.25rem;
+}
+
+/* G4: subscription-grouped candidates. Groups are collapsed by default —
+   the flat list kept the whole subscription (~1000 rows) in the DOM, folded
+   groups render heads only. A group is open when the user toggled it open or
+   the search box is active (matches force groups open so hits are visible
+   immediately). */
+.chain-candidate-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+/* Excluded from the App.css global primary-button rule — a group head must
+   read as a passive text row, not an action button. */
+.chain-candidate-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chain-candidate-group-head:hover {
+  background: var(--primary-muted);
+}
+
+.chain-candidate-group-arrow {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.chain-candidate-group-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .chain-candidate-item {
