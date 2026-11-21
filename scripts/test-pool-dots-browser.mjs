@@ -80,7 +80,32 @@ try {
     const beforeStyle = window.getComputedStyle(el, "::before");
     return beforeStyle.backgroundColor;
   });
-  
+
+  // A focused picker input must keep the dot itself at 8px without a focus
+  // halo. Read the computed values on the actual input: the historical halo
+  // came from this element's focus-within outline, not from either pseudo.
+  await checkedCheckbox.focus();
+  const focusedCheckboxStyles = await checkedCheckbox.evaluate(el => {
+    const style = window.getComputedStyle(el);
+    return {
+      outline: style.outline,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineOffset: style.outlineOffset,
+      boxShadow: style.boxShadow,
+      borderWidth: style.borderWidth,
+    };
+  });
+  assert.equal(
+    focusedCheckboxStyles.outlineStyle,
+    "none",
+    `Focused checkbox must have no outline; computed outline=${focusedCheckboxStyles.outline}`,
+  );
+  assert.equal(focusedCheckboxStyles.outlineWidth, "0px");
+  assert.equal(focusedCheckboxStyles.outlineOffset, "0px");
+  assert.equal(focusedCheckboxStyles.boxShadow, "none");
+  assert.equal(focusedCheckboxStyles.borderWidth, "0px");
+
   // Assert state distinction
   assert.notEqual(uncheckedCheckboxBg, checkedCheckboxBg, 
     `Checkbox states must differ: unchecked=${uncheckedCheckboxBg}, checked=${checkedCheckboxBg}`);
