@@ -20,7 +20,7 @@
 - `DashboardPage.css`
 - `@xyflow/react/dist/style.css`
 
-新夹具复用 `dashboard.tsx` 的纯内存 mock IPC 宿主，进入真实 `ChainPage`，通过真实池行菜单打开 `PoolEditorModal`。浏览器现场确认加载上述 8 份样式，不再维护手写的池编辑器 DOM。
+新夹具使用独立的纯内存 mock IPC 宿主，进入真实 `ChainPage`，显式加载全部生产样式，并通过真实池行菜单打开 `PoolEditorModal`。浏览器现场确认加载上述 8 份样式，不再维护手写池编辑器 DOM，也不依赖任一分支的 dashboard mock 是否支持链页。
 
 ## 聚焦 + 未选状态取证
 
@@ -49,7 +49,7 @@
 - 鼠标取消与重新选中各一次，勾选状态正确，且两次后 `document.activeElement` 都不是该 input；未加第二层的旧行为在该断言上实测失败。
 - 另一订阅 radio 经可信 touchscreen tap 后选中、互斥正确，activeElement 同样不是 input。
 - 从真实分组头按 Tab 可以聚焦选择 input，Space 连续两次正确取消/恢复；键盘聚焦未选态也没有全局 field 阴影。
-- 节点 checkbox 与订阅 radio 外盒均为 8×8，选中/未选颜色可区分；16px 区域最终枚举为 20 个相交元素。
+- 节点 checkbox 与订阅 radio 外盒均为 8×8，选中/未选颜色可区分；最终独立夹具完整记录 16px 区域内的全部 13 个相交元素（数量只反映宿主 DOM 层级）。
 
 本分支最终 `pnpm build` 通过，`powershell -File run-ui-tests.ps1` 实测 10/10。概览旧断言原先要求点击后获得主题色焦点边框，已改为验证非聚焦边框不随点击变化，同时保留勾选状态、协议色填充和圆角检查。
 
