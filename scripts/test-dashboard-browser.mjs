@@ -991,8 +991,12 @@ try {
       radius: beforeStyle.borderRadius,
     };
   }) : null;
+  // Pointer selection intentionally no longer focuses the picker: the old
+  // assertion expected the generic .field input:focus primary border. The
+  // selected fill still follows the protocol color, while the neutral,
+  // unfocused border must remain unchanged by the click.
   checkBatch10("指定节点圆点可选中并切换", beforeChoice === false && afterChoice === true && dotCount > 0 &&
-    dotBefore?.selected === false && dotAfter?.selected === true && dotAfter?.background === dotAfter?.expectedColor && dotAfter?.border === dotAfter?.expectedColor &&
+    dotBefore?.selected === false && dotAfter?.selected === true && dotAfter?.background === dotAfter?.expectedColor && dotAfter?.border === dotBefore?.border &&
     dotBefore?.radius === "50%" && dotAfter?.radius === "50%",
     JSON.stringify({ before: beforeChoice, after: afterChoice, dotBefore, dotAfter, viewport: "1280x900" }));
   await page.getByRole("button", { name: "保存", exact: true }).click();
