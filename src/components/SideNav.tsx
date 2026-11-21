@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/messages";
 import type { NavKey } from "../types";
@@ -8,13 +8,59 @@ import { ThemeSwitch } from "./ThemeSwitch";
 import "./SideNav.css";
 
 const COMPACT_QUERY = "(max-width: 1100px)";
-const ITEMS: { key: NavKey; labelKey: MessageKey; path: string; activePath: string }[] = [
-  { key: "dashboard", labelKey: "dashboard.title", path: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", activePath: "M3 3h8v8H3z M14 3h7v7h-7z M3 14h7v7H3z M14 13h7v8h-7z" },
-  { key: "nodes", labelKey: "nodes.title", path: "M8 5h8 M6 8v8 M18 8v8 M8 19h8 M3 3h5v5H3z M16 3h5v5h-5z M3 16h5v5H3z M16 16h5v5h-5z", activePath: "M2 2h7v7H2z M15 2h7v7h-7z M2 15h7v7H2z M15 15h7v7h-7z M9 4h6v2H9z M4 9h2v6H4z M18 9h2v6h-2z M9 18h6v2H9z" },
-  { key: "config", labelKey: "config.title", path: "M3 6h7l2 2h9v12H3z M3 6V4h7l2 2h7v2", activePath: "M3 3h7l3 3h8v2H3z M2 9h20l-2 12H4z" },
-  { key: "traffic", labelKey: "traffic.title", path: "M3 20h18 M6 16v-5 M12 16V4 M18 16V8", activePath: "M4 10h4v7H4z M10 3h4v14h-4z M16 7h4v10h-4z M3 19h18v2H3z" },
-  { key: "logs", labelKey: "logs.title", path: "M5 3h14v18H5z M8 7h8 M8 12h8 M8 17h5", activePath: "M4 2h12l4 4v16H4z M8 7v2h8V7z M8 12v2h8v-2z M8 17v2h5v-2z" },
-  { key: "settings", labelKey: "settings.title", path: "M4 6h4 M12 6h8 M4 12h10 M18 12h2 M4 18h2 M10 18h10 M8 3v6 M14 9v6 M6 15v6", activePath: "M6 2h4v8H6z M3 5h3v2H3z M10 5h11v2H10z M12 8h4v8h-4z M3 11h9v2H3z M16 11h5v2h-5z M4 14h4v8H4z M3 17h1v2H3z M8 17h13v2H8z" },
+
+type LucideIconName = "layout-grid" | "waypoints" | "layers" |
+  "chart-column" | "scroll-text" | "settings";
+
+/** Official Lucide SVG children, from lucide-icons/lucide@c1a02a0.
+ *  Icon paths are inlined: no runtime icon package or network dependency.
+ *  ISC license: docs/lucide-icons-LICENSE.txt. */
+const LUCIDE_ICONS: Record<LucideIconName, ReactNode> = {
+  "layout-grid": <>
+    <rect width="7" height="7" x="3" y="3" rx="1" />
+    <rect width="7" height="7" x="14" y="3" rx="1" />
+    <rect width="7" height="7" x="14" y="14" rx="1" />
+    <rect width="7" height="7" x="3" y="14" rx="1" />
+  </>,
+  waypoints: <>
+    <path d="m10.586 5.414-5.172 5.172" />
+    <path d="m18.586 13.414-5.172 5.172" />
+    <path d="M6 12h12" />
+    <circle cx="12" cy="20" r="2" />
+    <circle cx="12" cy="4" r="2" />
+    <circle cx="20" cy="12" r="2" />
+    <circle cx="4" cy="12" r="2" />
+  </>,
+  layers: <>
+    <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+    <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+    <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+  </>,
+  "chart-column": <>
+    <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+    <path d="M18 17V9" />
+    <path d="M13 17V5" />
+    <path d="M8 17v-3" />
+  </>,
+  "scroll-text": <>
+    <path d="M15 12h-5" />
+    <path d="M15 8h-5" />
+    <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+    <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3" />
+  </>,
+  settings: <>
+    <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+    <circle cx="12" cy="12" r="3" />
+  </>,
+};
+
+const ITEMS: { key: NavKey; labelKey: MessageKey; icon: LucideIconName }[] = [
+  { key: "dashboard", labelKey: "dashboard.title", icon: "layout-grid" },
+  { key: "nodes", labelKey: "nodes.title", icon: "waypoints" },
+  { key: "config", labelKey: "config.title", icon: "layers" },
+  { key: "traffic", labelKey: "traffic.title", icon: "chart-column" },
+  { key: "logs", labelKey: "logs.title", icon: "scroll-text" },
+  { key: "settings", labelKey: "settings.title", icon: "settings" },
 ];
 
 interface Props {
@@ -141,13 +187,18 @@ export function SideNav({ active, onChange }: Props) {
             title={t(item.labelKey)}
             onClick={() => onChange(item.key)}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-              <path
-                d={active === item.key ? item.activePath : item.path}
-                fill={active === item.key ? "currentColor" : "none"}
-                stroke={active === item.key ? "none" : "currentColor"}
-                fillRule="evenodd"
-              />
+            <svg
+              data-lucide={item.icon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              {LUCIDE_ICONS[item.icon]}
             </svg>
             <span className="side-nav-label">{t(item.labelKey)}</span>
           </button>
