@@ -715,6 +715,22 @@ function SubscriptionNodeGroup({
   );
 }
 
+/** Pointer activation must not turn the pool's 8px picker into a focused
+ *  text-field-like control: App.css intentionally glows .field input:focus.
+ *  Prevent only the primary pointer's default focus step. Edge's label
+ *  activation can still forward a click to the input, so that label-generated
+ *  click is cancelled and dispatched to the same state updater explicitly.
+ *  Direct input clicks and keyboard Space retain native onChange behavior. */
+function preventPoolRowPointerFocus(event: { button: number; preventDefault: () => void }) {
+  if (event.button === 0) event.preventDefault();
+}
+
+function handlePoolRowClick(event: React.MouseEvent<HTMLLabelElement>, toggle: () => void) {
+  if (event.target instanceof HTMLInputElement) return;
+  event.preventDefault();
+  toggle();
+}
+
 function PoolEditorModal({
   pool,
   nodes,
@@ -924,6 +940,8 @@ function PoolEditorModal({
                                   ? `${n.subscription_name} · ${t("chain.subDisabled")}`
                                   : n.subscription_name || undefined
                               }
+                              onMouseDown={preventPoolRowPointerFocus}
+                              onClick={(event) => handlePoolRowClick(event, () => toggleNode(n.id))}
                             >
                               <input
                                 className="chain-pool-select-dot"
@@ -1015,6 +1033,8 @@ function PoolEditorModal({
                             ? t("chain.poolSubHint")
                             : `${t("chain.subDisabled")} · ${t("chain.poolSubHint")}`
                         }
+                        onMouseDown={preventPoolRowPointerFocus}
+                        onClick={(event) => handlePoolRowClick(event, () => setSubscriptionId(s.id))}
                       >
                         <input
                           className="chain-pool-select-dot"

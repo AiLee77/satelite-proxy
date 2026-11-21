@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: false, channel: "msedge" });
 const errors = [];
 let page;
 try {
-  const context = await browser.newContext({ viewport: { width: 960, height: 720 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ viewport: { width: 960, height: 720 }, hasTouch: true, serviceWorkers: "block" });
   const local = url => ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname);
   await context.route("**/*", route => {
     const url = route.request().url();
@@ -128,9 +128,27 @@ try {
       return found;
     };
     const elements = Array.from(document.querySelectorAll("*")).filter(element => intersects(element.getBoundingClientRect()));
+    const globalFocusRules = [];
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      const source = sheet.href || sheet.ownerNode?.getAttribute?.("data-vite-dev-id") || "inline";
+      for (const rule of rules) {
+        if (!(rule instanceof CSSStyleRule)) continue;
+        for (const selector of rule.selectorText.split(",")) {
+          if (selector.trim() !== ".field input:focus") continue;
+          globalFocusRules.push({
+            source,
+            selector: selector.trim(),
+            declarations: { "box-shadow": rule.style.getPropertyValue("box-shadow") },
+          });
+        }
+      }
+    }
     return {
       state: { checked: el.checked, focused: document.activeElement === el, focusVisible: el.matches(":focus-visible") },
       ring,
+      globalFocusRules,
       input: {
         self: computed(getComputedStyle(el)),
         before: computed(getComputedStyle(el, "::before")),
@@ -154,8 +172,7 @@ try {
   await writeFile("test-results/pool-dots-ring-audit.json", JSON.stringify(report, null, 2));
   console.log(`✓ 生产样式 ${loadedStyles.length} 份；16px 区域元素 ${ringAudit.elements.length} 个`);
   console.log(`✓ 取证写入 test-results/pool-dots-ring-audit.json`);
-  const globalFocusRules = ringAudit.elements.find(item => item.tag === "input")?.rules
-    .filter(rule => rule.selector.includes(".field input:focus")) ?? [];
+  const globalFocusRules = ringAudit.globalFocusRules;
   assert.ok(globalFocusRules.some(rule => rule.declarations["box-shadow"]), "未定位到 App.css 的 .field input:focus 环规则");
   console.log(`✓ 环规则来源: ${globalFocusRules.map(rule => `${rule.source} :: ${rule.selector} :: ${rule.declarations["box-shadow"]}`).join(" | ")}`);
 
@@ -165,8 +182,8 @@ try {
       assert.equal(value[part].outlineStyle, "none", `${state} ${part} 不应有 outline 环`);
     }
   }
-  assert.notEqual(cancelled.focused, true, "可信取消点击后 input 不应获得焦点");
-  assert.notEqual(selected.focused, true, "可信选中点击后 input 不应获得焦点");
+  assert.equal(cancelled.focused, false, "可信取消点击后 input 不应获得焦点");
+  assert.equal(selected.focused, false, "可信选中点击后 input 不应获得焦点");
 
   // Keyboard modality remains intact: Tab from the real group header reaches
   // the first input, and Space toggles twice without losing either behavior.
@@ -176,11 +193,17 @@ try {
   assert.equal(await input.evaluate(el => el.matches(":focus-visible")), true, "Tab 后应为 focus-visible");
   await page.keyboard.press("Space");
   assert.equal(await input.isChecked(), false, "Space 应取消勾选");
+  const keyboardCancelled = await snapshot(input);
+  assert.equal(keyboardCancelled.focused, true);
+  assert.equal(keyboardCancelled.input.boxShadow, "none", "键盘聚焦未选态也不应显示全局 field 阴影");
   await page.keyboard.press("Space");
   assert.equal(await input.isChecked(), true, "第二次 Space 应重新勾选");
 
   const checkboxRect = await input.boundingBox();
-  assert.ok(checkboxRect && Math.round(checkboxRect.width) === 8 && Math.round(checkboxRect.height) === 8);
+  assert.ok(
+    checkboxRect && Math.round(checkboxRect.width) === 8 && Math.round(checkboxRect.height) === 8,
+    `checkbox 应为 8×8，实际 ${JSON.stringify(checkboxRect)}`,
+  );
   const uncheckedBg = cancelled.beforeBackground;
 
   // The subscription picker is also the production radio row implementation.
@@ -190,11 +213,19 @@ try {
   await radio.waitFor({ state: "visible" });
   await radioRows.first().click();
   assert.equal(await radio.isChecked(), true, "订阅 radio 点击应选中");
-  assert.notEqual(await radio.evaluate(el => document.activeElement === el), true, "radio 鼠标点击不应聚焦");
+  assert.equal(await radio.evaluate(el => document.activeElement === el), false, "radio 鼠标点击不应聚焦");
   const radioRect = await radio.boundingBox();
   assert.ok(radioRect && Math.round(radioRect.width) === 8 && Math.round(radioRect.height) === 8);
   const checkedRadioBg = await radio.evaluate(el => getComputedStyle(el, "::before").backgroundColor);
-  const uncheckedRadioBg = await radioRows.nth(1).locator("input").evaluate(el => getComputedStyle(el, "::before").backgroundColor);
+  const secondRadioRow = radioRows.nth(1);
+  const secondRadio = secondRadioRow.locator("input");
+  const uncheckedRadioBg = await secondRadio.evaluate(el => getComputedStyle(el, "::before").backgroundColor);
+  const touchRect = await secondRadioRow.boundingBox();
+  assert.ok(touchRect, "触控 radio 行不可见");
+  await page.touchscreen.tap(touchRect.x + touchRect.width / 2, touchRect.y + touchRect.height / 2);
+  assert.equal(await secondRadio.isChecked(), true, "可信触控应切换 radio");
+  assert.equal(await radio.isChecked(), false, "同名 radio 应保持互斥");
+  assert.equal(await secondRadio.evaluate(el => document.activeElement === el), false, "触控不应聚焦 radio");
   assert.notEqual(checkedRadioBg, uncheckedRadioBg, "radio 选中/未选必须可区分");
   assert.notEqual(uncheckedBg, initial.beforeBackground, "checkbox 选中/未选必须可区分");
 
