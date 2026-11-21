@@ -261,7 +261,7 @@ async function freshServicesOnResume() {
 async function structure(locale) {
   const navigation = page.locator(".pro-shell > .side-nav").getByRole("navigation");
   assert.equal(await navigation.count(), 1, "必须使用真实 SideNav 导航");
-  assert.equal(await navigation.getByRole("button").count(), 6, "六个页面入口");
+  assert.equal(await navigation.getByRole("button").count(), 7, "七个页面入口");
   assert.equal(await navigation.locator('[aria-current="page"]').count(), 1);
   assert.equal(await navigation.locator('[aria-current="page"]').getAttribute("aria-label"), locale === "zh" ? "概览" : "Overview");
   assert.equal(await page.locator('.pro-shell > aside[aria-hidden="true"], .pro-shell > .topnav-wrap').count(), 0, "禁止空白占位侧栏和专业模式 TopNav");
@@ -523,7 +523,7 @@ try {
   assert.equal(await sideButtons.nth(1).locator('svg').getAttribute('fill'), 'none', '激活图标保持同图描边');
   assert.equal(await sideButtons.nth(0).locator('svg').getAttribute('fill'), 'none', '普通图标同样保持描边');
   assert.deepEqual(await sideButtons.locator('svg').evaluateAll(icons => icons.map(icon => icon.innerHTML)), iconMarkup, '普通/激活切换不改变 Lucide 图形');
-  for (let index = 2; index < 6; index++) {
+  for (let index = 2; index < 7; index++) {
     await sideButtons.nth(index).click();
     assert.equal(await sideButtons.nth(index).locator('svg').getAttribute('fill'), 'none');
     assert.equal(await sideButtons.nth(index).getAttribute('aria-current'), 'page');

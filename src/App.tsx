@@ -20,13 +20,14 @@ import "./ProAppearance.css";
 import "./ProMotion.css";
 import "./uiMotion";
 
-// Cmd/Ctrl+数字切换到与顶部导航一致的页面。
+// Cmd/Ctrl+数字切换到与侧边导航一致的页面。
 const PRO_SHORTCUT_MAP: Partial<Record<string, NavKey>> = {
   "1": "dashboard",
   "2": "nodes",
-  "3": "config",
-  "4": "traffic",
-  "5": "logs",
+  "3": "chains",
+  "4": "config",
+  "5": "traffic",
+  "6": "logs",
 };
 
 // Secondary pages: code-split so low-memory WebView recreate only parses home first.
@@ -35,6 +36,9 @@ const ConfigPage = lazy(() =>
 );
 const NodesPage = lazy(() =>
   import("./pages/NodesPage").then((m) => ({ default: m.NodesPage })),
+);
+const ChainPage = lazy(() =>
+  import("./pages/ChainPage").then((m) => ({ default: m.ChainPage })),
 );
 const TrafficPage = lazy(() =>
   import("./pages/TrafficPage").then((m) => ({ default: m.TrafficPage })),
@@ -87,6 +91,7 @@ function ProShell() {
             <Suspense fallback={<PageFallback />}>
               {nav === "config" && <ConfigPage />}
               {nav === "nodes" && <NodesPage />}
+              {nav === "chains" && <ChainPage />}
               {nav === "traffic" && <TrafficPage />}
               {nav === "logs" && <LogsPage />}
               {nav === "settings" && <SettingsPage />}

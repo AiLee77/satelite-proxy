@@ -9,8 +9,8 @@ import "./SideNav.css";
 
 const COMPACT_QUERY = "(max-width: 1100px)";
 
-type LucideIconName = "layout-grid" | "waypoints" | "layers" |
-  "chart-column" | "scroll-text" | "settings";
+type LucideIconName = "layout-grid" | "network" | "link" | "sliders-horizontal" |
+  "activity" | "terminal" | "settings";
 
 /** Official Lucide SVG children, from lucide-icons/lucide@c1a02a0.
  *  Icon paths are inlined: no runtime icon package or network dependency.
@@ -22,31 +22,34 @@ const LUCIDE_ICONS: Record<LucideIconName, ReactNode> = {
     <rect width="7" height="7" x="14" y="14" rx="1" />
     <rect width="7" height="7" x="3" y="14" rx="1" />
   </>,
-  waypoints: <>
-    <path d="m10.586 5.414-5.172 5.172" />
-    <path d="m18.586 13.414-5.172 5.172" />
-    <path d="M6 12h12" />
-    <circle cx="12" cy="20" r="2" />
-    <circle cx="12" cy="4" r="2" />
-    <circle cx="20" cy="12" r="2" />
-    <circle cx="4" cy="12" r="2" />
+  network: <>
+    <rect x="16" y="16" width="6" height="6" rx="1" />
+    <rect x="2" y="16" width="6" height="6" rx="1" />
+    <rect x="9" y="2" width="6" height="6" rx="1" />
+    <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+    <path d="M12 12V8" />
   </>,
-  layers: <>
-    <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
-    <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
-    <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+  link: <>
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
   </>,
-  "chart-column": <>
-    <path d="M3 3v16a2 2 0 0 0 2 2h16" />
-    <path d="M18 17V9" />
-    <path d="M13 17V5" />
-    <path d="M8 17v-3" />
+  "sliders-horizontal": <>
+    <path d="M10 5H3" />
+    <path d="M12 19H3" />
+    <path d="M14 3v4" />
+    <path d="M16 17v4" />
+    <path d="M21 12h-9" />
+    <path d="M21 19h-5" />
+    <path d="M21 5h-7" />
+    <path d="M8 10v4" />
+    <path d="M8 12H3" />
   </>,
-  "scroll-text": <>
-    <path d="M15 12h-5" />
-    <path d="M15 8h-5" />
-    <path d="M19 17V5a2 2 0 0 0-2-2H4" />
-    <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3" />
+  activity: <>
+    <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+  </>,
+  terminal: <>
+    <path d="M12 19h8" />
+    <path d="m4 17 6-6-6-6" />
   </>,
   settings: <>
     <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
@@ -56,10 +59,11 @@ const LUCIDE_ICONS: Record<LucideIconName, ReactNode> = {
 
 const ITEMS: { key: NavKey; labelKey: MessageKey; icon: LucideIconName }[] = [
   { key: "dashboard", labelKey: "dashboard.title", icon: "layout-grid" },
-  { key: "nodes", labelKey: "nodes.title", icon: "waypoints" },
-  { key: "config", labelKey: "config.title", icon: "layers" },
-  { key: "traffic", labelKey: "traffic.title", icon: "chart-column" },
-  { key: "logs", labelKey: "logs.title", icon: "scroll-text" },
+  { key: "nodes", labelKey: "nodes.title", icon: "network" },
+  { key: "chains", labelKey: "nav.chains", icon: "link" },
+  { key: "config", labelKey: "config.title", icon: "sliders-horizontal" },
+  { key: "traffic", labelKey: "traffic.title", icon: "activity" },
+  { key: "logs", labelKey: "logs.title", icon: "terminal" },
   { key: "settings", labelKey: "settings.title", icon: "settings" },
 ];
 

@@ -1,7 +1,7 @@
 // Mock-only visual regression. This starts Vite and Chromium, never Satelite
 // or a proxy core. Run with the same Playwright environment as the UI suite.
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createServer } from "vite";
 
@@ -10,16 +10,18 @@ if (!process.env.PLAYWRIGHT_MODULE) throw new Error("缺少 PLAYWRIGHT_MODULE");
 const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
 const base = "http://127.0.0.1:1441";
 const output = "test-results/side-nav-icons";
+await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 const server = await createServer({ server: { host: "127.0.0.1", port: 1441, strictPort: true } });
 await server.listen();
 const browser = await chromium.launch({ headless: true });
 const expected = {
   "layout-grid": { path: 0, rect: 4, circle: 0 },
-  waypoints: { path: 3, rect: 0, circle: 4 },
-  layers: { path: 3, rect: 0, circle: 0 },
-  "chart-column": { path: 4, rect: 0, circle: 0 },
-  "scroll-text": { path: 4, rect: 0, circle: 0 },
+  network: { path: 2, rect: 3, circle: 0 },
+  link: { path: 2, rect: 0, circle: 0 },
+  "sliders-horizontal": { path: 9, rect: 0, circle: 0 },
+  activity: { path: 1, rect: 0, circle: 0 },
+  terminal: { path: 2, rect: 0, circle: 0 },
   settings: { path: 1, rect: 0, circle: 1 },
 };
 const names = Object.keys(expected);
@@ -50,10 +52,10 @@ try {
     return color;
   });
   const buttons = page.locator(".side-nav-items .side-nav-item");
-  assert.equal(await buttons.count(), 6, "真实 SideNav 六个入口");
+  assert.equal(await buttons.count(), 7, "真实 SideNav 七个入口");
   assert.deepEqual(await page.locator(".side-nav-items [data-lucide]").evaluateAll(
     icons => icons.map(icon => icon.getAttribute("data-lucide")),
-  ), names, "六个 Lucide 名称及顺序");
+  ), names, "七个 Lucide 名称及顺序");
 
   for (let index = 0; index < names.length; index++) {
     const name = names[index];
