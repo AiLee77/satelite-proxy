@@ -32,6 +32,11 @@ export async function runDashboardParity() {
       assert.deepEqual(await page.evaluate(() => window.dashboardFixture.unexpected), []);
       checks++;
     }
+    await open();
+    await page.waitForFunction(() => document.querySelector(".dashboard-app-version")?.textContent === "SATELITE · 1.0.46");
+    assert.equal(await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === "plugin:app|version").length), 1);
+    assert.equal(await page.locator(".dashboard-heading .dashboard-app-version").isVisible(), true);
+    checks++;
     assert.deepEqual(errors, []);
     console.log(`Dashboard parity: ${checks} scenarios passed (mock IPC only)`);
   } finally {
