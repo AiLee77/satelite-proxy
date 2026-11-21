@@ -395,6 +395,16 @@
   opacity: 0.75;
 }
 
+/* G2: share/export actions pulled left in the chain editor footer — the
+ *  global .modal-footer packs right, so the cluster owns the free side.
+   The glass-btn family already carries the right visual weight at 0.74rem,
+   no extra sizing needed. */
+.chain-editor-share {
+  margin-right: auto;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
 /* Chain diagnostics: per-hop probe table. The last row (whole chain) gets a
    subtle accent emphasis — it is the exit the internet sees. */
 .chain-diag-modal {
@@ -625,19 +635,20 @@
 
 /* xyflow custom nodes, network-console style: single nodes are compact
    entity cards, pools are one-size-bigger aggregate cards (see HopNode).
-   Glass material matches .pill/.chip elsewhere in the app. */
+   批次 8-D：画布内节点卡与「指定节点/停用/检测出口」胶囊同一克制三件套
+   口径（--surface-2 底 + 细描边 + 低对比），不用漂浮 --surface 玻璃。 */
 .chain-hop-node {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.28rem;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.55rem 0.85rem 0.5rem;
   font-size: 0.82rem;
   color: var(--text);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -687,17 +698,20 @@
   justify-content: center;
   font-size: 0.68rem;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent-purple) 16%, transparent);
-  color: var(--accent-purple);
+  /* 批次 8-D：序号徽标去紫色实底，改中性描边 chip（surface-2 底 + muted
+     描边字），入口/出口两态改低饱和语义色小字。 */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
 }
 
 .chain-hop-node.entry .chain-hop-badge {
-  background: var(--success-muted);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
   color: var(--success);
 }
 
 .chain-hop-node.exit .chain-hop-badge {
-  background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
   color: var(--accent-blue);
 }
 
@@ -749,16 +763,15 @@
   color: var(--danger);
 }
 
-/* Hover/drag affordance: soft accent border + lifted shadow. */
+/* Hover/drag affordance: 批次 8-D 改绿色点缀（--primary 细描边），拖拽
+   仍给一层深色投影作浮起提示（浅色主题下投影很淡）。 */
 .chain-editor-canvas .react-flow__node:hover .chain-hop-node {
-  border-color: color-mix(in srgb, var(--accent-purple) 35%, var(--border));
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
 }
 
 .chain-editor-canvas .react-flow__node.dragging .chain-hop-node {
-  border-color: var(--accent-purple);
-  box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.16),
-    var(--shadow-card);
+  border-color: var(--primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
 }
 
 .chain-editor-modal {
@@ -907,11 +920,39 @@
   font-size: 0.7rem;
 }
 
+/* Hops already on the canvas dim in the candidate list so a duplicate is
+   visible before it gets dragged. Still draggable on purpose — placing the
+   same node twice has legitimate uses once isValidConnection permits it. */
+.chain-candidate-item.on-canvas {
+  opacity: 0.45;
+}
+
+/* In-chain state marker, always rendered (A 两态常驻): on-canvas rows lead
+   with a filled dot (same size/semantic color as the nodes-list current-node
+   dot: ● in --primary at 0.9rem), off-canvas rows keep a hollow ○ in --muted.
+   The mark is persistent in both states so names never shift horizontally
+   when a row's on-canvas status flips. Sidebar rows stay append-semantics
+   (click = append hop, still draggable) — the mark only says "already a
+   hop of the current chain" (filled) vs "not yet placed" (hollow). */
+.chain-candidate-item > .chain-candidate-mark,
+.chain-pool-member > .chain-candidate-mark {
+  flex: none;
+  padding-right: 0.25rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.chain-candidate-item.on-canvas > .chain-candidate-mark,
+.chain-pool-member.on-canvas > .chain-candidate-mark {
+  color: var(--primary);
+}
+
 .chain-candidate-item {
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 0.4rem 0.5rem;
   font-size: 0.82rem;
   color: var(--text);
@@ -927,8 +968,143 @@
   cursor: grabbing;
 }
 
-.chain-candidate-item:hover {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+/* B 候选行分隔与 hover：hairline 分隔线显式行界（同 chain-pool-node-item
+   的 --border 口径、/last-child 免责）；hover 语义改主色淡底并配合 A 的
+   常驻圆点把空心 ○ 点亮成实心 ●——hover 即预演 on-canvas 目标态。 */
+.chain-candidate-item:not(:last-child),
+.chain-pool-member:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.chain-candidate-item:hover,
+.chain-pool-member:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.chain-candidate-item:hover > .chain-candidate-mark,
+.chain-pool-member:hover > .chain-candidate-mark {
+  color: var(--primary);
+}
+
+/* Pool candidates: the whole pool stays draggable, with an inline expander
+   that lists its members for per-node picking ("add selected" appends each
+   checked member as an individual node hop). */
+.chain-candidate-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > .glyph,
+.chain-candidate-pool-row .chain-candidate-item.pool-drag > span:not(.chain-node-sub) {
+  white-space: nowrap;
+}
+
+.chain-pool-expand {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-pill);
+  background: var(--primary-muted);
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chain-pool-expand:hover {
+  background: var(--primary-muted);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.chain-candidate-pool.expanded .chain-pool-expand {
+  color: var(--primary);
+}
+
+.chain-pool-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.3rem 0.4rem 0.4rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+/* 池页签紧凑化（成员行可点）：整池行与成员行都收窄内距/字号，密度优先，
+   hover 仅以淡色底提示可点。成员行与候选节点同一手势——点击直接入链尾、
+   拖拽仍可定位投放（同一 .on-canvas 淡化口径）。 */
+.chain-candidate-pool-row .chain-candidate-item.pool-drag {
+  padding: 0.24rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+.chain-pool-members {
+  gap: 1px;
+  padding: 0.2rem 0.3rem 0.28rem;
+}
+
+.chain-pool-member {
+  padding: 0.1rem 0.2rem;
+  font-size: 0.74rem;
+  touch-action: none;
+}
+
+.chain-pool-member > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-pool-member[data-disabled] {
+  opacity: 0.6;
+}
+
+/* 中段省略保尾：长名在行宽不足时只砍中段——订阅节点名的区分度几乎都
+   在后缀，尾部始终完整；宽裕时两段完整显示不省略。全名由行 title
+   提供（hover 可见），不在此重复。 */
+.chain-item-name {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chain-item-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-item-tail {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Cursor-following label shown while dragging a candidate onto the canvas
@@ -940,7 +1116,7 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
   background: var(--surface);
-  border: 1px solid var(--accent-purple);
+  border: 1px solid var(--primary-border);
   border-radius: 999px;
   padding: 0.25rem 0.75rem;
   font-size: 0.8rem;
@@ -972,7 +1148,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  background: var(--bg-canvas, var(--bg));
+  /* 批次 8-D：画布容器底色对齐面板（与 react-flow__background 同色）。 */
+  background: var(--panel-solid);
 }
 
 .chain-graph-status {
@@ -991,13 +1168,15 @@
 }
 
 /* xyflow ships its own light-only default theme; repaint the essentials to
-   follow the app's dark/light tokens instead of the library's white canvas. */
+   follow the app's dark/light tokens instead of the library's white canvas.
+   批次 8-D：画布底色对齐面板（--panel-solid，深色主题略深于页面）；连线
+   由紫色改主题绿，与「使用中」出口胶囊同源点缀。 */
 .chain-editor-canvas .react-flow__background {
-  background: var(--bg-canvas, var(--bg));
+  background: var(--panel-solid);
 }
 
 .chain-editor-canvas .react-flow__edge-path {
-  stroke: var(--accent-purple);
+  stroke: color-mix(in srgb, var(--primary) 75%, transparent);
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -1007,50 +1186,70 @@
 }
 
 .chain-editor-canvas .react-flow__node.selected .chain-hop-node {
-  border-color: var(--accent-purple);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent-purple) 30%, transparent),
-    var(--shadow-card);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
-/* Connection dots on the hop capsules stay hidden until relevant (node hover,
-   node selected, or a connection being dragged nearby) — a row of always-on
-   purple dots at every node edge reads as visual noise. */
+/* Connection affordances on the hop capsules (G6): the handle element is a
+   transparent 24px hit zone whose centre is the connection point — xyflow
+   pins _left/_right to the node edge with translate(-50%,-50%) centre
+   alignment, so widening the box keeps the anchor exactly where the old
+   8px dot sat. The visible 8px dot moves to ::after, which lets the scale
+   feedback live on the pseudoelement without ever touching the element
+   transform xyflow uses for positioning (scale on the box itself used to
+   collide with the translate and offset the dot by a few px on hover).
+   Dots stay hidden until relevant (node hover, node selected, or a live
+   connection start/end nearby) — always-on purple dots at every node edge
+   read as visual noise. */
 .chain-editor-canvas .chain-hop-node .react-flow__handle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: crosshair;
+}
+
+.chain-editor-canvas .chain-hop-node .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--panel-solid, var(--surface));
-  border: 2px solid var(--accent-purple);
+  border: 2px solid var(--primary);
   opacity: 0;
   transition:
     opacity 0.15s ease,
     transform 0.15s ease;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .react-flow__node.selected .chain-hop-node .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connecting::after {
   opacity: 1;
 }
 
-.chain-editor-canvas .chain-hop-node:hover .react-flow__handle,
-.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator {
+.chain-editor-canvas .chain-hop-node:hover .react-flow__handle::after,
+.chain-editor-canvas .chain-hop-node .react-flow__handle.connectionindicator::after {
   transform: scale(1.25);
 }
 
 /* Edge arrows follow the accent like the edge paths. xyflow bakes marker
    colors into inline styles, so the override needs !important to win the
-   cascade — CSS vars keep it themed across dark/light + custom accents. */
+   cascade — CSS vars keep it themed across dark/light + custom accents.
+   批次 8-D：随连线改主题绿。 */
 .chain-editor-canvas .react-flow__arrowhead polyline {
-  stroke: var(--accent-purple) !important;
-  fill: var(--accent-purple) !important;
+  stroke: var(--primary) !important;
+  fill: var(--primary) !important;
 }
 
 /* Line shown while dragging a new connection — same language as edges. */
 .chain-editor-canvas .react-flow__connection-path {
-  stroke: var(--accent-purple);
+  stroke: var(--primary);
   stroke-width: 2;
   stroke-linecap: round;
 }

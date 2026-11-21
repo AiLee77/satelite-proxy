@@ -25,11 +25,14 @@ import {
   deleteChain,
   deletePool,
   diagnoseChain,
+  exportChainMihomoYaml,
+  exportChainText,
   listChainNodes,
   listChainUsage,
   listChains,
   listPools,
   listSubscriptions,
+  renameChainAuto,
   updateChain,
   updatePool,
 } from "../api";
@@ -38,7 +41,13 @@ import { GlassSeg } from "../components/GlassSeg";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
 import { groupNodes, type NodeGroup } from "../nodeGroups";
-import { enabledUniverse, parseKeywords, poolKeywordMatch } from "../chainNodeUniverse";
+import { copyNodeShareText } from "../nodeShare";
+import {
+  chainPoolPreviewMembers,
+  enabledUniverse,
+  parseKeywords,
+  poolKeywordMatch,
+} from "../chainNodeUniverse";
 import type {
   ChainDiagnosis,
   ChainHop,
@@ -62,6 +71,55 @@ function hopLabel(
   }
   const p = poolById.get(hop.pool_id);
   return p ? { text: p.name, stale: false } : { text: hop.pool_id, stale: true };
+}
+
+/** Auto-name label for a whole chain ("A → B → C") — the SAME derivation
+ *  the editor's live auto-name uses (hop labels in hop order joined with
+ *  " → "), so an auto-named chain stays spelt identically on the card, in
+ *  the editor field, and after the mount-time rename sync. Truncated to
+ *  the 64-char backend limit here; the backend re-checks either way. */
+function chainAutoLabel(
+  hops: ChainHop[],
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): string {
+  return hops
+    .map((h) => hopLabel(h, nodeById, poolById).text)
+    .join(" → ")
+    .slice(0, 64);
+}
+
+/** Mount-time name-follow sync: auto-named chains (name_manual === false,
+ *  never hand-edited) get their "A → B" label re-derived from the hops'
+ *  CURRENT node/pool names — a hop renamed in the NodesPage shows up on the
+ *  chain card without reopening the editor. All rewrites go through the
+ *  backend's rename_chain_auto (manual names, would-be duplicates and
+ *  empty results are no-ops there); chains with a stale hop keep their last
+ *  good name — regressing to a raw-id label would read worse. Best-effort:
+ *  any failure leaves the old name in place. */
+async function syncAutoChainNames(
+  list: ProxyChain[],
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): Promise<ProxyChain[]> {
+  let next: ProxyChain[] | null = null;
+  for (let i = 0; i < list.length; i++) {
+    const chain = list[i];
+    if (chain.name_manual !== false) continue;
+    if (chain.hops.some((h) => hopLabel(h, nodeById, poolById).stale)) continue;
+    const label = chainAutoLabel(chain.hops, nodeById, poolById);
+    if (!label || label === chain.name) continue;
+    try {
+      const updated = await renameChainAuto(chain.id, label);
+      if (updated) {
+        if (!next) next = [...list];
+        next[i] = updated;
+      }
+    } catch {
+      /* rename is best-effort — keep the old name on any failure */
+    }
+  }
+  return next ?? list;
 }
 
 /** Vector glyph marking node pools (layers/stack = a reusable collection).
@@ -89,6 +147,24 @@ function PoolGlyph({ size = 12 }: { size?: number }) {
 
 const MAX_POOL_DOTS = 12;
 
+/** Middle-ellipsis node/pool names that keep the TAIL — subscription node
+ *  names differ mostly in their suffix ("…香港 IEPL 03"), so the tail is
+ *  what tells two rows apart; the middle is the only thing allowed to
+ *  give way. Long names split into head + tail spans: when the row has
+ *  room both spans render whole (no ellipsis), when squeezed only the
+ *  head ellipsizes and the tail stays pinned. The full text is meant for
+ *  the row's `title` (hover) — the caller owns it so it can append the
+ *  subscription/status hints there. */
+function EllipsisTail({ text }: { text: string }) {
+  if (text.length <= 24) return <span className="chain-item-name">{text}</span>;
+  return (
+    <span className="chain-item-name">
+      <span className="chain-item-head">{text.slice(0, text.length - 12)}</span>
+      <span className="chain-item-tail">{text.slice(-12)}</span>
+    </span>
+  );
+}
+
 /** Rich card payload for one hop, computed once when the hop is placed on
  *  the canvas (order badges are merged in live by the editor). Single nodes
  *  show protocol + last-known latency; pools show a member dot grid + count.
@@ -99,7 +175,7 @@ function hopCardData(
   hop: ChainHop,
   nodeById: Map<string, ProxyNode>,
   poolById: Map<string, NodePool>,
-  keywordNodes: ProxyNode[] = Array.from(nodeById.values()),
+  keywordNodes: ProxyNode[],
 ): Record<string, unknown> {
   if (hop.kind === "node") {
     const n = nodeById.get(hop.node_id);
@@ -327,12 +403,13 @@ function layoutHops(
   hops: ChainHop[],
   nodeById: Map<string, ProxyNode>,
   poolById: Map<string, NodePool>,
+  keywordNodes: ProxyNode[],
 ): FlowNode[] {
   return hops.map((hop, i) => ({
     id: hopFlowId(hop),
     type: "hop",
     position: { x: 40 + i * 320, y: 60 },
-    data: { ...hopCardData(hop, nodeById, poolById), hop },
+    data: { ...hopCardData(hop, nodeById, poolById, keywordNodes), hop },
   }));
 }
 
@@ -892,34 +969,48 @@ function ChainFlowEditor({
   pools,
   nodeById,
   poolById,
+  keywordNodes,
   onSubmit,
   busy,
   onClose,
   autoName,
+  onShareText,
+  onShareYaml,
 }: {
   chain: ProxyChain | null;
   nodes: ProxyNode[];
   pools: NodePool[];
   nodeById: Map<string, ProxyNode>;
   poolById: Map<string, NodePool>;
+  /** Enabled-subscription universe — keyword pool previews on hop cards
+   *  mirror the runtime's enabled-only keyword semantics. */
+  keywordNodes: ProxyNode[];
   onSubmit: (flowNodes: FlowNode[], edges: Edge[]) => void;
   busy: boolean;
   onClose: () => void;
   /** New-chain mode: receives "A → B → C" derived from the live graph order,
    *  so the name field can auto-follow the hops being placed. */
   autoName?: (label: string) => void;
+  /** G2: share/export actions pulled from the card menu into the footer —
+   *  null for new chains (nothing to share yet) or non-exportable ones. */
+  onShareText?: (() => void) | null;
+  onShareYaml?: (() => void) | null;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { screenToFlowPosition, fitView, getZoom, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<FlowNode>(
-    layoutHops(chain?.hops ?? [], nodeById, poolById),
+    layoutHops(chain?.hops ?? [], nodeById, poolById, keywordNodes),
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     edgesFromHops(chain?.hops ?? []),
   );
   const [candidateKind, setCandidateKind] = useState<"node" | "pool">("node");
+  // Pool-candidate expansion: members listed under one pool at a time;
+  // clicking a member row appends it straight to the chain tail (drag
+  // still positions it on the canvas). No staging/selection state anymore.
+  const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
   // Quick filter over the sidebar candidates — substring match on the name,
   // same convention as the pool editor's node picker.
   const [candidateQuery, setCandidateQuery] = useState("");
@@ -933,6 +1024,39 @@ function ChainFlowEditor({
     if (!q) return pools;
     return pools.filter((p) => p.name.toLowerCase().includes(q));
   }, [pools, candidateQuery]);
+  // G4: subscription-grouped node candidates — same "sub" grouping the
+  // nodes page uses. Extra state below is intentionally minimal: groups are
+  // collapsed unless explicitly toggled open, and an active query forces
+  // every group open (matches must be visible without hunting through
+  // collapsed heads). The old flat list kept the entire subscription in the
+  // DOM (~1000 rows), so grouping fixed both navigation and render load.
+  // One map of explicit user toggles: a group defaults to collapsed
+  // without a query and to open with one — the user's last toggle always
+  // wins over the default.
+  const [manualOpenGroups, setManualOpenGroups] = useState<Record<string, boolean>>({});
+  const hasQuery = candidateQuery.trim().length > 0;
+  const candidateGroups = useMemo(
+    () =>
+      groupNodes(candidateNodes, "sub", locale, {
+        other: t("nodes.groupOther"),
+        noSub: t("nodes.groupNoSub"),
+        chains: t("nodes.groupChains"),
+      }),
+    [candidateNodes, locale, t],
+  );
+  // Nodes already on the canvas (individual hops only — pool hops are a
+  // reference to the pool, their members are fair game as singles) dim in
+  // the list so a duplicate is visible before it gets dragged. Still
+  // draggable: placing the same node twice has legitimate uses when
+  // isValidConnection permits the path.
+  const onCanvasNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const n of flowNodes) {
+      const hop = n.data.hop as ChainHop | undefined;
+      if (hop && hop.kind === "node") ids.add(hop.node_id);
+    }
+    return ids;
+  }, [flowNodes]);
   // Manual pointer-based drag: WKWebView (macOS Tauri) doesn't reliably fire
   // HTML5 drag-and-drop events (dragstart/drop over DataTransfer), so the
   // sidebar → canvas drag is implemented with pointer events instead — a
@@ -1098,7 +1222,7 @@ function ChainFlowEditor({
     const position = { x: p.x - 95 / zoom, y: p.y - 30 / zoom };
     setFlowNodes((cur) => [
       ...cur,
-      { id, type: "hop", position, data: { ...hopCardData(hop, nodeById, poolById), hop } },
+      { id, type: "hop", position, data: { ...hopCardData(hop, nodeById, poolById, keywordNodes), hop } },
     ]);
   }
 
@@ -1106,40 +1230,76 @@ function ChainFlowEditor({
    *  the current chain tail, auto-connecting it so a chain can be built with
    *  keyboard-free clicks alone. */
   function appendHop(hop: ChainHop) {
-    const id = hopFlowId(hop);
-    if (flowNodes.some((n) => n.id === id)) {
-      const existing = flowNodes.find((n) => n.id === id)!;
-      selectOnly(id);
-      revealPosition(existing.position);
+    appendHops([hop]);
+  }
+
+  /** Append several hops in one state transition. Calling `appendHop` in
+   *  a loop would re-read the stale flowNodes/edges between set-state calls
+   * and drop all but the first hop, so positioning folds over one copy. */
+  function appendHops(hops: ChainHop[]) {
+    if (hops.length === 0) return;
+    let nextNodes: FlowNode[] = flowNodes.map((n) => ({ ...n, selected: false }));
+    let nextEdges: Edge[] = [...edges];
+    let appendedAny = false;
+    let existingSurfaceId: string | null = null;
+    for (const hop of hops) {
+      const id = hopFlowId(hop);
+      if (nextNodes.some((n) => n.id === id)) {
+        // Already on the canvas — surface it instead of a silent no-op,
+        // same as the single-hop path.
+        existingSurfaceId = id;
+        continue;
+      }
+      const order = hopsFromGraph(nextNodes, nextEdges);
+      const tailId = order && order.length > 0 ? order[order.length - 1].id : null;
+      const anchor = tailId ? nextNodes.find((n) => n.id === tailId) : undefined;
+      let position: { x: number; y: number };
+      if (anchor) {
+        position = { x: anchor.position.x + 320, y: anchor.position.y };
+      } else if (nextNodes.length > 0) {
+        const maxX = Math.max(...nextNodes.map((n) => n.position.x));
+        position = { x: maxX + 320, y: 60 };
+      } else {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        position = rect
+          ? screenToFlowPosition({
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+            })
+          : { x: 60, y: 60 };
+      }
+      const edgeTail = tailId;
+      if (edgeTail && edgeTail !== id) {
+        const edge = hopEdge(edgeTail, id);
+        if (!nextEdges.some((e) => e.id === edge.id)) nextEdges = [...nextEdges, edge];
+      }
+      const card = hopCardData(hop, nodeById, poolById, keywordNodes);
+      nextNodes = [
+        ...nextNodes,
+        {
+          id,
+          type: "hop",
+          position,
+          data: { ...card, hop },
+          selected: true,
+        },
+      ];
+      appendedAny = true;
+    }
+    if (!appendedAny) {
+      if (existingSurfaceId) {
+        const existing = nextNodes.find((n) => n.id === existingSurfaceId);
+        setFlowNodes([
+          ...nextNodes.map((n) => ({ ...n, selected: n.id === existingSurfaceId })),
+        ]);
+        if (existing) revealPosition(existing.position);
+      }
       return;
     }
-    const card = hopCardData(hop, nodeById, poolById);
-    const path = hopsFromGraph(flowNodes, edges);
-    const tailId = path && path.length > 0 ? path[path.length - 1].id : null;
-    const anchor = tailId ? flowNodes.find((n) => n.id === tailId) : undefined;
-    let position: { x: number; y: number };
-    if (anchor) {
-      position = { x: anchor.position.x + 320, y: anchor.position.y };
-    } else if (flowNodes.length > 0) {
-      // Not a valid path right now — still append visibly to the right.
-      const maxX = Math.max(...flowNodes.map((n) => n.position.x));
-      position = { x: maxX + 320, y: 60 };
-    } else {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      position = rect
-        ? screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-        : { x: 60, y: 60 };
-    }
-    setFlowNodes((cur) => [
-      ...cur.map((n) => ({ ...n, selected: false })),
-      { id, type: "hop", position, data: { ...card, hop }, selected: true },
-    ]);
-    if (tailId && tailId !== id) {
-      const edge = hopEdge(tailId, id);
-      setEdges((cur) => (cur.some((e) => e.id === edge.id) ? cur : [...cur, edge]));
-    }
-    // Bring the freshly-appended hop into view (see revealPosition).
-    revealPosition(position);
+    setFlowNodes(nextNodes);
+    setEdges(nextEdges);
+    const lastHopNode = nextNodes[nextNodes.length - 1];
+    if (lastHopNode) revealPosition(lastHopNode.position);
   }
 
   /** Re-lay the nodes into a clean left-to-right line (in graph order when
@@ -1224,8 +1384,25 @@ function ChainFlowEditor({
     });
   }
 
+  /** I9：删除选中跳时自动桥接——删中间跳把前驱直接连到后继，链保持
+   *  单线路径，序号从路径重派即自动补位（1..N 连续）；删首尾跳只移除
+   *  邻边。当前图无效（分支/环/断开）时退回原行为：只过滤选中节点/边，
+   *  修复留给用户自己接线（保持既有“需单线路径”校验语义）。序号口径不
+   *  变：路径序（hopsFromGraph）即保存序，画布布局自始按路径序左→右
+   *  排（load/append/tidy），故左→右即 1..N。 */
   function removeSelected() {
+    const removed = flowNodes.filter((n) => n.selected);
+    const removedIds = new Set(removed.map((n) => n.id));
     setFlowNodes((cur) => cur.filter((n) => !n.selected));
+    if (graphOrder && graphOrder.length === flowNodes.length && removed.length > 0) {
+      const keptIds = graphOrder
+        .map((o) => o.id)
+        .filter((id) => !removedIds.has(id));
+      // Reconnect the remaining hops in path order — always a simple path:
+      // in/out degrees stay <= 1 and the cycle check below can't loop.
+      setEdges(keptIds.slice(1).map((id, i) => hopEdge(keptIds[i], id)));
+      return;
+    }
     setEdges((cur) => cur.filter((e) => !e.selected));
   }
 
@@ -1259,33 +1436,144 @@ function ChainFlowEditor({
             />
             <div className="chain-candidate-list">
               {candidateKind === "node"
-                ? candidateNodes.map((n) => (
-                    <div
-                      key={n.id}
-                      onPointerDown={(e) =>
-                        onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
-                      }
-                      className="chain-candidate-item"
-                      title={t("chain.dragHint")}
-                    >
-                      {n.name}
-                    </div>
-                  ))
-                : candidatePools.map((p) => (
-                    <div
-                      key={p.id}
-                      onPointerDown={(e) =>
-                        onCandidatePointerDown(e, { kind: "pool", pool_id: p.id }, p.name)
-                      }
-                      className="chain-candidate-item"
-                      title={t("chain.dragHint")}
-                    >
-                      <span className="chain-candidate-glyph" aria-hidden="true">
-                        <PoolGlyph />
-                      </span>
-                      {p.name}
-                    </div>
-                  ))}
+                ? candidateGroups.map((g) => {
+                    // Default: collapsed without a query, open with one (the
+                    // query already filtered to matches, hiding them behind a
+                    // collapsed head would defeat the search). The manual
+                    // toggle always wins: collapsing a noisy group during a
+                    // search, or pre-opening one, both survive.
+                    const open =
+                      g.key in manualOpenGroups ? manualOpenGroups[g.key] : hasQuery;
+                    return (
+                      <SubscriptionNodeGroup
+                        key={g.key}
+                        group={g}
+                        open={open}
+                        onToggle={() => setManualOpenGroups((cur) => ({ ...cur, [g.key]: !open }))}
+                      >
+                        {g.nodes.map((n) => {
+                          const onCanvas = onCanvasNodeIds.has(n.id);
+                          return (
+                            <div
+                                key={n.id}
+                                onPointerDown={(e) =>
+                                  onCandidatePointerDown(e, { kind: "node", node_id: n.id }, n.name)
+                                }
+                                className={`chain-candidate-item${onCanvas ? " on-canvas" : ""}`}
+                                data-disabled={n.enabled === false ? "" : undefined}
+                                title={
+                                  // 长名中段省略后，hover 全名 + 状态提示。
+                                  n.enabled === false && n.subscription_name
+                                    ? `${n.name} · ${n.subscription_name} · ${t("chain.subDisabled")}`
+                                    : onCanvas
+                                      ? `${n.name} · ${t("chain.alreadyOnCanvas")}`
+                                      : `${n.name} · ${t("chain.dragHint")}`
+                                }
+                              >
+                                <span className="chain-candidate-mark" aria-hidden="true">
+                                  {onCanvas ? "●" : "○"}
+                                </span>
+                                <EllipsisTail text={n.name} />
+                              </div>
+                            );
+                        })}
+                      </SubscriptionNodeGroup>
+                    );
+                  })
+                : candidatePools.map((p) => {
+                    const expanded = expandedPoolId === p.id;
+                    // Only expandable pools pay the preview cost (explicit
+                    // pools resolve members from the full universe incl.
+                    // disabled subscriptions; keyword pools re-match the
+                    // enabled universe — same semantics as hop-card dots).
+                    const preview = expanded ? chainPoolPreviewMembers(p, nodes) : [];
+                    const liveMembers = preview.filter((m) => !m.stale);
+                    const staleCount = preview.length - liveMembers.length;
+                    return (
+                      <div key={p.id} className={`chain-candidate-pool${expanded ? " expanded" : ""}`}>
+                        <div className="chain-candidate-pool-row">
+                          <div
+                            className="chain-candidate-item pool-drag"
+                            onPointerDown={(e) =>
+                              onCandidatePointerDown(e, { kind: "pool", pool_id: p.id }, p.name)
+                            }
+                            title={`${p.name} · ${t("chain.dragHint")}`}
+                          >
+                            <span className="chain-candidate-glyph" aria-hidden="true">
+                              <PoolGlyph />
+                            </span>
+                            <EllipsisTail text={p.name} />
+                          </div>
+                          <button
+                            type="button"
+                            className="chain-pool-expand"
+                            aria-expanded={expanded}
+                            aria-label={t("chain.expandPoolMembers")}
+                            title={t("chain.expandPoolMembers")}
+                            onClick={() =>
+                              setExpandedPoolId(expanded ? null : p.id)
+                            }
+                          >
+                            {expanded ? "▴" : "▾"}
+                          </button>
+                        </div>
+                        {expanded && (
+                          <div className="chain-pool-members">
+                            {liveMembers.length === 0 && (
+                              <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                                {t("chain.noPoolMembers")}
+                              </p>
+                            )}
+                            {liveMembers.map(({ node }) => {
+                              const onCanvas = onCanvasNodeIds.has(node.id);
+                              return (
+                                <div
+                                  key={node.id}
+                                  // 点成员行 = 直接作为 node hop 追加到链尾（与
+                                  // 候选节点同一手势：拖拽仍可定位投放）。
+                                  onPointerDown={(e) =>
+                                    onCandidatePointerDown(
+                                      e,
+                                      { kind: "node", node_id: node.id },
+                                      node.name,
+                                    )
+                                  }
+                                  className={`chain-pool-member${onCanvas ? " on-canvas" : ""}`}
+                                  data-disabled={node.enabled === false ? "" : undefined}
+                                  title={
+                                    node.enabled === false && node.subscription_name
+                                      ? `${node.name} · ${node.subscription_name} · ${t("chain.subDisabled")}`
+                                      : onCanvas
+                                        ? `${node.name} · ${t("chain.alreadyOnCanvas")}`
+                                        : node.subscription_name
+                                          ? `${node.name} · ${node.subscription_name} · ${t("chain.dragHint")}`
+                                          : `${node.name} · ${t("chain.dragHint")}`
+                                  }
+                                >
+                                  <span className="chain-candidate-mark" aria-hidden="true">
+                                    {onCanvas ? "●" : "○"}
+                                  </span>
+                                  <EllipsisTail text={node.name} />
+                                  {node.subscription_name && (
+                                    <span className="chain-node-sub">{node.subscription_name}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {staleCount > 0 && (
+                              <p
+                                className="muted"
+                                style={{ margin: 0, fontSize: 11 }}
+                                title={t("chain.poolStaleHint", { n: staleCount })}
+                              >
+                                {t("chain.poolStaleHint", { n: staleCount })}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               {candidateKind === "node" && nodes.length === 0 && (
                 <p className="muted" style={{ fontSize: 12 }}>
                   {t("rules.noNodes")}
@@ -1334,7 +1622,16 @@ function ChainFlowEditor({
                 proOptions={{ hideAttribution: true }}
               >
                 <Background gap={20} />
-                <Controls showInteractive={false} />
+                {/* H: showFitView gives a manual canvas reset for pans that
+                    lost the chain; onFitView re-applies the app's own fit
+                    options so the manual button and the auto paths share one
+                    viewport policy (padding/maxZoom), zero new behavior. */}
+                <Controls
+                  showInteractive={false}
+                  onFitView={() =>
+                    fitView({ padding: 0.3, duration: 250, maxZoom: 1.1 })
+                  }
+                />
               </ReactFlow>
             </div>
             <p
@@ -1362,6 +1659,16 @@ function ChainFlowEditor({
         </div>
       )}
       <footer className="modal-footer">
+        {(onShareText || onShareYaml) && (
+          <span className="chain-editor-share">
+            {onShareText && (
+              <GlassButton onClick={onShareText}>{t("chain.copyText")}</GlassButton>
+            )}
+            {onShareYaml && (
+              <GlassButton onClick={onShareYaml}>{t("chain.exportMihomo")}</GlassButton>
+            )}
+          </span>
+        )}
         <GlassButton onClick={onClose}>{t("common.cancel")}</GlassButton>
         <GlassButton
           variant="primary"
@@ -1550,15 +1857,25 @@ function ChainDiagModal({ chain, onClose }: { chain: ProxyChain; onClose: () => 
 function ChainEditorModal({
   chain,
   nodes,
+  keywordNodes,
   pools,
+  onShareText,
+  onShareYaml,
   onClose,
   onSaved,
 }: {
   /** `null` = creating a new chain. */
   chain: ProxyChain | null;
   nodes: ProxyNode[];
+  /** Enabled-subscription universe for keyword pool previews on hop cards. */
+  keywordNodes: ProxyNode[];
   pools: NodePool[];
+  /** G2: card-menu share actions relocated to the editor footer — only
+   *  existing chains can be shared out (the caller passes null otherwise). */
+  onShareText: (() => void) | null;
+  onShareYaml: (() => void) | null;
   onClose: () => void;
+  /** Save-completed signal — the caller closes the editor and reloads. */
   onSaved: () => void;
 }) {
   const { t } = useI18n();
@@ -1572,10 +1889,15 @@ function ChainEditorModal({
   // error modal, so the user can just type the name and hit save again.
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [nameMissing, setNameMissing] = useState(false);
-  // New chains auto-name from the graph ("A → B → C") until the user edits
-  // the field; clearing it entirely resumes auto-generation. Existing chains
-  // never get their name touched.
-  const nameDirtyRef = useRef(chain != null);
+  // Name-origin tracking for the auto-follow sync: chains whose name was
+  // generated from the graph ("A → B → C", name_manual === false) keep
+  // auto-naming in the editor AND get re-derived on page load when a hop's
+  // node/pool was renamed elsewhere; typing into the field once pins the
+  // name (name_manual = true — never auto-rewritten again). Chains saved
+  // before the flag existed (name_manual undefined) count as manual so old
+  // names are never silently changed. Clearing the field resumes
+  // auto-generation.
+  const nameDirtyRef = useRef(chain != null ? chain.name_manual !== false : false);
   const handleAutoName = useCallback((label: string) => {
     if (nameDirtyRef.current) return;
     setName(label.slice(0, 64));
@@ -1608,10 +1930,17 @@ function ChainEditorModal({
     setError(null);
     try {
       const hops = ordered.map((o) => o.hop);
+      // Persist the name-origin marker for the mount-time rename sync:
+      // hand-edited → true (pinned), untouched generated name → false
+      // (keeps following node/pool renames; see syncAutoChainNames).
+      const nameManual =
+        chain != null
+          ? nameDirtyRef.current || chain.name_manual !== false
+          : nameDirtyRef.current;
       if (chain) {
-        await updateChain(chain.id, trimmed, hops);
+        await updateChain(chain.id, trimmed, hops, nameManual);
       } else {
-        await createChain(trimmed, hops);
+        await createChain(trimmed, hops, nameManual);
       }
       onSaved();
     } catch (err) {
@@ -1654,10 +1983,22 @@ function ChainEditorModal({
             pools={pools}
             nodeById={nodeById}
             poolById={poolById}
+            keywordNodes={keywordNodes}
             onSubmit={onSubmit}
             busy={busy}
             onClose={onClose}
-            autoName={chain ? undefined : handleAutoName}
+            autoName={
+              // Live-follow only while the name is still generated:
+              // untouched auto chains (name_manual === false) keep syncing in
+              // the field too; manual/legacy names and chains with a stale
+              // hop (whose label would regress to raw ids) never move.
+              (chain == null || chain.name_manual === false) &&
+              !chain?.hops.some((h) => hopLabel(h, nodeById, poolById).stale)
+                ? handleAutoName
+                : undefined
+            }
+            onShareText={onShareText}
+            onShareYaml={onShareYaml}
           />
         </ReactFlowProvider>
       </div>
@@ -1681,6 +2022,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
 
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
   const [chainEditor, setChainEditor] = useState<{ chain: ProxyChain | null } | null>(null);
+  const editingChain = chainEditor?.chain ?? null;
   const [diagFor, setDiagFor] = useState<ProxyChain | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<
     { kind: "pool" | "chain"; id: string; name: string } | null
@@ -1731,8 +2073,11 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         listChainUsage(),
         listSubscriptions(),
       ]);
+      const nodeMap = new Map(n.map((x) => [x.id, x]));
+      const poolMap = new Map(p.map((x) => [x.id, x]));
+      const synced = await syncAutoChainNames(c, nodeMap, poolMap);
       setPools(p);
-      setChains(c);
+      setChains(synced);
       setNodes(n);
       setChainUsage(usage);
       setSubscriptions(subs);
@@ -1760,6 +2105,28 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     setNotice(message);
     if (durationMs > 0) {
       noticeTimerRef.current = window.setTimeout(() => setNotice(null), durationMs);
+    }
+  }
+
+  /** D-3: chain as shareable text (`链名: [入口] a → [出口] b`). */
+  async function copyChainText(c: ProxyChain) {
+    try {
+      await copyNodeShareText(await exportChainText(c.id));
+      showNotice(t("chain.textCopied"));
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+    }
+  }
+
+  /** D-1: standalone mihomo YAML expressing the same hops via `dialer-proxy`.
+   *  Pool hops / dead references / unsupported protocols error out on the
+   *  backend — surface the message, never fall back. */
+  async function copyChainMihomoYaml(c: ProxyChain) {
+    try {
+      await copyNodeShareText(await exportChainMihomoYaml(c.id));
+      showNotice(t("chain.yamlCopied"), 3000);
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
     }
   }
 
@@ -1951,8 +2318,11 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         <ChainEditorModal
           chain={chainEditor.chain}
           nodes={nodes}
+          keywordNodes={enabledNodes}
           pools={pools}
           onClose={() => setChainEditor(null)}
+          onShareText={editingChain ? () => void copyChainText(editingChain) : null}
+          onShareYaml={editingChain ? () => void copyChainMihomoYaml(editingChain) : null}
           onSaved={() => {
             setChainEditor(null);
             void reload();
