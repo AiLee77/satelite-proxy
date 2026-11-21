@@ -8,6 +8,7 @@ import {
   getSettings,
   getSubscription,
   listAllNodes,
+  listChains,
   listSubscriptions,
   onNodeLatencyChanged,
   onProxySnapshot,
@@ -28,6 +29,7 @@ import {
   useCaptureModeSwitch,
   type CaptureMode,
 } from "../hooks/useCaptureModeSwitch";
+import { CHAIN_NODE_ID_PREFIX, isChainEntry } from "../chainVirtualNode";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useDashboardMenuPosition } from "../hooks/useDashboardMenuPosition";
 import { useI18n } from "../i18n";
@@ -50,6 +52,7 @@ import type {
   ExitIpInfo,
   GenerateConfigResult,
   OutboundMode,
+  ProxyChain,
   ProxyNode,
   ProxyStatus,
   SubscriptionTraffic,
@@ -167,6 +170,7 @@ export function DashboardPage({
   const { t, locale } = useI18n();
   const [subs, setSubs] = useState<SubscriptionView[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  const [chains, setChains] = useState<ProxyChain[]>([]);
   const [currentNode, setCurrentNode] = useState<ProxyNode | null>(null);
   /** settings.current_node_id — available before full node list. */
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
@@ -284,6 +288,7 @@ function coreDisplayName(kind: string | null | undefined): string {
       const detailP = Promise.all([
         listSubscriptions(),
         listAllNodes(),
+        listChains(),
         getCoreInfo("singbox").catch(() => null),
         getCoreInfo("xray").catch(() => null),
         getCoreInfo("mihomo").catch(() => null),
@@ -302,10 +307,11 @@ function coreDisplayName(kind: string | null | undefined): string {
       pushSpark(status);
       setStatusReady(true);
 
-      const [subList, nodeList, coreSingbox, coreXray, coreMihomo, lan] =
+      const [subList, nodeList, chainList, coreSingbox, coreXray, coreMihomo, lan] =
         await detailP;
       setSubs(subList);
       setNodes(nodeList);
+      setChains(chainList);
       setLanIp(lan ?? null);
       const cur =
         nodeList.find((n) => n.id === settings.current_node_id) ??
@@ -696,7 +702,8 @@ function coreDisplayName(kind: string | null | undefined): string {
   }
 
   const onProbeLatency = useCallback(async () => {
-    if (!currentNode || latencyProbing || proxy?.core_type === "xray") return;
+    // Virtual chain exits must never reach the node latency command.
+    if (!currentNode || latencyProbing || proxy?.core_type === "xray" || isChainEntry(currentNode)) return;
     setLatencyProbing(true);
     setError(null);
     try {
@@ -763,6 +770,16 @@ function coreDisplayName(kind: string | null | undefined): string {
     [],
   );
 
+  // Only a fixed node in the final hop supplies exit protocol/latency.
+  const chainExitNode = useMemo(() => {
+    if (!currentNode || !isChainEntry(currentNode)) return null;
+    const chainId = currentNode.id.slice(CHAIN_NODE_ID_PREFIX.length);
+    const chain = chains.find((c) => c.id === chainId);
+    const lastHop = chain?.hops[chain.hops.length - 1];
+    return lastHop && lastHop.kind === "node"
+      ? nodes.find((n) => n.id === lastHop.node_id) ?? null
+      : null;
+  }, [currentNode, chains, nodes]);
   const exitCountryCode = exitIp?.countryCode?.toUpperCase().match(/^[A-Z]{2}$/)?.[0] ?? "—";
   const running = proxy?.running ?? false;
   const stateLabel = proxy?.core_state ?? "stopped";
@@ -829,9 +846,17 @@ function coreDisplayName(kind: string | null | undefined): string {
     : customRuntime
       ? t("config.customReadonly")
       : running
-        ? proxy?.core_type === "mihomo" ? t("mihomoGroups.dashboardNotice") : [currentNode?.protocol?.toUpperCase(), fmtLatency(currentNode?.latency_ms)]
-            .filter(Boolean)
-            .join(" · ")
+        ? proxy?.core_type === "mihomo"
+          ? t("mihomoGroups.dashboardNotice")
+          : currentNode && isChainEntry(currentNode)
+            ? [
+                `${t("nodes.chainBadge")} · ${t("nodes.chainHops", { n: currentNode.chain_hops ?? 0 })}${chainExitNode ? ` ♢ ${chainExitNode.protocol.toUpperCase()}` : ""}`,
+                chainExitNode?.latency_ms != null && chainExitNode.latency_ms >= 0
+                  ? fmtLatency(chainExitNode.latency_ms)
+                  : "",
+              ].filter(Boolean).join(" · ")
+            : [currentNode?.protocol?.toUpperCase(), fmtLatency(currentNode?.latency_ms)]
+                .filter(Boolean).join(" · ")
         : t("dashboard.desc");
 
   async function onCopyEnv() {

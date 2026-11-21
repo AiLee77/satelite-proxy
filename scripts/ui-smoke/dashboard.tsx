@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { NavKey } from "../../src/types";
-import type { AppSettings, ConnectionView, ExitIpInfo, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
+import type { AppSettings, ConnectionView, ExitIpInfo, ProxyChain, ProxyNode, ProxyStatus, SubscriptionView } from "../../src/types";
 import "../../src/App.css";
 import "../../src/ProAppearance.css";
 import "../../src/ProMotion.css";
@@ -39,6 +39,18 @@ const nodes: ProxyNode[] = [{
   id: "fixture-node", name: nodeName, protocol: "vless", server: "2001:db8::10", port: 443,
   latency_ms: 42, latency_method: "singbox_http", subscription_id: "fixture-sub", subscription_name: profileName,
 }];
+const chainScenario = params.get("chain");
+const chains: ProxyChain[] = chainScenario ? [{
+  id: "fixture-chain", name: "香港 → 美国", enabled: true,
+  hops: [{ kind: "node", node_id: "fixture-node" }, chainScenario === "pool"
+    ? { kind: "pool", pool_id: "fixture-pool" }
+    : { kind: "node", node_id: chainScenario === "missing" ? "missing" : "fixture-exit" }],
+}] : [];
+if (chainScenario) {
+  nodes.push({ ...nodes[0], id: "fixture-exit", name: "US exit", protocol: "trojan", latency_ms: 87 });
+  nodes.push({ ...nodes[0], id: "chain:fixture-chain", name: chains[0].name, chain_hops: 2, latency_ms: null });
+  settings.current_node_id = "chain:fixture-chain";
+}
 const subscriptions: SubscriptionView[] = [{
   id: "fixture-sub", name: profileName, enabled: true, source_kind: custom ? "custom" : "url",
   custom_kind: custom ? "singbox" : null, source_display: "https://example.test/sub",
@@ -58,7 +70,7 @@ const running = scenario === "running" || custom;
 const status: ProxyStatus = {
   running, core_state: running ? "running" : scenario === "starting" ? "starting" : scenario === "error" ? "error" : "stopped",
   system_proxy: false, tun_enabled: false, capture_mode: "off", outbound_mode: "rule",
-  mixed_port: 2080, api_port: 19090, core_type: "singbox", current_node_id: nodes[0].id,
+  mixed_port: 2080, api_port: 19090, core_type: "singbox", current_node_id: settings.current_node_id,
   runtime_source: custom ? "singbox" : "generated", runtime_profile_id: custom ? "fixture-sub" : null,
   runtime_profile_name: custom ? profileName : null, custom_inbound_port: custom ? 2080 : null,
   error: scenario === "error" ? "模拟内核启动失败" : null,
@@ -119,6 +131,7 @@ mockIPC((command, payload) => {
     case "get_settings": return copy(settings);
     case "get_proxy_status": state.statusReads++; return copy(status);
     case "list_all_nodes": return copy(nodes);
+    case "list_chains": return copy(chains);
     case "list_subscriptions": return copy(subscriptions);
     case "get_subscription": return { ...copy(subscriptions[0]), content: "{}" };
     case "get_core_info": return {
