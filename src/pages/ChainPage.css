@@ -185,6 +185,12 @@
   outline: none;
   outline-width: 0;
   outline-offset: 0;
+  /* The pool rows live inside App.css's .field scope. Its generic input
+     padding otherwise inflates the 8px picker to about 21×16px, and its
+     :focus glow adds a 3px ring after a checked → unchecked click. */
+  box-sizing: border-box;
+  padding: 0;
+  box-shadow: none;
   background: transparent;
   cursor: pointer;
 }
@@ -235,6 +241,7 @@
   outline: none;
   outline-width: 0;
   outline-offset: 0;
+  box-shadow: none;
 }
 
 .chain-pool-node-item:last-child {
