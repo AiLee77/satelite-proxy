@@ -140,9 +140,7 @@ export function EditLocalNodesModal({
     if (!selectedId || busy) return;
     const index = nodes.findIndex((node) => node.id === selectedId);
     const selected = nodes[index];
-    if (!selected || !(await confirmAction(t("nodes.deleteConfirm", { name: selected.name })))) {
-      return;
-    }
+    if (!selected) return;
     setBusy(true);
     setStatus(null);
     setError(null);

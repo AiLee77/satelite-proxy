@@ -24,11 +24,11 @@ test("Delete ignores editing, dialogs, custom configs, busy and empty selections
   assert.equal(shouldDeleteSelectedNodes(key, { ...context, selectedCount: 0 }), false);
 });
 
-test("node page uses the same confirmed deletion for Delete and other actions", () => {
+test("node page uses the same guarded direct deletion for Delete and other actions", () => {
   const page = readFileSync(new URL("../src/pages/NodesPage.tsx", import.meta.url), "utf8");
   assert.match(page, /shouldDeleteSelectedNodes\(event,/);
   assert.match(page, /void deleteSelected\(ids\)/);
-  assert.match(page, /deletePendingRef\.current = true;[\s\S]*?await confirmAction/);
-  assert.match(page, /if \(!confirmed\) return;[\s\S]*?await deleteNodes\(ids\)/);
+  assert.doesNotMatch(page, /confirmAction/);
+  assert.match(page, /deletePendingRef\.current = true;[\s\S]*?await deleteNodes\(ids\)/);
   assert.match(page, /finally \{\s*deletePendingRef\.current = false/);
 });

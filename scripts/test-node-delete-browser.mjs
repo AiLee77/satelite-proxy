@@ -117,28 +117,39 @@ try {
   await page.keyboard.press("Delete");
   assert.equal(await page.evaluate(() => window.nodeFixture.confirms), 0);
   await row.locator(".node-list-name").click();
-  // 取消必须保留节点及选择，确认前不调用后端。
-  await page.keyboard.press("Delete");
-  await page.waitForFunction(() => window.nodeFixture.confirms === 1);
-  assert.deepEqual(await page.evaluate(() => window.nodeFixture.deleted), []);
-  assert.equal(await row.count(), 1);
-  await page.evaluate(() => { window.nodeFixture.hold = true; });
-  await page.keyboard.press("Delete");
-  await page.waitForFunction(() => window.nodeFixture.confirms === 2);
-  await page.keyboard.press("Delete");
-  await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", repeat: true })));
-  assert.equal(await page.evaluate(() => window.nodeFixture.confirms), 2);
-  assert.deepEqual(await page.evaluate(() => window.nodeFixture.deleted), []);
-  await page.evaluate(() => { window.nodeFixture.release("Ok"); window.nodeFixture.hold = false; window.nodeFixture.answer = "Ok"; });
+  // 单个删除：真实右键菜单点击后必须直接执行原 delete_nodes 路径，
+  // 不再出现原生确认，也不能先停在确认框等待用户回答。
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "删除节点", exact: true }).click();
+  assert.equal(await page.evaluate(() => window.nodeFixture.confirms), 0, "单删不得弹确认框");
   await row.waitFor({ state: "detached" });
+  assert.equal(await page.locator(".modal-backdrop").count(), 0);
   assert.deepEqual(await page.evaluate(() => window.nodeFixture.deleted), [["a"]]);
-  // Ctrl+A + Delete 复用相同批量确认与删除路径。
+
+  // 删除选中：沿用 Ctrl+A 选择，但点击真实批量按钮直接删除。
   await page.locator('[data-node-id="b"] .node-list-name').click();
   await page.keyboard.press("Control+a");
   await page.waitForFunction(() => document.querySelectorAll(".row-selected").length === 2);
-  await page.keyboard.press("Delete");
+  await page.getByRole("button", { name: "删除已选", exact: true }).click();
+  assert.equal(await page.evaluate(() => window.nodeFixture.confirms), 0, "批删不得弹确认框");
   await page.locator('[data-node-id="b"]').waitFor({ state: "detached" });
+  await page.locator('[data-node-id="c"]').waitFor({ state: "detached" });
+  assert.equal(await page.locator(".modal-backdrop").count(), 0);
   assert.deepEqual(await page.evaluate(() => window.nodeFixture.deleted), [["a"], ["b", "c"]]);
+  await clean();
+
+  // 删除测速失败：三个合成失败结果均由同一个失败清理按钮直接删除。
+  currentCase = "delete-failed";
+  await page.goto(`${base}/scripts/ui-smoke/nodes.html?failed=true`);
+  const deleteFailed = page.getByRole("button", { name: /删除失败节点/ });
+  await deleteFailed.waitFor();
+  await deleteFailed.click();
+  assert.equal(await page.evaluate(() => window.nodeFixture.confirms), 0, "失败清理不得弹确认框");
+  await page.locator('[data-node-id="a"]').waitFor({ state: "detached" });
+  await page.locator('[data-node-id="b"]').waitFor({ state: "detached" });
+  await page.locator('[data-node-id="c"]').waitFor({ state: "detached" });
+  assert.equal(await page.locator(".modal-backdrop").count(), 0);
+  assert.deepEqual(await page.evaluate(() => window.nodeFixture.deleted), [["a", "b", "c"]]);
   await clean();
 
   let cases = 0;
@@ -226,7 +237,7 @@ try {
     cases++;
   }
   assert.equal(cases, 24);
-  console.log("节点页浏览器回归通过：Delete 保护/确认/单删/批删，24 组卡片布局（960/1280/1600、明暗主题、中英、zoom 1/1.5、普通/603 节点虚拟网格），选择/菜单/测速/拖拽、视口变化与滚动；两张代表截图。");
+  console.log("节点页浏览器回归通过：Delete 保护/单删直删/失败清理直删/批删直删均无弹窗，24 组卡片布局（960/1280/1600、明暗主题、中英、zoom 1/1.5、普通/603 节点虚拟网格），选择/菜单/测速/拖拽、视口变化与滚动；两张代表截图。");
 } catch (error) {
   console.error("节点页失败场景", currentCase);
   if (page && !page.isClosed()) await page.screenshot({ path: "test-results/nodes-failure.png" }).catch(() => {});

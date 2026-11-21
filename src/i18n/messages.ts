@@ -770,8 +770,6 @@ const en = {
   "nodes.unsavedConfirm": "Discard unsaved changes to this node?",
   "nodes.invalidDraft": "Complete the required node fields before saving.",
   "nodes.saveSuccess": "Node saved. An active core will reload automatically.",
-  "nodes.deleteConfirm":
-    'Delete "{name}" from this profile? This is a local deletion; the node will return after the subscription is refreshed.',
   "nodes.deleteSuccess":
     "Node deleted. An active core will reload automatically.",
   "nodes.switchingManual": "Switched to manual mode — restarting core…",
@@ -810,8 +808,6 @@ const en = {
   "nodes.clearSelection": "Clear",
   "nodes.deleteTimeout": "Delete failed ({n})",
   "nodes.deleteTimeoutHint": "Delete nodes whose latest latency test failed — untested nodes and local core errors are kept",
-  "nodes.deleteTimeoutConfirm": "Delete {n} failed node(s)? This is a local deletion; they will return after the subscription is refreshed.",
-  "nodes.deleteSelectedConfirm": "Delete {n} selected nodes? This is a local deletion; they will return after the subscription is refreshed.",
   "nodes.testingAria": "Testing",
   "nodes.viewAria": "View",
   "nodes.viewList": "List",
@@ -2169,8 +2165,6 @@ const zh: Record<MessageKey, string> = {
   "nodes.unsavedConfirm": "要放弃当前节点尚未保存的修改吗？",
   "nodes.invalidDraft": "请填写当前协议所需的节点信息后再保存。",
   "nodes.saveSuccess": "节点已保存；内核正在运行时会自动重载。",
-  "nodes.deleteConfirm":
-    "确定从此订阅中删除“{name}”吗？这是本地删除，订阅刷新后节点会恢复。",
   "nodes.deleteSuccess": "节点已删除；内核正在运行时会自动重载。",
   "nodes.switchingManual": "已切换为手动模式，正在重启内核…",
   "nodes.latencyNeedsCore": "需启动内核后测试",
@@ -2208,8 +2202,6 @@ const zh: Record<MessageKey, string> = {
   "nodes.clearSelection": "清除选择",
   "nodes.deleteTimeout": "删除失败节点 ({n})",
   "nodes.deleteTimeoutHint": "删除最近一次测速失败的节点（连接失败/TLS/HTTP/配置错误/超时）；未测速及本地内核错误的节点不受影响",
-  "nodes.deleteTimeoutConfirm": "确定删除测速失败的 {n} 个节点吗？这是本地删除，订阅刷新后节点会恢复。",
-  "nodes.deleteSelectedConfirm": "确定删除已选的 {n} 个节点吗？这是本地删除，订阅刷新后节点会恢复。",
   "nodes.testingAria": "测试中",
   "nodes.viewAria": "视图",
   "nodes.viewList": "列表",
