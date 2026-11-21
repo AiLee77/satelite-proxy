@@ -1,5 +1,7 @@
 # AGENTS.md — Satelite Proxy 项目地图
 
+2026-11-21 FlClash 唯一版代理链对账（feature-reskin-topnav@0802804）：feature-flclash-ui 保留侧栏和 FlClash 排版，代理链功能按清单销项。补齐订阅删除/刷新/关闭 Mix 的链出口自动回落三挂点及 App 全局通知，虚拟链选中态弱高亮、完整链/订阅分享契约与三条 CI-only 真核回归入口同步回收；核心链后端/桥接与基准逐字节一致，入口仍为设置→代理链。SideNav 六图标改从 lucide-icons/lucide@c1a02a0 官方 SVG 原样内联（无依赖包），删除 activePath 实心双态，普通/激活同图描边、激活转 --primary，折叠和主题图标不动，许可在 docs/lucide-icons-LICENSE.txt。pnpm build、指定浏览器 10/10、链专项 54/54、池专项与图标 6×2 截图通过；Node 169 项 158/11 与基线 128 项 117/11 失败名完全相同。全程只走 mock，未启真实客户端/内核。逐项报告与 FlClash 便携包路径、大小、SHA-256见 docs/flclash-chain-parity-0802804.md。
+
 2026-11-21 仿 FlClash 收尾：feature-flclash-ui 的 Dashboard 恢复 listChains 与链尾固定节点协议/延迟，池尾跳/失效尾跳不猜出口，虚拟链节点禁止传入 test_nodes_latency；组合网络探测忙碌防重入。版本显示、系统代理成功切入提示、双向速率/60点趋势沿用现有 FlClash 排版。scripts/verify-dashboard-parity.mjs（7场景）与 verify-css-parity.mjs（真实组件7组×28属性）只走 mock IPC，需 PLAYWRIGHT_MODULE；后者对 cff1205 的 App.css 和 272dade 的链样式取证。链夹具位于 scripts/ui-smoke/chain-parity.*。用户明确授权本次本机 Rust/浏览器测试及 portable 构建，禁止启动真实客户端/内核；此授权不替代其他任务的 Actions 限制。验证与包摘要见 docs/flclash-final-validation.md，版本保持1.0.46。
 
 2026-11-13 节点网格与SOCKS导入：更多按钮必须使用icon-btn并参与卡片头部布局，不能被全局主按钮规则染色或绝对定位盖协议。网格列数按实际容器宽度计算并同步虚拟行，不再仅按window断点猜测。SOCKS的URI先分离userinfo再解析地址，兼容含/的标准Base64；有显式冒号按组件解码一次，无冒号仅对有效UTF-8且含冒号的Base64凭据对解码，内部凭据不再percent decode；普通用户名及空认证保留。SS2022本轮已取消，不夹带修改。新增合成导入/导出回归与真实节点网格浏览器检查，Rust/浏览器/打包仅Actions，版本1.0.46。
@@ -26,7 +28,7 @@ NSIS构建恢复（2026-11-09）：ci-fetch-nsis.sh仅Actions Windows运行，�
 
 2026-11-09 状态卡自然高度：dashboard-top-grid > dash-hero align-self:start，不随右侧服务项数量拉伸；节点信息占满第4行，切换节点/更多操作独立第5行。专业首页节点名完整换行，移除旧useSingleLineFit及其resize监听，不做截断/缩小字号。2/4服务及短组织IPv4、长名称IPv6截图回归验证hero自身不被拉高，子区域仍独立布局。构建仅Actions，版本1.0.46。
 
-2026-11-09 统一交互动效：uiMotion.ts存储设备本地satelite.uiMotion三档standard/system/reduced，用户要求默认standard且不改Windows设置。root data-ui-motion及data-motion-reduced为唯一归一化结果，系统模式监听matchMedia，storage跨窗口同步。ProMotion.css统一页面/弹层/按钮/手动GlassSeg过渡，保留no-anim避免轮询触发动效，不在页面根长期加transform。SideNav共享200ms指示器以offset坐标吸附，首次/resize/折叠不飞入，六图标activePath实心/非active线框；ResizeObserver/MutationObserver均卸载清理。设置外观提供三档，专业主题/字体/磨砂/首页动效保留。浏览器回归验证标准模式独立OS减少动态、减少模式无动画、六项图标及指示器过渡。
+2026-11-09 统一交互动效：uiMotion.ts存储设备本地satelite.uiMotion三档standard/system/reduced，用户要求默认standard且不改Windows设置。root data-ui-motion及data-motion-reduced为唯一归一化结果，系统模式监听matchMedia，storage跨窗口同步。ProMotion.css统一页面/弹层/按钮/手动GlassSeg过渡，保留no-anim避免轮询触发动效，不在页面根长期加transform。SideNav共享200ms指示器以offset坐标吸附，首次/resize/折叠不飞入；六枚Lucide图标普通/激活同图描边、激活转主题色，ResizeObserver/MutationObserver均卸载清理。设置外观提供三档，专业主题/字体/磨砂/首页动效保留。浏览器回归验证标准模式独立OS减少动态、减少模式无动画、六项图标及指示器过渡。
 
 2026-11-09 服务状态刷新修复：serviceStatus monitor 自动检测全部1–4展示项，新选择项入去重队列；路由/代理状态换会话清旧回包，页面可见且在线时60s周期，IPC/timeout/network_error按2/8/30/60s退避，403等不快速重试。隐藏/离线暂停、恢复补测、focus限频5s，stop清timer/队列；Clock注入供Node虚拟时钟测试。服务卡使用内嵌圆角行、状态点/耗时/检测进度，详情保留HTTP语义。后端批次最多8s等旧批次，仅1排队者，取得许可后重采snapshot并核epoch；单服务暂态同路线重试1次，各4s、总8s，间隔250ms，整批25s。不会跨路线直连回退，不按国家预设GitHub状态。本机仅Node/tsc/rustfmt，Rust与真实组件回归及构建走Actions，版本1.0.46，成功后覆盖同版本两包。
 
