@@ -37,6 +37,19 @@ try {
     assert.ok(styleEvidence.includes(required), `夹具缺少生产样式 ${required}:\n${styleEvidence}`);
   }
 
+  const poolPillShapes = await page.locator(".chain-pool-row").evaluateAll(rows =>
+    ["指定节点", "关键字过滤", "整个订阅"].map(mode => {
+      const pill = rows.map(row => row.querySelector(".pill")).find(element => element?.textContent === mode);
+      if (!pill) throw new Error(`缺少${mode}池徽标`);
+      const style = getComputedStyle(pill);
+      return { mode, borderRadius: style.borderRadius, padding: style.padding, height: pill.getBoundingClientRect().height };
+    }));
+  console.log(`节点池三模式徽标 computed 形状：${JSON.stringify(poolPillShapes)}`);
+  for (const shape of poolPillShapes) {
+    assert.equal(shape.borderRadius, poolPillShapes[0].borderRadius, `${shape.mode}圆角应与指定节点一致`);
+    assert.equal(shape.padding, poolPillShapes[0].padding, `${shape.mode}内边距应与指定节点一致`);
+  }
+
   const refRect = await page.locator(".chain-station-dot").first().boundingBox();
   assert.ok(refRect, "缺少链卡样板圆点");
   assert.equal(Math.round(refRect.width), 8);
@@ -44,7 +57,7 @@ try {
 
   // Open the pool through the real row menu and expand its real subscription
   // group. There is no fixture-local copy of PoolEditorModal's DOM.
-  await page.locator(".chain-pool-row .rule-menu-trigger").click();
+  await page.locator(".chain-pool-row .rule-menu-trigger").first().click();
   await page.locator(".chain-menu-pop [role='menuitem']").first().click();
   await page.locator(".modal .chain-pool-select-dot").waitFor({ state: "attached" }).catch(() => {});
   const groupHeads = page.locator(".modal .chain-pool-node-group .chain-candidate-group-head");

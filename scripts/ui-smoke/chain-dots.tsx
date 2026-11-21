@@ -22,6 +22,9 @@ const subscriptions: SubscriptionView[] = [
   { id: "fixture-sub-two", name: "第二订阅", enabled: true, source_kind: "url", custom_kind: null, source_display: "https://example.test/sub-two", node_count: 1, skipped_count: 0, last_update: 1_700_000_000, traffic: { upload: 0, download: 0, total: 0 } },
 ];
 const pool: NodePool = { id: "fixture-pool", name: "指定节点池 Fixture pool", mode: { mode: "explicit", node_ids: ["fixture-node"] } };
+const keywordPool: NodePool = { id: "fixture-keyword-pool", name: "关键词池 Fixture keyword pool", mode: { mode: "keyword", include: ["节点"], exclude: [] } };
+const subscriptionPool: NodePool = { id: "fixture-subscription-pool", name: "订阅池 Fixture subscription pool", mode: { mode: "subscription", subscription_id: "fixture-sub" } };
+const pools = [pool, keywordPool, subscriptionPool];
 const copy = <T,>(value: T): T => structuredClone(value);
 mockIPC((command, payload) => {
   const args = (payload ?? {}) as Record<string, unknown>;
@@ -30,7 +33,7 @@ mockIPC((command, payload) => {
     case "get_proxy_status": return { running: false, core_type: "singbox", runtime_source: "generated", current_node_id: "fixture-node" };
     case "list_chain_nodes": return copy(nodes);
     case "list_subscriptions": return copy(subscriptions);
-    case "list_pools": return [copy(pool)];
+    case "list_pools": return copy(pools);
     case "list_chains": return [{ id: "fixture-chain", name: "演示链 Fixture Chain", name_manual: true, hops: [{ kind: "node", node_id: "fixture-node" }, { kind: "node", node_id: "fixture-exit" }] }];
     case "list_chain_usage": return {};
     case "update_pool":
