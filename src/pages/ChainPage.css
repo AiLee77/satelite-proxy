@@ -368,6 +368,14 @@
   text-align: center;
 }
 
+/* I6：跳名旁的最近延迟小字（纯显示既有 latency_ms 缓存）。 */
+.chain-station-latency {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .chain-flow-glyph {
   flex: none;
 }
@@ -386,13 +394,16 @@
   background: var(--danger);
 }
 
-/* Usage hints — preset-library info only, no runtime state on this page. */
-.chain-card-usage {
-  color: var(--accent-purple);
-}
-
-.chain-card-usage.none {
-  opacity: 0.75;
+/* G2: card-face diagnose affordance — same square footprint (1.85rem) as
+ *  the ⋮ RuleMenu trigger so the two read as one cluster on the card edge. */
+.chain-card-diag.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  font-size: 1rem;
 }
 
 /* G2: share/export actions pulled left in the chain editor footer — the
@@ -403,6 +414,103 @@
   margin-right: auto;
   display: inline-flex;
   gap: 0.5rem;
+}
+
+/* G1: chain-exit controls use the same token triple as the node protocol tag.
+ * Stop/dead/unavailable states override this accent treatment below. */
+.chain-exit-btn {
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chain-exit-btn:hover:not(:disabled) {
+  background: var(--hover-wash);
+  border-color: var(--border-strong);
+}
+
+.chain-exit-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* The live state, probe action, and usable activation control share the
+ * node-list protocol tag's dark surface + theme-accent border/text. */
+.chain-exit-btn.current,
+.chain-exit-btn.chain-exit-probe,
+.chain-exit-btn:not(.chain-exit-stop):not(.chain-exit-probe):not(.unavailable):not(.chain-exit-dead) {
+  color: var(--primary);
+  border-color: var(--primary-border);
+  background: var(--primary-muted);
+}
+
+.chain-exit-btn.current {
+  /* 批次12项目2：改为常规字重（与样板 B 一致）*/
+  cursor: default;
+  pointer-events: none;
+}
+
+/* 批次12项目2：「停用」改为样板 A（首页「停止代理」btn-pill.danger）完全一致 */
+.chain-exit-btn.chain-exit-stop {
+  margin-left: 0.4rem;
+  background: transparent !important;
+  color: var(--danger) !important;
+  border-color: var(--danger-border) !important;
+}
+
+.chain-exit-btn.chain-exit-stop:hover:not(:disabled) {
+  background: var(--danger-bg) !important;
+  box-shadow: none !important;
+}
+
+/* 已失效：引用的节点/池已删除——同停用三件套（深色底+描边+低饱和 danger 字，
+ *  不染彩 danger-bg），非交互，「使用」禁用，仅编辑可救。 */
+.chain-exit-btn.chain-exit-dead {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--surface-2);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* 批次12项目2：「检测出口」改为样板 B（首页「切换节点」btn-pill.secondary）完全一致 */
+.chain-exit-btn.chain-exit-probe {
+  margin-left: 0.4rem;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+.chain-exit-btn.chain-exit-probe:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: none !important;
+}
+
+.chain-exit-probe-result {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.chain-exit-probe-result.err {
+  color: var(--danger);
+}
+
+.chain-exit-btn.unavailable {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface-2);
+  cursor: default;
+  pointer-events: none;
 }
 
 /* Chain diagnostics: per-hop probe table. The last row (whole chain) gets a

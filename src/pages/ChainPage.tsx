@@ -20,29 +20,41 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./ChainPage.css";
 import {
+  checkExitIp,
   createChain,
   createPool,
   deleteChain,
   deletePool,
   diagnoseChain,
   exportChainMihomoYaml,
+  activateSubscription,
   exportChainText,
+  generateSingboxConfig,
+  getProxyStatus,
+  getSettings,
+  deactivateChainExit as deactivateChainExitCmd,
   listChainNodes,
-  listChainUsage,
   listChains,
-  listPools,
   listSubscriptions,
+  listPools,
+  onProxySnapshot,
+  onChainAutoDeactivated,
+  peekSettings,
   renameChainAuto,
+  setCurrentNode,
   updateChain,
   updatePool,
 } from "../api";
+import { chainVirtualNodeId } from "../chainVirtualNode";
+import { groupNodes, type NodeGroup } from "../nodeGroups";
+import { waitForCoreRestart } from "../coreBusy";
+import { copyNodeShareText } from "../nodeShare";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSeg } from "../components/GlassSeg";
 import { ErrorModal } from "../components/ErrorModal";
 import { useI18n } from "../i18n";
-import { groupNodes, type NodeGroup } from "../nodeGroups";
-import { copyNodeShareText } from "../nodeShare";
 import {
+  chainHasDeadHop,
   chainPoolPreviewMembers,
   enabledUniverse,
   parseKeywords,
@@ -51,6 +63,7 @@ import {
 import type {
   ChainDiagnosis,
   ChainHop,
+  ExitIpInfo,
   NodePool,
   PoolMode,
   ProxyChain,
@@ -89,6 +102,41 @@ function chainAutoLabel(
     .slice(0, 64);
 }
 
+/** I4: the subscriptions a chain's hops resolve to — activating a chain
+ *  auto-enables any of them that are still disabled through the existing
+ *  subscription activation path (MIX toggle-on included). Dead references
+ *  are skipped here: the backend liveness check in `select_chain_exit` is
+ *  the authority for hop errors. Keyword pools match the enabled-only
+ *  universe by design, so they can never *require* a disabled subscription;
+ *  subscription pools pin their target subscription even when its member
+ *  list is currently empty. */
+function requiredSubscriptionIds(
+  chain: ProxyChain,
+  nodeById: Map<string, ProxyNode>,
+  poolById: Map<string, NodePool>,
+): Set<string> {
+  const required = new Set<string>();
+  for (const hop of chain.hops) {
+    if (hop.kind === "node") {
+      const sub = nodeById.get(hop.node_id)?.subscription_id;
+      if (sub) required.add(sub);
+    } else {
+      const pool = poolById.get(hop.pool_id);
+      if (!pool) continue;
+      if (pool.mode.mode === "subscription") {
+        required.add(pool.mode.subscription_id);
+      } else if (pool.mode.mode === "explicit") {
+        for (const id of pool.mode.node_ids) {
+          const sub = nodeById.get(id)?.subscription_id;
+          if (sub) required.add(sub);
+        }
+      }
+      // keyword 池只匹配启用宇宙——收集不到任何“被禁用却被需要”的订阅。
+    }
+  }
+  return required;
+}
+
 /** Mount-time name-follow sync: auto-named chains (name_manual === false,
  *  never hand-edited) get their "A → B" label re-derived from the hops'
  *  CURRENT node/pool names — a hop renamed in the NodesPage shows up on the
@@ -122,6 +170,23 @@ async function syncAutoChainNames(
   return next ?? list;
 }
 
+/** Country code → localized region name — same recipe as the dashboard's
+ *  exit-IP card (HK/TW use the Chinese-specific labels everywhere but en). */
+function countryDisplayName(cc: string, locale: string): string {
+  const code = cc.toUpperCase();
+  if (locale !== "en" && code === "HK") return "中国香港";
+  if (locale !== "en" && code === "TW") return "中国台湾";
+  try {
+    return new Intl.DisplayNames([locale], { type: "region" }).of(code) || cc;
+  } catch {
+    return cc;
+  }
+}
+
+/** Client-side mirror of a keyword pool's include/exclude name filter —
+ *  display-only (dot count preview); the backend re-evaluates at build time
+ *  against the same enabled-only universe (see ../chainNodeUniverse). */
+
 /** Vector glyph marking node pools (layers/stack = a reusable collection).
  *  Replaces the 📦 emoji: emoji fonts vary per platform and can't be themed;
  *  this renders identically everywhere and follows color via currentColor. */
@@ -141,6 +206,26 @@ function PoolGlyph({ size = 12 }: { size?: number }) {
       <path d="M8 1.8 14 5 8 8.2 2 5Z" />
       <path d="m2 8.2 6 3.2 6-3.2" />
       <path d="m2 11.4 6 3.2 6-3.2" />
+    </svg>
+  );
+}
+
+/** Monochrome pulse mark for the card-face diagnose button — same stroke
+    idiom as PoolGlyph (currentColor, never emoji fallback colours). */
+function DiagGlyph({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1.5 8h3L6.4 3.8 9 12.2 10.6 8h3.9" />
     </svg>
   );
 }
@@ -450,7 +535,11 @@ type RowMenuItem = {
     by ChainPage (one menuId for every ⋮ on the page), so opening one menu
     closes the previous — per-instance state used to leave both open. Rows in
     the lower half of a list pass flipUp so the popup opens toward the
-    roomier side. */
+    roomier side.
+
+    G2: pool rows and chain cards both thin down to Edit/Delete — diagnose
+    lives on the chain card face, the share/export actions in the editor
+    footer — the menu stays the overflow idiom, not the action hub. */
 function RowMenu({
   id,
   openId,
@@ -2008,20 +2097,49 @@ function ChainEditorModal({
 }
 
 export function ChainPage({ embedded = false }: { embedded?: boolean }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [pools, setPools] = useState<NodePool[]>([]);
   const [chains, setChains] = useState<ProxyChain[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  /** Subscription list — names for subscription pools (PoolRow owner lookup
+   *  + the editor's picker). Reloaded together with pools so the pool row
+   *  stays in sync right after add/remove/profile edits. */
   const [subscriptions, setSubscriptions] = useState<SubscriptionView[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
-  /** Rule-set names referencing each chain (deletion-risk hint). */
-  const [chainUsage, setChainUsage] = useState<Record<string, string[]>>({});
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  /** G1: live activation context — current exit id, core running and the
+   *  primary core kind (chain exits only exist under sing-box; E3 hides
+   *  the virtual entries on the other cores). Seeded from the module
+   *  snapshot to avoid a default-value flash, then kept in sync by the
+   *  proxy-status snapshot stream. */
+  const [active, setActive] = useState<{
+    currentNodeId: string | null;
+    coreType: string;
+    running: boolean;
+  }>(() => {
+    const s = peekSettings();
+    return {
+      currentNodeId: s?.current_node_id ?? null,
+      coreType: s?.core_type ?? "singbox",
+      running: false,
+    };
+  });
+  /** Chain id whose activation is in flight (disables every chain control). */
+  const [activating, setActivating] = useState<string | null>(null);
+  /** H②: exit-IP reading for the in-use chain card. Keyed by chain id so a
+   *  stale reading from a previously active chain never leaks onto another
+   *  card; only the active chain renders it. */
+  const [exitProbe, setExitProbe] = useState<{
+    chainId: string;
+    busy: boolean;
+    info?: ExitIpInfo;
+    error?: string;
+  } | null>(null);
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
   const [chainEditor, setChainEditor] = useState<{ chain: ProxyChain | null } | null>(null);
+  /** Chain currently being edited, if any — hoisted so closure props keep
+      the null narrowing (G2 footer share handlers rebind to it directly). */
   const editingChain = chainEditor?.chain ?? null;
   const [diagFor, setDiagFor] = useState<ProxyChain | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<
@@ -2030,67 +2148,9 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
   /** Which ⋮ menu is open ("pool-…"/"chain-…") — single owner for every
       RowMenu on the page so a second one replaces the first. */
   const [menuId, setMenuId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!menuId) return;
-    function onDocPointerDown(e: PointerEvent) {
-      const t = e.target as HTMLElement | null;
-      if (t?.closest?.("[data-chain-menu]")) return;
-      setMenuId(null);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuId(null);
-    }
-    document.addEventListener("pointerdown", onDocPointerDown, true);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDocPointerDown, true);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuId]);
-
-  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-  const poolById = useMemo(() => new Map(pools.map((p) => [p.id, p])), [pools]);
-  const enabledNodes = useMemo(() => enabledUniverse(nodes), [nodes]);
-  const poolChainCount = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of chains) {
-      for (const h of c.hops) {
-        if (h.kind === "pool") counts.set(h.pool_id, (counts.get(h.pool_id) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [chains]);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [p, c, n, usage, subs] = await Promise.all([
-        listPools(),
-        listChains(),
-        listChainNodes(),
-        listChainUsage(),
-        listSubscriptions(),
-      ]);
-      const nodeMap = new Map(n.map((x) => [x.id, x]));
-      const poolMap = new Map(p.map((x) => [x.id, x]));
-      const synced = await syncAutoChainNames(c, nodeMap, poolMap);
-      setPools(p);
-      setChains(synced);
-      setNodes(n);
-      setChainUsage(usage);
-      setSubscriptions(subs);
-    } catch (err) {
-      setError(typeof err === "string" ? err : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  /** Transient feedback after a copy/export menu action (auto-clears). */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(
     () => () => {
@@ -2130,6 +2190,263 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  useEffect(() => {
+    if (!menuId) return;
+    function onDocPointerDown(e: PointerEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-chain-menu]")) return;
+      setMenuId(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuId(null);
+    }
+    document.addEventListener("pointerdown", onDocPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuId]);
+
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const poolById = useMemo(() => new Map(pools.map((p) => [p.id, p])), [pools]);
+  /** H③: id sets for the dead-reference check — memoized once per reload so
+   *  each card's check stays O(hops), never O(nodes) per card. */
+  const nodeIdSet = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
+  const poolIdSet = useMemo(() => new Set(pools.map((p) => p.id)), [pools]);
+  /** Enabled-subscription universe — every keyword-style preview on this
+   *  page (pool row counts, editor preimages, hop-card dot grids) mirrors
+   *  the runtime's enabled-only keywords; explicit pools and chains keep
+   *  listing their full cross-subscription references. */
+  const enabledNodes = useMemo(() => enabledUniverse(nodes), [nodes]);
+  const poolChainCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of chains) {
+      for (const h of c.hops) {
+        if (h.kind === "pool") counts.set(h.pool_id, (counts.get(h.pool_id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [chains]);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [p, c, n, subs] = await Promise.all([
+        listPools(),
+        listChains(),
+        listChainNodes(),
+        listSubscriptions(),
+      ]);
+      // 链名跟随：进入/刷新链页时，未手改过的链按当前节点/池现名重算
+      // 「A → B」——与编辑器内自动命名同一套 chainAutoLabel 口径，改库不
+      // 重启（生成配置按 id 引用链）。
+      const nodeMap = new Map(n.map((x) => [x.id, x]));
+      const poolMap = new Map(p.map((x) => [x.id, x]));
+      const synced = await syncAutoChainNames(c, nodeMap, poolMap);
+      setPools(p);
+      setChains(synced);
+      setNodes(n);
+      setSubscriptions(subs);
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  // G1: track the live exit / core context for the activation controls.
+  // Fetching status (not just settings) gives us `running` — stopped cores
+  // only need the generated config written, running ones must be restarted.
+  useEffect(() => {
+    let cancelled = false;
+    const dispose = onProxySnapshot((status) => {
+      if (cancelled || !status) return;
+      setActive({
+        currentNodeId: status.current_node_id ?? null,
+        coreType: status.core_type ?? "singbox",
+        running: status.running,
+      });
+    });
+    void Promise.all([getSettings(), getProxyStatus()])
+      .then(([s, p]) => {
+        if (cancelled) return;
+        setActive({
+          currentNodeId: s.current_node_id ?? p.current_node_id ?? null,
+          coreType: p.core_type ?? s.core_type ?? "singbox",
+          running: p.running,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, []);
+
+  // This branch still handles automatic deactivation locally on the chain page.
+  useEffect(() => {
+    return onChainAutoDeactivated(({ chainName, reason }) => {
+      showNotice(t("chain.autoDeactivated", { name: chainName, reason }), 5000);
+      void reload();
+    });
+  }, [reload, t]);
+
+  /** I4: 逐跳收集链所需订阅并自动启用仍在禁用态的那些；返回被自动启用
+   *  的订阅名（无需补齐时为空）。任一启用失败抛错中止。停用链出口不在此
+   *  处理——回落普通节点，不禁用任何订阅。 */
+  async function ensureChainSubscriptions(chainId: string): Promise<string[]> {
+    const chain = chains.find((c) => c.id === chainId);
+    if (!chain) return [];
+    const required = requiredSubscriptionIds(chain, nodeById, poolById);
+    if (required.size === 0) return [];
+    const subs = await listSubscriptions();
+    const nameOf = (id: string) => subs.find((s) => s.id === id)?.name ?? id;
+    const disabled = [...required].filter(
+      (id) => subs.find((s) => s.id === id)?.enabled === false,
+    );
+    if (disabled.length === 0) return [];
+    // 非 Mix 下 activateSubscription 是互斥路径（启用一个禁用其余）——链
+    // 跨订阅时绝不静默牺牲另一半，明确报错并提示开启 Mix。
+    const mix = peekSettings()?.mix_mode ?? false;
+    if (!mix && required.size > 1) {
+      throw new Error(
+        t("chain.autoEnableNeedsMix", {
+          names: [...required].map(nameOf).join("、"),
+        }),
+      );
+    }
+    for (const id of disabled) {
+      await activateSubscription(id);
+    }
+    // 启用路径可能因并发状态回落（如 MIX 下“最后一个启用订阅”保护），
+    // 复查一遍：仍有缺即中止，报错点名。
+    const after = await listSubscriptions();
+    const stuck = disabled.filter(
+      (id) => after.find((s) => s.id === id)?.enabled === false,
+    );
+    if (stuck.length > 0) {
+      throw new Error(
+        t("chain.autoEnableFailed", { names: stuck.map(nameOf).join("、") }),
+      );
+    }
+    return disabled.map(nameOf);
+  }
+
+  /** I7: 复制链：后端新建链路（新 id）+ 名字加后缀，撞名时自动顺延
+   *  序号；跳引用原样拷贝（node/pool id 引用，不复制成员实体）；名字
+   *  标记为手动（不再跟随自动改名）。走现有 createChain 路径，不重启。 */
+  async function copyChain(chain: ProxyChain) {
+    const suffix = t("chain.copySuffix");
+    const trimmed = chain.name.trim();
+    const taken = new Set(chains.map((c) => c.name.toLowerCase()));
+    let name = `${trimmed}${suffix}`;
+    let i = 2;
+    while (taken.has(name.toLowerCase())) {
+      name = `${trimmed}${suffix}${i}`;
+      i += 1;
+    }
+    // 后端限 64 字，加后缀可能超长——只裁名字本体，不动后缀。
+    const base = Array.from(name).slice(0, 64).join("");
+    const created = await createChain(base, chain.hops.map((h) => ({ ...h })), true);
+    showNotice(t("chain.copiedNotice", { name: created.name }));
+    await reload();
+  }
+
+  /** G1: select `chain:<id>` as the exit through the E2 channel — liveness
+   *  checks and error text live in the backend (`select_chain_exit`), and
+   *  chain outbounds only exist after a rebuild, so a running core always
+   *  goes through the restart wait (no hot-swap in v1). Stopped cores just
+   *  get the config written. Owned by the card's “启用为出口” control. */
+  async function activateChainById(chainId: string) {
+    if (activating) return;
+    setActivating(chainId);
+    setError(null);
+    try {
+      // I4: 先逐跳补齐链所需的订阅——没有它们链根本生成不出出口，后端
+      // 只会报「节点不存在」的死引用。缺的订阅走既有 activateSubscription
+      // 路径自动启用（Mix = toggle-on；非 Mix 会互斥地只留一个——链跨订阅时
+      // 提示开 Mix，不静默把另一半禁掉）。任一订阅启用失败即中止本次链
+      // 启用，报错点名；全部补齐后以成功 notice 列出被自动启用的订阅名。
+      const autoEnabled = await ensureChainSubscriptions(chainId);
+      if (autoEnabled.length > 0) {
+        showNotice(t("chain.autoEnabledSubs", { names: autoEnabled.join("、") }));
+      }
+      await setCurrentNode(chainVirtualNodeId(chainId));
+      if (active.running) {
+        const result = await waitForCoreRestart();
+        if (result !== "ready") {
+          throw new Error(t("settings.coreSwitchWaitFailed"));
+        }
+      } else {
+        await generateSingboxConfig();
+      }
+      setActive((a) => ({ ...a, currentNodeId: chainVirtualNodeId(chainId) }));
+      // I8: 启用成功后自动测一次链出口，结果写进既有 exitProbe 结果区
+      // （仅内存、不落盘）。仅在内核运行时触发——停核启用只写配置，
+      // 直连读数会误导（与卡上探测按钮的置灰条件同口径）。
+      if (active.running) void probeChainExit(chainId);
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setActivating(null);
+    }
+  }
+
+  /** 停用当前链出口：回落到普通节点（F 根因修复）。回落优先级、
+   *  记忆节点与持久化全部由后端单源接管（`deactivate_chain_exit` →
+   *  `select_current_node_serialized`）——运行中的 sing-box/mihomo 是
+   *  热切 PUT，根本不重启；旧实现串行逐订阅拉 detail 再死等 30s
+   *  重启事件（热路径永不发）是纯浪费。停核时与标准选点流同序预写
+   *  配置；返回 null 表示当前出口已不是链（他处已停用），仅刷新。 */
+  async function deactivateChainExit(chainId: string) {
+    if (activating) return;
+    setActivating(chainId);
+    setError(null);
+    try {
+      const outcome = await deactivateChainExitCmd();
+      if (outcome) {
+        if (!active.running) {
+          await generateSingboxConfig();
+        } else if (outcome.restartNeeded) {
+          const result = await waitForCoreRestart();
+          if (result !== "ready") {
+            throw new Error(t("settings.coreSwitchWaitFailed"));
+          }
+        }
+        setActive((a) => ({ ...a, currentNodeId: outcome.nodeId }));
+      }
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setActivating(null);
+    }
+  }
+
+  /** H②：仅「使用中」链可点的出口探测。复用既有 check_exit_ip 诊断通道：
+   *  探测经内核实际 HTTP 入口与路由规则发出，链为当前出口时读到的就是
+   *  链出口的 IP/地区——不新开网络栈、不加依赖。停核时该通道走直连
+   *  （不经过链），按钮置灰避免给出误导读数；失败红色原因显示在卡上。 */
+  async function probeChainExit(chainId: string) {
+    if (exitProbe?.busy) return;
+    setExitProbe({ chainId, busy: true });
+    try {
+      const info = await checkExitIp();
+      setExitProbe({ chainId, info, busy: false });
+    } catch (err) {
+      setExitProbe({
+        chainId,
+        error: typeof err === "string" ? err : String(err),
+        busy: false,
+      });
+    }
+  }
+
   async function onConfirmDelete() {
     if (!confirmDelete) return;
     try {
@@ -2151,7 +2468,7 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
       {!embedded && (
         <header className="page-header">
           <div>
-            <h1>{t("chain.title")}</h1>
+            <h1>{t("chains.title")}</h1>
             <p className="page-desc">{t("chain.desc")}</p>
           </div>
         </header>
@@ -2203,7 +2520,40 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
         ) : (
           <div className="chain-list">
             {chains.map((c, i) => {
-              const usageNames = chainUsage[c.id] ?? [];
+              const virtualId = chainVirtualNodeId(c.id);
+              const isActive = active.currentNodeId === virtualId;
+              const isBusy = activating != null;
+              const singbox = active.coreType === "singbox";
+              // H③: any hop references a deleted node/pool — local check
+              // against the loaded lists, no extra IPC. Empty-but-existing
+              // pools are not dead (entities exist); liveness beyond
+              // existence still errors on click from the backend.
+              const dead = chainHasDeadHop(c, nodeIdSet, poolIdSet);
+              // H②: reading for THIS card only — active chain, finished
+              // probe, and not superseded by another chain's probe.
+              const probeReading = (() => {
+                if (
+                  !isActive ||
+                  !exitProbe ||
+                  exitProbe.chainId !== c.id ||
+                  exitProbe.busy
+                ) {
+                  return null;
+                }
+                if (exitProbe.error) return { text: exitProbe.error, err: true };
+                const info = exitProbe.info;
+                if (!info) return null;
+                const region = info.countryCode
+                  ? countryDisplayName(info.countryCode, locale)
+                  : "";
+                return {
+                  text:
+                    `${t("chain.probeIp")}: ${info.ip}` +
+                    (region ? ` · ${region}` : "") +
+                    (info.viaProxy ? "" : t("chain.probeDirect")),
+                  err: false,
+                };
+              })();
               return (
                 <div key={c.id} className="card chain-card">
                   <div className="chain-card-head">
@@ -2214,24 +2564,96 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                       <span className="chain-row-meta">
                         {t("chain.hopsCount", { n: c.hops.length })}
                       </span>
-                      {usageNames.length > 0 ? (
-                        <span className="chain-card-usage" title={usageNames.join(" · ")}>
-                          {t("chain.usedByRuleSets", { n: usageNames.length })}
+                      {dead && (
+                        <span
+                          className="chain-exit-btn chain-exit-dead"
+                          aria-disabled="true"
+                          title={t("chain.deadHint")}
+                        >
+                          {t("chain.dead")}
                         </span>
-                      ) : (
-                        <span className="chain-card-usage none">{t("chain.notUsedByRules")}</span>
                       )}
+                      {isActive ? (
+                        <>
+                          <span className="chain-exit-btn current" aria-disabled="true">
+                            {t("chain.inUse")}
+                          </span>
+                          <button
+                            type="button"
+                            className="chain-exit-btn chain-exit-stop"
+                            disabled={isBusy}
+                            title={t("chain.stopExit")}
+                            onClick={() => void deactivateChainExit(c.id)}
+                          >
+                            {activating === c.id
+                              ? t("chain.activating")
+                              : t("chain.stopExit")}
+                          </button>
+                          <button
+                            type="button"
+                            className="chain-exit-btn chain-exit-probe"
+                            disabled={
+                              isBusy ||
+                              !active.running ||
+                              (exitProbe?.chainId === c.id && exitProbe.busy)
+                            }
+                            title={
+                              active.running
+                                ? t("chain.probeExit")
+                                : t("chain.probeStoppedHint")
+                            }
+                            onClick={() => void probeChainExit(c.id)}
+                          >
+                            {exitProbe?.chainId === c.id && exitProbe.busy
+                              ? t("chain.probing")
+                              : t("chain.probeExit")}
+                          </button>
+                        </>
+                      ) : singbox ? (
+                        <button
+                          type="button"
+                          className="chain-exit-btn"
+                          disabled={isBusy || dead}
+                          title={dead ? t("chain.deadHint") : undefined}
+                          onClick={() => void activateChainById(c.id)}
+                        >
+                          {activating === c.id
+                            ? t("chain.activating")
+                            : t("chain.useAsExit")}
+                        </button>
+                      ) : (
+                        <span
+                          className="chain-exit-btn unavailable"
+                          aria-disabled="true"
+                          title={t("chain.exitSingboxOnlyHint")}
+                        >
+                          {t("chain.exitSingboxOnly")}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="icon-btn chain-card-diag"
+                        aria-label={t("chain.diag")}
+                        title={t("chain.diag")}
+                        onClick={() => setDiagFor(c)}
+                      >
+                        <DiagGlyph />
+                      </button>
                       <RowMenu
                         id={`chain-${c.id}`}
                         openId={menuId}
                         setOpenId={setMenuId}
                         flipUp={i >= Math.ceil(chains.length / 2)}
                         items={[
-                          { key: "diag", label: t("chain.diag"), onClick: () => setDiagFor(c) },
                           {
                             key: "edit",
                             label: t("common.edit"),
                             onClick: () => setChainEditor({ chain: c }),
+                          },
+                          {
+                            key: "copy",
+                            label: t("chain.copyChain"),
+                            onClick: () => void copyChain(c),
                           },
                           {
                             key: "delete",
@@ -2244,6 +2666,13 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                       />
                     </span>
                   </div>
+                  {probeReading && (
+                    <p
+                      className={`chain-exit-probe-result${probeReading.err ? " err" : ""}`}
+                    >
+                      {probeReading.text}
+                    </p>
+                  )}
                   {/* The pipeline IS the card: stations on a rail — entry
                       dot green, exit dot blue, arrows read client →
                       internet; pools marked by the layer glyph. */}
@@ -2251,6 +2680,12 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                     {c.hops.map((hop, i) => {
                       const { text, stale } = hopLabel(hop, nodeById, poolById);
                       const isPool = hop.kind === "pool";
+                      // I6: node 跳名字旁显示该节点最近一次延迟（既有
+                      // latency_ms 缓存，纯显示、不触发探测）；池跳没有
+                      // 单一延迟，保持原样。
+                      const latencyMs = isPool
+                        ? null
+                        : (nodeById.get(hop.node_id)?.latency_ms ?? null);
                       const last = i === c.hops.length - 1;
                       const role = i === 0 ? "entry" : last ? "exit" : "mid";
                       return (
@@ -2276,6 +2711,9 @@ export function ChainPage({ embedded = false }: { embedded?: boolean }) {
                               </span>
                             )}
                             {text}
+                            {latencyMs != null && latencyMs > 0 && (
+                              <span className="chain-station-latency">{latencyMs} ms</span>
+                            )}
                           </span>
                           <span className="chain-flow-type">
                             {isPool ? t("chain.pool") : t("rules.pickNode")}

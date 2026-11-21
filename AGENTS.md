@@ -259,6 +259,8 @@ satelite-proxy/
 │   ├── hooks/               # useVirtualRange / useVisibleInterval / 拖拽排序 / 嵌套滚动隔离等
 │   ├── qrImport.ts          # 扫码内容分类、快捷键边界，只预填既有导入表单
 │   ├── qrDecode.ts          # jsQR 图像金字塔/分块识别，由 qrDecode.worker.ts 隔离执行
+│   ├── chainNodeUniverse.ts # 链/池编辑器节点范围、池成员预览与失效跳判定
+│   ├── chainVirtualNode.ts  # chain:<id> 虚拟出口 ID 与 chain_hops 标记
 │   ├── nodeUuid.ts          # Web Crypto UUID v4，供现有节点表单显式生成
 │   ├── i18n/                # zh/en 扁平文案表（TS 强制双语言键一致）
 │   ├── theme/               # aerospace 深色 / day 浅色 + 6 主题色
@@ -459,7 +461,7 @@ React UI ──invoke()──▶ commands/* ──▶ AppState ──▶ storage
 | `LogsPage` (~380) | 四 tab：应用日志（1.2s 增量，级别过滤+搜索）/ sing-box / Xray / mihomo 内核日志（tab 带运行绿灯，原始 stdout，1.2s 轮询 `get_core_log_tail(kind)`；多核下主核/副进程各写各的 `logs/<prefix>-<hour>.log`，按 kind 读取，见 `Runtime::core_log_tail_for`）；头部 自动滚动/刷新/清空 与级别过滤、搜索框对所有 tab 统一（清空=app 清库 / kernel 截断当前小时文件 `clear_core_log`） |
 | `SettingsPage` (1456) | 8 tab：app/ports/rules/chain/multiCore/dns/hosts/core；内嵌 Rules/Chain/多核模式/Dns/Hosts 页；三内核行（各自版本/下载/更新，进度事件按 kind 分流）、多核模式 tab（启停开关 + 协议→内核 table，§9.20；按协议支持面各选 Xray/mihomo——如 hy2 两者皆可，masque 仅 mihomo 且「auto」显示「未启用」而非「跟随主内核」，因 sing-box 无原生出路）、更新检查、诊断、托盘图标选择、赞助二维码（`DecryptReveal`） |
 | `RulesPage` (2145) | ★ 最大页面：规则集侧栏+编辑器、本地/远程集、策略/DNS 策略、route.final、拖拽排序、远程规则项浏览；geodata 内核（Xray/mihomo）下内置 3 条显示为 geodata 卡（来源/文件按内核区分，更新走 `refresh_geodata(kind)`），自建 .srs 置灰；策略可指向 chain（`chain_id`） |
-| `ChainPage` (~1700) | 高密度管理列表，内嵌于 Settings：节点池=单容器紧凑行（名称+关键字+模式pill+计数+引用，行尾 `RowMenu` ⋮ 菜单，复用 rule-menu 范式），链卡=头行徽标（跳数/规则引用/⋮）+ 地铁线 stepper；链路编辑器为 xyflow（`@xyflow/react`）画布：侧栏候选拖入/点击追加（WKWebView 无 HTML5 DnD，用指针事件自实现）、`hopsFromGraph` 单线路径校验（连线时 `isValidConnection` 即时拦截分支/环/自环）、图序号徽标 + 实时有效性状态行、整理布局按钮；fitView 仅在打开已有链路且节点完成测量后执行一次（`useNodesInitialized`），否则画布会因未测量节点算出坏视口而看似空白、或投放后视口跳走 |
+| `ChainPage` / `ChainPage.css` | 沿用 Settings 嵌入布局。节点池支持指定节点、关键词、整个订阅；指定成员与画布可跨订阅浏览，动态池预览只取已启用节点。xyflow 候选按订阅折叠，池成员可展开并单独追加；手动链名不随跳名改动。链卡以 `chain:<id>` 匹配当前出口，显示失效跳、最近延迟和出口检测，提供停用、复制与诊断；链文本及 Mihomo YAML 导出位于已有链的编辑器。仅 sing-box 可启用链出口。前端隔离回归：`node --test scripts/test-chain-nodes.mjs`。 |
 | `DnsPage` (~640) / `HostsPage` (463) | DNS/Hosts 管理，通常内嵌于 Settings；通用卡（劫持/兜底/缓存/FakeIP/远程加密 DNS——FakeIP 仅启用开关+⋯ 弹窗编辑池/IPv6/bypass，远程加密 DNS ⋯ 弹窗按行编辑 DoH 池，空=内置 1.1.1.1/8.8.8.8，见 §18①）；诊断 = 规则列表风格表格（域名|策略|匹配|DNS 服务器|内核解析，一行一域名，`diagnoseDns` 支持全部诊断与行内单个诊断，自定义域名 localStorage 持久化 `satelite.dnsDiagDomains`，本地/国内路径标红 ⚠ 泄露风险，见 `services/dns_diag.rs`） |
 
 ### 6.4 简洁模式（ui/simple/）
