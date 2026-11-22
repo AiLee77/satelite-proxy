@@ -73,9 +73,9 @@ const CUSTOM_BLOCKED_TABS = new Set([
 ]);
 
 /** Repository link shown in the bottom-right corner of the settings page. */
-const PROJECT_URL = "https://github.com/chenzai666/satelite-proxy/";
+const PROJECT_URL = "https://github.com/AiLee77/satelite-proxy/";
 /** Always-latest app release page, opened from the version tab. */
-const RELEASES_URL = "https://github.com/chenzai666/satelite-proxy/releases/latest";
+const RELEASES_URL = "https://github.com/AiLee77/satelite-proxy/releases/latest";
 
 // Session-level memory of the latest MANUAL core update check. The network
 // check fires only on the per-core "检查" button (2026-09: it used to fire
@@ -2033,17 +2033,18 @@ export function SettingsPage() {
             )}
 
             <div className="ver-links">
-              <button
-                type="button"
+              <a
+                href={PROJECT_URL}
                 className="corner-link project-link"
-                onClick={() => {
+                onClick={(event) => {
+                  event.preventDefault();
                   openUrl(PROJECT_URL).catch((e) =>
                     setError(typeof e === "string" ? e : String(e)),
                   );
                 }}
               >
                 {t("settings.projectHome")}
-              </button>
+              </a>
             </div>
           </div>
           </div>

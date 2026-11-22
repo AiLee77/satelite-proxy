@@ -48,6 +48,16 @@ try {
   assert.equal(await tabs.getByRole("button", { name: "代理链", exact: true }).count(), 0, "设置页不再出现代理链标签");
   await page.screenshot({ path: `${output}/settings-page.png`, fullPage: true });
 
+  await tabs.getByRole("button", { name: "版本", exact: true }).click();
+  const projectLink = page.getByRole("link", { name: "项目地址⭐", exact: true });
+  await projectLink.waitFor();
+  const projectHref = await projectLink.getAttribute("href");
+  assert.equal(
+    projectHref,
+    "https://github.com/AiLee77/satelite-proxy/",
+    "设置页项目地址指向本 fork 仓库",
+  );
+
   assert.deepEqual(errors, [], "页面异常");
   assert.deepEqual(blocked, [], "禁止外部网络");
   assert.deepEqual(await page.evaluate(() => window.navigationFixture.unexpected), [], "禁止未声明 IPC");
@@ -56,6 +66,7 @@ try {
     chainPage: "non-embedded",
     settingsTabs: 7,
     chainSettingsTab: false,
+    projectHref,
     screenshots: [`${output}/chain-page.png`, `${output}/settings-page.png`],
   }, null, 2));
 } finally {

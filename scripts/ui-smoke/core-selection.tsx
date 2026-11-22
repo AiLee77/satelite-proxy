@@ -43,9 +43,9 @@ mockIPC((command, payload) => {
   }
   if (command === "get_proxy_status") return structuredClone(state.status);
   if (command === "get_core_info") return { kind: (payload as { kind: string }).kind, version: null };
-  if (command === "plugin:app|version") return "1.0.46";
+  if (command === "plugin:app|version") return "1.0.47";
   if (command === "get_app_install_path") return "fixture";
-  if (command === "check_app_update") return { current_version: "1.0.46", latest_version: null, update_available: false };
+  if (command === "check_app_update") return { current_version: "1.0.47", latest_version: null, update_available: false };
   if (command === "list_subscription_nodes") return [node];
   if (command === "list_all_nodes" || command === "list_custom_config_nodes") return [node];
   if (command === "list_nodes_page") return { nodes: [node], total: 1 };

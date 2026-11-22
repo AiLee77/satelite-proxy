@@ -38,7 +38,7 @@ pub fn build_client(route: ProbeRoute, timeout: Duration) -> Result<reqwest::Cli
         .connect_timeout(Duration::from_secs(4))
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent("Satelite/1.0.46 NetworkDiagnostics");
+        .user_agent("Satelite/1.0.47 NetworkDiagnostics");
     if let Some(port) = route.proxy_port {
         builder = builder.proxy(
             reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))

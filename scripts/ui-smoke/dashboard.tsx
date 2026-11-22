@@ -224,7 +224,7 @@ mockIPC((command, payload) => {
         row.upload_speed = row.download_speed = 0;
       }
       return copy(status);
-    case "plugin:app|version": return "1.0.46";
+    case "plugin:app|version": return "1.0.47";
     default:
       state.unexpected.push(command);
       throw new Error(`概览夹具禁止未声明 IPC：${command}`);

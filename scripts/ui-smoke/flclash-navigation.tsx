@@ -68,10 +68,10 @@ mockIPC((command, payload) => {
       hops: [{ kind: "node", node_id: "entry" }, { kind: "node", node_id: "exit" }],
     }];
     case "get_core_info": return { kind: (payload as { kind: string }).kind, version: null };
-    case "plugin:app|version": return "1.0.46";
+    case "plugin:app|version": return "1.0.47";
     case "get_app_install_path": return "fixture";
     case "check_app_update": return {
-      current_version: "1.0.46", latest_version: null, update_available: false,
+      current_version: "1.0.47", latest_version: null, update_available: false,
     };
     default:
       state.unexpected.push(command);

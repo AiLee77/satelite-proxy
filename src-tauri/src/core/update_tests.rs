@@ -290,7 +290,7 @@ mod windows {
             let handle = lock(&f.version);
             let had_previous =
                 replace_installed_core(kind, &f.staged, &f.dest, &f.previous).unwrap();
-            let error = write_version_file(&f.root, kind, "1.0.46").unwrap_err();
+            let error = write_version_file(&f.root, kind, "1.0.47").unwrap_err();
             let error = rollback_installed_core(&f.dest, &f.previous, had_previous, error);
             drop(handle);
             assert!(!error.to_string().is_empty());

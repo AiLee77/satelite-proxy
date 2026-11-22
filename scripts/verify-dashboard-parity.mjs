@@ -33,7 +33,7 @@ export async function runDashboardParity() {
       checks++;
     }
     await open();
-    await page.waitForFunction(() => document.querySelector(".dashboard-app-version")?.textContent === "SATELITE · 1.0.46");
+    await page.waitForFunction(() => document.querySelector(".dashboard-app-version")?.textContent === "SATELITE · 1.0.47");
     assert.equal(await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === "plugin:app|version").length), 1);
     assert.equal(await page.locator(".dashboard-heading .dashboard-app-version").isVisible(), true);
     checks++;

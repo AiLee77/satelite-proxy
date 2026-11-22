@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tar::Archive;
 
 const APP_GITHUB_LATEST: &str =
-    "https://api.github.com/repos/chenzai666/satelite-proxy/releases/latest";
-const APP_RELEASES_PAGE: &str = "https://github.com/chenzai666/satelite-proxy/releases/latest";
+    "https://api.github.com/repos/AiLee77/satelite-proxy/releases/latest";
+const APP_RELEASES_PAGE: &str = "https://github.com/AiLee77/satelite-proxy/releases/latest";
 const MAX_CORE_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 
 fn github_latest_url(kind: CoreKind) -> String {
@@ -223,7 +223,7 @@ async fn fetch_release_list_json(url: &str, proxy_url: Option<&str>) -> AppResul
         .map_err(|e| AppError::Core(format!("parse github release list: {e}")))
 }
 
-/// Latest release tag of the app itself (chenzai666/satelite-proxy), used by the
+/// Latest release tag of the app itself (AiLee77/satelite-proxy), used by the
 /// Settings version tab to flag app updates. Tag only — no asset picking,
 /// and unlike the core check there is no pinned fallback: if the API is
 /// unreachable the caller surfaces the error instead of guessing.
@@ -416,7 +416,7 @@ mod app_update_tests {
     fn extracts_tag_from_absolute_url() {
         assert_eq!(
             extract_tag_from_release_url(
-                "https://github.com/chenzai666/satelite-proxy/releases/tag/1.0.15"
+                "https://github.com/AiLee77/satelite-proxy/releases/tag/1.0.15"
             )
             .unwrap(),
             "v1.0.15"
@@ -426,7 +426,7 @@ mod app_update_tests {
     #[test]
     fn extracts_tag_from_relative_url() {
         assert_eq!(
-            extract_tag_from_release_url("/chenzai666/satelite-proxy/releases/tag/v1.1.0").unwrap(),
+            extract_tag_from_release_url("/AiLee77/satelite-proxy/releases/tag/v1.1.0").unwrap(),
             "v1.1.0"
         );
     }
@@ -435,7 +435,7 @@ mod app_update_tests {
     fn strips_query_string() {
         assert_eq!(
             extract_tag_from_release_url(
-                "https://github.com/chenzai666/satelite-proxy/releases/tag/1.2.0?foo=bar"
+                "https://github.com/AiLee77/satelite-proxy/releases/tag/1.2.0?foo=bar"
             )
             .unwrap(),
             "v1.2.0"
@@ -445,7 +445,7 @@ mod app_update_tests {
     #[test]
     fn rejects_urls_without_a_tag_segment() {
         assert!(
-            extract_tag_from_release_url("https://github.com/chenzai666/satelite-proxy").is_err()
+            extract_tag_from_release_url("https://github.com/AiLee77/satelite-proxy").is_err()
         );
     }
 }

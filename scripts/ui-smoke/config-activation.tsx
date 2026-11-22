@@ -146,7 +146,7 @@ mockIPC((command, payload) => {
     case "clear_pending_import_urls":
       return null;
     case "plugin:app|version":
-      return "1.0.46";
+      return "1.0.47";
     default:
       state.unexpected.push(command);
       throw new Error(`配置激活夹具未实现命令：${command}`);

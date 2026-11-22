@@ -1,5 +1,7 @@
 # AGENTS.md — Satelite Proxy 项目地图
 
+2026-11-22 二开首发版1.0.47（feature-flclash-ui，续跑基准40bafed）：五个应用项目/更新入口切换到AiLee77/satelite-proxy，规则内容源与三内核数据源不变；package/Cargo、诊断UA、mock和Windows流程同步1.0.47，tauri.conf继续继承package。README按上游当前模板保留LICENSE与原致谢并新增二开说明/更新日志。Cargo 759+5全过、download解析4/4、前端构建、指定浏览器10/10、项目href先null红灯后AiLee77绿灯；Node当前与基线均169项158/11且失败名diff为空。Windows便携包31,380,356字节，SHA-256 b35857c4990dcaae9a00d843171d0a244a166e699131c4d62e9ab96a371b32d5，未启动真实客户端/内核。完整审计与实测见docs/flclash-first-fork-1.0.47.md，发布说明见docs/release-1.0.47.md。
+
 2026-11-21 FlClash 唯一版日志图标与切换提示收尾（feature-flclash-ui，基准f868cfc）：SideNav 仅将 logs 图标 terminal 换成 Lucide 官方 file-text 原图内联，其余六图标不变；专业/简洁概览的 SystemProxyRestartNotice 两条触发与渲染路径、专属状态/CSS/双语文案及组件全部删除。共享 useCaptureModeSwitch、模式 IPC/生效逻辑、公共 GlassButton/modal 样式不变。生产 DOM/CSS mock 弹窗与图标断言均先红后绿，图标补官方路径及普通/激活 computed 尺寸颜色同列对比。pnpm build、指定浏览器10/10、图标7×2截图、概览7场景、导航专项通过；Node 当前与独立 f868cfc 基线均169项158/11且失败名diff为空。未启动真实客户端/内核。FlClash 便携包与验证实测详见 docs/flclash-log-icon-capture-cleanup.md；此前 terminal 图标记录由本 entry 取代。
 
 2026-11-21 FlClash 唯一版导航与图标定版（feature-flclash-ui，基准3298549）：SideNav 改为概览/节点/代理链/配置/流量/日志/设置七项，链页在 App 独立非 embedded 渲染，设置→代理链旧标签及联动移除；快捷键3=链、4=配置、5=流量、6=日志，补 nav.chains 双语文案。图标固定为 layout-grid/network/link/sliders-horizontal/activity/terminal/settings，沿用 Lucide 官方内联、24 viewBox、1.7描边、激活同图 --primary 与指示胶囊。新增 verify-flclash-chain-navigation.mjs 与对应 mock 夹具，图标验证升级7×2截图。pnpm build、指定浏览器10/10、导航专项与截图通过；Node 169项158/11与基线失败集合一致。FlClash 便携包、大小、SHA-256及完整验证见 docs/flclash-navigation-icons-final.md；本文此前“六图标、设置→代理链”记录由本 entry 取代。

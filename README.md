@@ -1,14 +1,32 @@
 # Satelite
 
-## 本分支 1.0.46
+## 二开发布版 1.0.47
 
-节点网格的更多操作使用独立小号图标按钮，协议标签与按钮分开排列；列数按实际内容宽度调整，避免侧栏或缩放挤压卡片。SOCKS/SOCKS5 链接兼容普通凭据和 Base64 编码的用户名／密码组合，支持标准与 URL-safe Base64；百分号仅在 URI 组件边界解码一次，保留密码内的加号、冒号与字面百分号。
-
-订阅更新恢复源节点顺序，同时保留本地追加节点。手动节点后来被同一订阅收录时，连接参数唯一匹配后自动转为订阅节点并归位，保留本地编辑及引用；参数不同或无法唯一确认时继续独立保留。
-
-已选择性整合上游正式版至 1.0.46：保留既有智能选路、Xray XHTTP 兼容、原生 Mihomo 策略组、节点拖拽/右键编辑分享、UWP 回环和 IPv4/DNS。新增分组测速、独立订阅列与 OpenVPN 原文委托支持；同版本修复订阅刷新顺序、本地编辑保留及 Delete 删除。安装包和便携包见[本分支发布页](https://github.com/chenzai666/satelite-proxy/releases)，更新说明见 [1.0.46 发布说明](docs/release-1.0.46.md)。同版本修复请核对发布说明中的构建提交与时间，而不只看版本号。
+这是 Satelite 二开首发版，项目与后续更新均归属 [AiLee77/satelite-proxy](https://github.com/AiLee77/satelite-proxy)。Windows x64 便携版请从 [Releases](https://github.com/AiLee77/satelite-proxy/releases) 下载；本版更新说明见 [1.0.47 发布说明](docs/release-1.0.47.md)。
 
 当前发布流程仅验证 Windows x64，默认内置 sing-box，其余内核按需下载；没有改成强制捆绑三内核。上游另有 Linux AppImage 与独立的 Android 项目 [Interstellar](https://github.com/zn0wii/interstellar)，它们不属于本分支的已验证发布包。本分支已接入 Linux DMA-BUF 兼容修复，但尚未补齐和验证 Linux 打包流程。
+
+## 二次开发说明
+
+本项目由 **AiLee77** 基于 [chenzai666/satelite-proxy](https://github.com/chenzai666/satelite-proxy) 二次开发。上游项目的 Apache License 2.0、原版权与致谢继续保留；本仓库现有 [LICENSE](LICENSE) 不作修改。
+
+本 fork 在上游基础上新增或调整了以下能力：
+
+- **代理链与三模式节点池**：支持多跳代理链，以及指定节点、关键词过滤、整个订阅三种节点池模式。
+- **链虚拟节点与链路探测**：代理链可作为虚拟出口节点选择，支持出口归属及质量探测、单跳与逐跳累计延迟诊断。
+- **FlClash 风格界面**：专业模式采用七项侧边栏，内联 Lucide 官方描边图标，并统一概览排版与模式徽标胶囊样式。
+- **节点删除直删**：订阅节点删除只影响当前存储列表，不再新增持久删除标记；手动追加节点删除后不会因刷新恢复。
+- **交互修复与精简**：修复池编辑器聚焦环，移除系统代理成功切入后的重启提示弹窗，保留共享接管逻辑。
+
+## 更新日志
+
+### v1.0.47 — 二开首发版
+
+- 汇总并定版上述代理链、节点池、链虚拟节点、链路诊断与 FlClash 风格界面功能。
+- 项目地址、应用更新检查和 Release 下载源统一切换到 `AiLee77/satelite-proxy`；内核与规则内容源保持原有配置。
+- 应用版本升级为 `1.0.47`，同步 Cargo、前端、版本校验与 Windows 构建发布配置。
+- 设置页“项目地址”使用真实仓库链接；补充链接 mock 回归及下载重定向上游地址解析回归。
+
 
 ### 卡片式概览仪表盘
 
@@ -60,7 +78,7 @@ sing-box、Xray、Mihomo 共用更新保护：Windows 文件共享冲突（错�
 </p>
 
 <p align="center">
-  <a href="https://github.com/chenzai666/satelite-proxy/stargazers"><img src="https://img.shields.io/github/stars/chenzai666/satelite-proxy?style=social" alt="Stars" /></a>
+  <a href="https://github.com/AiLee77/satelite-proxy/stargazers"><img src="https://img.shields.io/github/stars/AiLee77/satelite-proxy?style=social" alt="Stars" /></a>
   &nbsp;
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-111111?logo=apple&logoColor=white" alt="macOS" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white" alt="Windows" />
@@ -113,7 +131,7 @@ sing-box、Xray、Mihomo 共用更新保护：Windows 文件共享冲突（错�
 - **流量列表布局**：三类列表表头保持单行，窄窗口或放大显示时在表格内横向滚动，保留目标、节点等列的阅读空间。
 - **专业模式外观**：统一左侧导航、概览卡片、表格、配置和弹窗的视觉层次，保留主题色、字体颜色、磨砂及首页动效自定义；简洁模式独立保留。
 - **状态卡排版**：按内容自然决定高度，右侧展示服务增加时不拉高左侧；节点名称完整换行，切换节点与更多操作位于下方独立一行。
-- **界面动效**：侧栏选中背景平滑移动，图标在实心与线框间切换；页面、页签、菜单与弹窗使用统一过渡。“设置 → 外观 → 界面动效”可选标准、跟随系统、减少，默认标准，仅作用于本应用，不修改 Windows 设置。后台轮询不会反复触发选中动画。
+- **界面动效**：侧栏选中背景平滑移动，普通与激活状态使用同一描边图标、激活时转为主题色；页面、页签、菜单与弹窗使用统一过渡。“设置 → 外观 → 界面动效”可选标准、跟随系统、减少，默认标准，仅作用于本应用，不修改 Windows 设置。后台轮询不会反复触发选中动画。
 - **托盘常驻**：关窗进托盘，开机启动、静默启动、可选托盘图标；内核在后台，窗口可消失
 - **多内核**：支持 sing-box、Mihomo 与 Xray；可在设置中切换，也可开启可选的 sing-box + Xray 协作模式。
 - **内核自管**：三颗内核可自动拉取和更新，启动会确认端口就绪；意外退出会记录原因并尝试恢复，不用自己找二进制、对版本。
@@ -216,7 +234,7 @@ pwsh scripts/build-windows.ps1 -Bundle portable   # 解压即用的便携版
 
 也可以直接推送到 `main` 分支，GitHub Actions 会自动构建 Windows NSIS 安装包。构建完成后进入仓库的 **Actions → Windows 构建**，在任务页面底部下载 `Satelite-Windows-*` 构建产物；云端产物保留 14 天，也支持在 Actions 页面手动触发构建。
 
-当前应用版本为 `1.0.46`。工作流会校验 `package.json`、`Cargo.toml` 和 `Cargo.lock` 三处版本一致，正式 Release 使用对应的 `v1.0.46` 标签；后续版本变更时需要同步更新这三处、版本校验脚本和 Actions 标签条件。同版本修复先完成 Actions 构建与测试，再将标签指向验证通过的提交，通过“发布已验证的 Windows 构建”工作流覆盖安装包和便携包；仅推送 main 不等于 Release 已更新。构建通过 Git 提交 SHA 和 GitHub Actions 构建时间区分。
+当前应用版本为 `1.0.47`。工作流会校验 `package.json`、`Cargo.toml` 和 `Cargo.lock` 三处版本一致，正式 Release 使用对应的 `1.0.47` 标签；后续版本变更时需要同步更新这三处、版本校验脚本和 Actions 标签条件。同版本修复先完成 Actions 构建与测试，再将标签指向验证通过的提交，通过“发布已验证的 Windows 构建”工作流覆盖安装包和便携包；仅推送 main 不等于 Release 已更新。构建通过 Git 提交 SHA 和 GitHub Actions 构建时间区分。
 
 ### 局域网代理
 
@@ -234,11 +252,11 @@ Windows 系统代理会同时更新注册表、当前 LAN 连接以及已有拨�
 
 ### 编辑订阅节点
 
-在“配置”页面打开订阅卡片右上角菜单，选择“编辑节点”，即可修改解析后的节点名称、服务器、端口、协议、认证、TLS / REALITY 与传输参数；节点页右键也可编辑。修改只保存在本机，不会写回远程订阅。1.0.46 同版本修复后的新编辑仅保留实际手改字段，其他字段随订阅更新；旧编辑记录缺少原始基线时保守保留完整覆盖。同配置、同协议且源名称唯一时，服务端轮换参数仍可保留节点 ID；重名歧义不强行匹配。
+在“配置”页面打开订阅卡片右上角菜单，选择“编辑节点”，即可修改解析后的节点名称、服务器、端口、协议、认证、TLS / REALITY 与传输参数；节点页右键也可编辑。修改只保存在本机，不会写回远程订阅。新编辑仅保留实际手改字段，其他字段随订阅更新；旧编辑记录缺少原始基线时保守保留完整覆盖。同配置、同协议且源名称唯一时，服务端轮换参数仍可保留节点 ID；重名歧义不强行匹配。
 
 更新订阅会按新订阅原顺序替换该配置的订阅节点，其他配置不受影响；手动添加或粘贴的节点（包括 clone）保留在订阅节点之后。手动拖拽可临时调整排序，下次更新恢复订阅顺序。
 
-节点页选中节点后，Ctrl+C 复制分享链接，Ctrl+V 追加到当前明确的配置，重复节点名称追加 `-clone` 后缀；修改名称也同步到分享链接。Delete 删除已选节点，Ctrl+A 可全选当前可见节点再删除，均需确认；输入框、弹窗及只读自写配置不触发删除。
+节点页选中节点后，Ctrl+C 复制分享链接，Ctrl+V 追加到当前明确的配置，重复节点名称追加 `-clone` 后缀；修改名称也同步到分享链接。Delete 删除已选节点，Ctrl+A 可全选当前可见节点再删除，均需确认；输入框、弹窗及只读自写配置不触发删除。删除只改当前存储列表，不再新增持久删除标记；刷新后远端仍提供的订阅节点会重新出现，手动追加节点则不会恢复。
 
 ### 二维码导入与 UUID 生成
 
@@ -284,7 +302,7 @@ TUIC 节点在订阅未提供 ALPN 时会自动补充标准的 `h3`。如果可�
 
 ---
 
-用着顺手的话，点一颗 [Star](https://github.com/chenzai666/satelite-proxy)，卫星会飞得更稳一点。
+用着顺手的话，点一颗 [Star](https://github.com/AiLee77/satelite-proxy)，卫星会飞得更稳一点。
 
 ## 友情链接
 

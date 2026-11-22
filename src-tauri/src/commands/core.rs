@@ -182,7 +182,7 @@ struct AppUpdateCache {
 }
 
 const APP_UPDATE_CACHE_FILE: &str = "update_cache.json";
-const APP_UPDATE_SOURCE: &str = "chenzai666/satelite-proxy";
+const APP_UPDATE_SOURCE: &str = "AiLee77/satelite-proxy";
 /// Fresh window for an auto (non-forced) check result.
 const APP_UPDATE_TTL_SECS: u64 = 6 * 3600;
 /// After a failed network check, auto checks back off this long.

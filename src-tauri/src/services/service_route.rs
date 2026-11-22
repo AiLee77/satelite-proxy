@@ -940,7 +940,7 @@ async fn probe_exit(
             .timeout(remaining)
             .pool_max_idle_per_host(0)
             .http1_only()
-            .user_agent("Satelite/1.0.46 ServiceRoute")
+            .user_agent("Satelite/1.0.47 ServiceRoute")
             .build()
             .ok()?;
         let remaining = deadline.checked_duration_since(Instant::now())?;
