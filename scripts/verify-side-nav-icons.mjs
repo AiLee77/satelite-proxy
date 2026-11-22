@@ -21,9 +21,17 @@ const expected = {
   link: { path: 2, rect: 0, circle: 0 },
   "sliders-horizontal": { path: 9, rect: 0, circle: 0 },
   activity: { path: 1, rect: 0, circle: 0 },
-  terminal: { path: 2, rect: 0, circle: 0 },
+  "file-text": { path: 5, rect: 0, circle: 0 },
   settings: { path: 1, rect: 0, circle: 1 },
 };
+// Exact children of the official lucide-icons/lucide@c1a02a0 file-text.svg.
+const FILE_TEXT_PATHS = [
+  "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+  "M14 2v5a1 1 0 0 0 1 1h5",
+  "M10 9H8",
+  "M16 13H8",
+  "M16 17H8",
+];
 const names = Object.keys(expected);
 const evidence = [];
 try {
@@ -78,7 +86,10 @@ try {
         circle: icon.querySelectorAll("circle").length,
       },
       solidChild: icon.querySelector('[fill="currentColor"], [stroke="none"]') !== null,
+      width: getComputedStyle(icon).width,
+      height: getComputedStyle(icon).height,
     }));
+    await page.mouse.move(0, 0);
     const normal = await snapshot();
     assert.equal(normal.viewBox, "0 0 24 24", `${name}: viewBox`);
     assert.equal(normal.fill, "none", `${name}: 无实心切换`);
@@ -86,6 +97,10 @@ try {
     assert.equal(normal.strokeWidth, "1.7", `${name}: 描边宽`);
     assert.equal(normal.solidChild, false, `${name}: 不存在 activePath 实心数据`);
     assert.deepEqual(normal.counts, expected[name], `${name}: 官方图形节点数`);
+    if (name === "file-text") {
+      assert.deepEqual(await svg.locator("path").evaluateAll(paths => paths.map(path => path.getAttribute("d"))),
+        FILE_TEXT_PATHS, "logs: Lucide 官方 file-text 原始路径");
+    }
     await button.screenshot({ path: `${output}/${String(index + 1).padStart(2, "0")}-${name}-normal.png` });
 
     await button.click();
@@ -101,8 +116,17 @@ try {
         indicator.getBoundingClientRect().width === button.getBoundingClientRect().width;
     }, index);
     await button.screenshot({ path: `${output}/${String(index + 1).padStart(2, "0")}-${name}-active.png` });
-    evidence.push({ name, normalColor: normal.color, activeColor: active.color, unchanged: active.markup === normal.markup });
+    evidence.push({
+      name,
+      normalStyle: { width: normal.width, height: normal.height, color: normal.color },
+      activeStyle: { width: active.width, height: active.height, color: active.color },
+      unchanged: active.markup === normal.markup,
+    });
   }
+  const logs = evidence.find(icon => icon.name === "file-text");
+  const peer = evidence.find(icon => icon.name === "activity");
+  assert.deepEqual(logs.normalStyle, peer.normalStyle, "logs 普通态 computed 尺寸/颜色与同列流量项一致");
+  assert.deepEqual(logs.activeStyle, peer.activeStyle, "logs 激活态 computed 尺寸/颜色与同列流量项一致");
   assert.deepEqual(errors, [], "页面异常");
   assert.deepEqual(blocked, [], "禁止外部网络");
   assert.deepEqual(await page.evaluate(() => window.dashboardFixture.unexpected), [], "禁止未声明 IPC");

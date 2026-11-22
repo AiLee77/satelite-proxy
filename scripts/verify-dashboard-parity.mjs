@@ -37,18 +37,25 @@ export async function runDashboardParity() {
     assert.equal(await page.evaluate(() => window.dashboardFixture.commands.filter(c => c.command === "plugin:app|version").length), 1);
     assert.equal(await page.locator(".dashboard-heading .dashboard-app-version").isVisible(), true);
     checks++;
-    // The notice belongs only to a successful user switch into system capture.
-    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
+    // Switching capture still calls the same mock IPC, but never opens the
+    // removed restart notice. Run a complete off → system → off → system cycle.
     const capture = page.locator(".dash-capture");
-    await capture.getByRole("button", { name: "系统", exact: true }).click();
-    await page.locator(".system-proxy-restart-modal").waitFor();
-    await page.keyboard.press("Escape");
-    await page.locator(".system-proxy-restart-modal").waitFor({ state: "hidden" });
-    await capture.getByRole("button", { name: "系统", exact: true }).click();
-    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
+    const restartNotice = page.locator(".system-proxy-restart-modal");
+    assert.equal(await restartNotice.count(), 0);
+    for (const mode of ["system", "off", "system"]) {
+      await capture.getByRole("button", { name: mode === "system" ? "系统" : "关闭", exact: true }).click();
+      await page.waitForFunction(expected => window.dashboardFixture.status.capture_mode === expected &&
+        !document.querySelector(".dash-capture .lat-spinner"), mode);
+      // The fixture status changes before the invoke promise resolves; wait for
+      // the resulting React commit instead of sampling the pre-callback DOM.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await restartNotice.count(), 0, `切换到 ${mode} 后不得出现重启提示弹窗`);
+    }
+    assert.deepEqual(await page.evaluate(() => window.dashboardFixture.commands
+      .filter(c => c.command === "set_capture_mode").map(c => c.payload.mode)), ["system", "off", "system"],
+    "关闭/系统切换与生效逻辑保持不变");
     await capture.getByRole("button", { name: "关闭", exact: true }).click();
     await page.waitForFunction(() => window.dashboardFixture.status.capture_mode === "off");
-    assert.equal(await page.locator(".system-proxy-restart-modal").count(), 0);
     checks++;
     await page.waitForFunction(() => document.querySelector(".dashboard-probe-card")?.getAttribute("aria-busy") === "false");
     const beforeNetwork = await page.evaluate(() => ({
